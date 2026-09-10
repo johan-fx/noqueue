@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">No Queue</string>
+    <string name="title_activity_main">No Queue</string>
+    <string name="package_name">com.noqueue.app</string>
+    <string name="custom_url_scheme">com.noqueue.app</string>
+</resources>

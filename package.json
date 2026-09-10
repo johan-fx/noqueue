@@ -1,0 +1,24 @@
+{
+  "name": "@noqueue/root",
+  "private": true,
+  "version": "0.0.0",
+  "packageManager": "pnpm@10.23.0",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @noqueue/web build && turbo run dev",
+    "build": "turbo run build",
+    "check-types": "turbo run check-types",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "test:e2e": "turbo run test:e2e",
+    "mobile:sync": "turbo run sync --filter=@noqueue/mobile",
+    "mobile:ios": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:ios",
+    "mobile:android": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:android"
+  },
+  "devDependencies": {
+    "turbo": "2.10.12",
+    "typescript": "catalog:"
+  }
+}

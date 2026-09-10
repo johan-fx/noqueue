@@ -1,0 +1,12 @@
+{
+  "extends": "../../tooling/typescript/base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node", "@playwright/test"],
+    "noEmit": true
+  },
+  "include": ["playwright.config.ts", "specs/**/*.ts"]
+}

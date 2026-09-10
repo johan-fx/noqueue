@@ -1,0 +1,43 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "@noqueue/api#build": {
+      "dependsOn": ["@noqueue/web#build", "^build"],
+      "outputs": ["dist/**"]
+    },
+    "@noqueue/contracts#build": {
+      "outputs": []
+    },
+    "dev": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "persistent": true
+    },
+    "check-types": {
+      "dependsOn": ["^check-types"]
+    },
+    "lint": {
+      "dependsOn": ["^lint"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test:e2e": {
+      "dependsOn": ["@noqueue/web#build", "@noqueue/api#build"],
+      "cache": false
+    },
+    "sync": {
+      "dependsOn": ["@noqueue/web#build"],
+      "cache": false
+    },
+    "native:run:ios": { "cache": false },
+    "native:run:android": { "cache": false },
+    "native:open:ios": { "cache": false },
+    "native:open:android": { "cache": false }
+  }
+}

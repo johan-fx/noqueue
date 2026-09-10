@@ -1,0 +1,11 @@
+{
+  "extends": "../../tooling/typescript/base.json",
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true
+  },
+  "include": ["capacitor.config.ts"]
+}

@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check-types
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm --filter @noqueue/e2e exec playwright install --with-deps chromium firefox webkit
+      - run: pnpm test:e2e
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.23.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @noqueue/web build
+      - name: Sync the Android Capacitor project
+        run: pnpm --filter @noqueue/mobile exec cap sync android
+      - name: Verify Android sync has no tracked drift
+        run: git diff --exit-code -- apps/mobile/capacitor.config.ts apps/mobile/android
+      - name: Compile Android debug application
+        working-directory: apps/mobile/android
+        run: ./gradlew assembleDebug --no-daemon

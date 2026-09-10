@@ -1,0 +1,1 @@
+# Local secrets belong in .dev.vars, which is ignored by Git.

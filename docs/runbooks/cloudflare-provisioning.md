@@ -1,16 +1,16 @@
-# Provision Cloudflare only after environment approval
+# Provision approved Cloudflare pilot environments
 
-**Status:** Blocked for remote execution.
+**Status (2026-09-11):** sandbox and staging infrastructure deployed in account `fa5fab4df1b0f12c946a3ea47fab96eb`. WhatsApp sending remains disabled. Production is not provisioned.
 
-Before provisioning, record the owning account, environment names, data jurisdiction, D1 names, Durable Object migration strategy and secret owners.
+See the [360dialog pilot runbook](360dialog-pilot.md) for exact resource IDs, deployed versions, private secret custody, verified checks and remaining provider prerequisites.
 
-## Approved sequence
+## Safe deployment sequence
 
-1. Authenticate interactively with the intended account.
-2. Create one D1 database per environment and record its returned identifier in that environment's configuration.
-3. Review Durable Object class migrations before the first deployment.
-4. Store provider credentials with Cloudflare secrets, never Wrangler plaintext vars.
-5. Run migrations against staging first.
-6. deploy a version and verify health, assets and logs.
+1. Select the owning account explicitly and inventory resources before creating anything.
+2. Reuse the recorded EU D1 databases and environment-specific Queues/DLQs. Jurisdiction is selected at D1 creation, not added later.
+3. Keep the per-queue Durable Object EU routing and review class migrations before changing them.
+4. Supply missing provider keys and approved recipients through secrets; never overwrite application crypto keys or share values in command arguments.
+5. Apply pending migrations only to the explicitly selected remote environment, build and run its deployment dry-run.
+6. Deploy with `--env sandbox` or `--env staging`; verify HTTPS health, assets, authorization guards and bindings.
 
-The repository bootstrap intentionally uses an all-zero local placeholder. Do not deploy it.
+Never deploy the top-level local default configuration or its all-zero database ID. Preserve `WHATSAPP_ENABLED=false` until the provider-specific checklist is complete. Invocation logs and traces remain disabled to avoid recording capability/recovery URLs; structured event logging remains enabled. Queues have no D1-style EU jurisdiction guarantee and carry opaque identifiers only.

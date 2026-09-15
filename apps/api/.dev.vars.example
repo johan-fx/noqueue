@@ -1,1 +1,9 @@
-# Local secrets belong in .dev.vars, which is ignored by Git.
+# Copy to .dev.vars (ignored). Generate each cryptographic key independently with openssl rand -hex 32.
+# Never use real 360dialog credentials for local browser tests (dev:e2e config is isolated).
+D360DIALOG_API_KEY=
+D360DIALOG_WEBHOOK_TOKEN=
+PII_ENCRYPTION_KEY=
+PHONE_HASH_KEY=
+RECOVERY_TOKEN_KEY=
+PILOT_ACCESS_TOKEN=
+WHATSAPP_RECIPIENT_ALLOWLIST=

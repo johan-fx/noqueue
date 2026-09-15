@@ -18,9 +18,9 @@ export default defineConfig({
   ],
   webServer: {
     command:
-      'pnpm --dir ../.. --filter @noqueue/web build && pnpm --dir ../.. --filter @noqueue/api dev --port 8787',
+      'pnpm --dir ../.. --filter @noqueue/web build && pnpm --dir ../.. --filter @noqueue/api dev:e2e',
     url: 'http://127.0.0.1:8787/api/v1/health',
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer: false,
     timeout: 120_000,
   },
 })

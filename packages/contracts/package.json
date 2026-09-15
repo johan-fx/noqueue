@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "exports": {
-    "./health": "./src/health.ts"
+    "./health": "./src/health.ts",
+    "./queue": "./src/queue.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

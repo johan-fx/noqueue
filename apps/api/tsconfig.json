@@ -1,7 +1,14 @@
 {
   "extends": "../../tooling/typescript/worker.json",
   "compilerOptions": {
-    "types": ["./worker-configuration.d.ts"]
+    "types": [
+      "./worker-configuration.d.ts",
+      "@cloudflare/vitest-plugin/types"
+    ]
   },
-  "include": ["src/**/*.ts", "worker-configuration.d.ts"]
+  "include": [
+    "src/**/*.ts",
+    "worker-configuration.d.ts",
+    "test/**/*.ts"
+  ]
 }

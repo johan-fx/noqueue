@@ -4,12 +4,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --minify",
-    "cf-typegen": "wrangler types --env-interface CloudflareBindings",
+    "cf-typegen": "wrangler types --env-interface CloudflareBindings --strict-vars=false",
     "build": "wrangler deploy --dry-run --outdir dist",
     "check-types": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "db:migrate:local": "wrangler d1 migrations apply DB --local"
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "smoke:360dialog": "node scripts/smoke-360dialog.mjs",
+    "dev:e2e": "node scripts/dev-e2e.mjs"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
@@ -20,10 +22,13 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.1.7",
+    "@msw/cloudflare": "^0.0.1",
     "@types/node": "^22.20.2",
     "drizzle-kit": "0.31.10",
+    "msw": "^2.15.0",
     "typescript": "catalog:",
-    "vitest": "5.0.0",
+    "vitest": "4.1.11",
     "wrangler": "^4.110.0"
   },
   "private": true,

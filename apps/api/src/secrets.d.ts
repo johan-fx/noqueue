@@ -1,0 +1,9 @@
+interface CloudflareBindings {
+  D360DIALOG_API_KEY: string
+  D360DIALOG_WEBHOOK_TOKEN: string
+  PII_ENCRYPTION_KEY: string
+  PHONE_HASH_KEY: string
+  RECOVERY_TOKEN_KEY: string
+  PILOT_ACCESS_TOKEN: string
+  WHATSAPP_RECIPIENT_ALLOWLIST: string
+}

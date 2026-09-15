@@ -1,0 +1,16 @@
+{
+  "name": "@noqueue/landing",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "pnpm build && wrangler dev --local --ip 127.0.0.1 --port 8788 --inspector-port 9231",
+    "check": "node --test scripts/landing.test.mjs",
+    "test": "pnpm check",
+    "check:deploy": "pnpm build && wrangler deploy --dry-run"
+  },
+  "devDependencies": {
+    "wrangler": "4.131.0"
+  }
+}

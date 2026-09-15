@@ -32,6 +32,175 @@
     }
   ],
   "observability": {
-    "enabled": true
-  }
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": false
+    }
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATIONS",
+        "queue": "noqueue-whatsapp-local"
+      },
+      {
+        "binding": "NOTIFICATIONS_DLQ",
+        "queue": "noqueue-whatsapp-local-dlq"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "noqueue-whatsapp-local",
+        "dead_letter_queue": "noqueue-whatsapp-local-dlq",
+        "max_retries": 3,
+        "max_batch_size": 10
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "vars": {
+    "WHATSAPP_MODE": "sandbox",
+    "WHATSAPP_ENABLED": "false",
+    "CONFIRMATION_EXPERIMENT_ENABLED": "false",
+    "STAGING_EXPERIMENT_APPROVED": "false",
+    "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
+    "PUBLIC_APP_ORIGIN": "http://localhost:5173",
+    "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
+    "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
+    "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
+    "STAGING_CONSENT_APPROVED": "false",
+    "APP_ENV": "local",
+    "D360DIALOG_PHONE_NUMBER_ID": ""
+  },
+  "env": {
+    "sandbox": {
+      "name": "noqueue-api-sandbox",
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "WHATSAPP_MODE": "sandbox",
+        "WHATSAPP_ENABLED": "false",
+        "CONFIRMATION_EXPERIMENT_ENABLED": "false",
+        "STAGING_EXPERIMENT_APPROVED": "false",
+        "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
+        "PUBLIC_APP_ORIGIN": "https://sandbox.noqueue-app.com",
+        "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
+        "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
+        "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
+        "STAGING_CONSENT_APPROVED": "false",
+        "APP_ENV": "sandbox",
+        "D360DIALOG_PHONE_NUMBER_ID": ""
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "noqueue-sandbox",
+          "database_id": "14e31648-143e-4165-9a05-c865a09277eb",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "QUEUE_COORDINATOR",
+            "class_name": "QueueCoordinator"
+          }
+        ]
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS",
+            "queue": "noqueue-whatsapp-sandbox"
+          },
+          {
+            "binding": "NOTIFICATIONS_DLQ",
+            "queue": "noqueue-whatsapp-sandbox-dlq"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "noqueue-whatsapp-sandbox",
+            "dead_letter_queue": "noqueue-whatsapp-sandbox-dlq",
+            "max_retries": 3,
+            "max_batch_size": 10
+          }
+        ]
+      },
+      "routes": [
+        {
+          "pattern": "sandbox.noqueue-app.com",
+          "custom_domain": true
+        }
+      ]
+    },
+    "staging": {
+      "name": "noqueue-api-staging",
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "WHATSAPP_MODE": "cloud",
+        "WHATSAPP_ENABLED": "false",
+        "CONFIRMATION_EXPERIMENT_ENABLED": "false",
+        "STAGING_EXPERIMENT_APPROVED": "false",
+        "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
+        "PUBLIC_APP_ORIGIN": "https://staging.noqueue-app.com",
+        "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
+        "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
+        "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
+        "STAGING_CONSENT_APPROVED": "false",
+        "APP_ENV": "staging",
+        "D360DIALOG_PHONE_NUMBER_ID": ""
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "noqueue-staging",
+          "database_id": "73a50d85-e53f-4a54-b164-07b80a39d1a8",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "QUEUE_COORDINATOR",
+            "class_name": "QueueCoordinator"
+          }
+        ]
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS",
+            "queue": "noqueue-whatsapp-staging"
+          },
+          {
+            "binding": "NOTIFICATIONS_DLQ",
+            "queue": "noqueue-whatsapp-staging-dlq"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "noqueue-whatsapp-staging",
+            "dead_letter_queue": "noqueue-whatsapp-staging-dlq",
+            "max_retries": 3,
+            "max_batch_size": 10
+          }
+        ]
+      },
+      "routes": [
+        {
+          "pattern": "staging.noqueue-app.com",
+          "custom_domain": true
+        }
+      ]
+    }
+  },
+  "account_id": "fa5fab4df1b0f12c946a3ea47fab96eb"
 }

@@ -7,6 +7,9 @@ export default defineConfig({
       wrangler: { configPath: './wrangler.jsonc' },
       miniflare: {
         bindings: {
+          BETTER_AUTH_SECRET: 'test-only-better-auth-secret-at-least-32-bytes',
+          AUTH_EMAIL_API_KEY: 'test-mail-key',
+          AUTH_EMAIL_FROM: 'NoQueue <test@example.com>',
           TEST_MIGRATIONS: await readD1Migrations('./migrations'),
           D360DIALOG_API_KEY: 'test-only-key',
           D360DIALOG_WEBHOOK_TOKEN: 'test-webhook-token-at-least-32-characters',

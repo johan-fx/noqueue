@@ -37,7 +37,15 @@ export const entrySchema = z.object({
   code: z.string(),
   position: z.number().int().nonnegative(),
   etaMinutes: z.number().int().nonnegative(),
-  status: z.enum(['waiting', 'served', 'cancelled']),
+  status: z.enum([
+    'waiting',
+    'called',
+    'completed',
+    'no_show',
+    'expired',
+    'served',
+    'cancelled',
+  ]),
   notification: notificationStatusSchema,
   confirmation: z
     .enum(['pending', 'confirmed', 'revoked', 'expired'])

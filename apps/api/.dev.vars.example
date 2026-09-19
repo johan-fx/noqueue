@@ -6,4 +6,16 @@ PII_ENCRYPTION_KEY=
 PHONE_HASH_KEY=
 RECOVERY_TOKEN_KEY=
 PILOT_ACCESS_TOKEN=
+# Local-only mailbox reader (min. 32 characters). Used only with
+# AUTH_EMAIL_API_KEY="local-inbox" and never deploy it.
+LOCAL_DEV_TOKEN=
 WHATSAPP_RECIPIENT_ALLOWLIST=
+
+# Authentication: generate a separate random secret per environment (>=32 characters).
+BETTER_AUTH_SECRET=""
+# Optional: verifying a new profile email only (not needed for onboarding/login).
+# `local-inbox` captures verification links in memory while using `pnpm dev`.
+# Replace with a Resend API key and verified sender only when testing real delivery.
+# Never expose either in VITE_*.
+AUTH_EMAIL_API_KEY=""
+AUTH_EMAIL_FROM="NoQueue <access@your-verified-domain.example>"

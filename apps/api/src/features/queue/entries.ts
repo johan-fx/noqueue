@@ -1,3 +1,5 @@
+import { serviceSchema } from '@noqueue/contracts/staff'
+import { serviceAcceptsEntries } from '../staff/availability'
 import { entrySchema, type JoinQueue } from '@noqueue/contracts/queue'
 import { readConfirmation } from './confirmation'
 import { encryptPhone, hash, hmac, phoneHash, recoveryToken } from './crypto'
@@ -102,13 +104,19 @@ export async function joinQueue(
       }
   }
   const queue = await env.DB.prepare(
-    `SELECT q.capacity,q.open,q.average_minutes,v.organization_id,
+    `SELECT q.capacity,q.open,q.average_minutes,q.config,v.timezone,v.organization_id,
+    (SELECT status FROM tenant_account WHERE organization_id=v.organization_id) AS tenant_status,
+    (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND status='waiting') AS waiting_people,
     (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND status='waiting') AS waiting,
     (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=q.id) AS sequence
     FROM queue q JOIN venue v ON v.id=q.venue_id WHERE q.id=?`,
   )
     .bind(queueId)
     .first<{
+      config: string | null
+      timezone: string
+      tenant_status: string | null
+      waiting_people: number
       capacity: number
       open: number
       average_minutes: number
@@ -117,6 +125,16 @@ export async function joinQueue(
       sequence: number
     }>()
   if (!queue) return { status: 404, body: { error: 'queue_not_found' } }
+  if (queue.config) {
+    const config = serviceSchema.parse(JSON.parse(queue.config))
+    if (
+      queue.tenant_status !== 'active' ||
+      !serviceAcceptsEntries(config, queue.timezone) ||
+      (config.type === 'pool' &&
+        queue.waiting_people + input.partySize > queue.capacity)
+    )
+      return { status: 409, body: { error: 'queue_unavailable' } }
+  }
   if (!queue.open || queue.waiting >= queue.capacity)
     return { status: 409, body: { error: 'queue_unavailable' } }
   const id = crypto.randomUUID(),

@@ -175,6 +175,14 @@ export function DemoEntry() {
         <>
           <p className="text-4xl font-bold">{entry.code}</p>
           <p>
+            {es ? 'Estado' : 'Status'}:{' '}
+            {entry.status === 'called'
+              ? es
+                ? 'Es tu turno. Acude al servicio.'
+                : 'Your turn. Please arrive at the service.'
+              : entry.status}
+          </p>
+          <p>
             {es ? 'Posición' : 'Position'}: {entry.position}
           </p>
           <p>
@@ -184,8 +192,8 @@ export function DemoEntry() {
           <p>WhatsApp: {entry.notification}</p>
           <p>
             {es
-              ? 'Tu turno sigue activo aunque WhatsApp falle. Guarda este enlace privado para recuperarlo.'
-              : 'Your entry stays active even if WhatsApp fails. Save this private link to recover it.'}
+              ? 'Guarda este enlace privado para consultar el estado de tu turno.'
+              : 'Save this private link to check your queue status.'}
           </p>
         </>
       )}

@@ -3,6 +3,9 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 const root = fileURLToPath(new URL('../', import.meta.url))
+const port = process.env.NOQUEUE_E2E_PORT ?? '8787'
+if (!/^\d+$/.test(port) || Number(port) < 1024 || Number(port) > 65535)
+  throw new Error('Invalid NOQUEUE_E2E_PORT')
 const directory = path.join(root, '.wrangler', 'e2e')
 await rm(directory, { recursive: true, force: true })
 await mkdir(directory, { recursive: true })
@@ -17,7 +20,10 @@ config.assets.directory = path.resolve(root, config.assets.directory)
 config.d1_databases[0].migrations_dir = path.join(root, 'migrations')
 config.vars = {
   ...config.vars,
-  PUBLIC_APP_ORIGIN: 'http://127.0.0.1:8787',
+  PUBLIC_APP_ORIGIN: `http://127.0.0.1:${port}`,
+  BETTER_AUTH_SECRET: 'e2e-only-auth-secret-at-least-32-characters',
+  AUTH_EMAIL_API_KEY: 'e2e-only-mail-key',
+  AUTH_EMAIL_FROM: 'test@example.com',
   WHATSAPP_ENABLED: 'true',
   CONFIRMATION_EXPERIMENT_ENABLED: 'true',
   D360DIALOG_API_KEY: 'test-only-key',
@@ -57,4 +63,4 @@ function run(commandArgs) {
   })
 }
 await run(['d1', 'migrations', 'apply', 'DB', '--local', ...args])
-await run(['dev', '--local', '--port', '8787', ...args])
+await run(['dev', '--local', '--port', port, '--inspector-port', '0', ...args])

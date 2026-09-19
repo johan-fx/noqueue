@@ -1,5 +1,7 @@
 import { defineConfig, devices } from '@playwright/test'
 
+const origin = `http://127.0.0.1:${process.env.NOQUEUE_E2E_PORT ?? '8787'}`
+
 export default defineConfig({
   testDir: './specs',
   fullyParallel: true,
@@ -8,7 +10,7 @@ export default defineConfig({
   ...(process.env.CI ? { workers: 1 } : {}),
   reporter: 'html',
   use: {
-    baseURL: 'http://127.0.0.1:8787',
+    baseURL: origin,
     trace: 'on-first-retry',
   },
   projects: [
@@ -19,7 +21,7 @@ export default defineConfig({
   webServer: {
     command:
       'pnpm --dir ../.. --filter @noqueue/web build && pnpm --dir ../.. --filter @noqueue/api dev:e2e',
-    url: 'http://127.0.0.1:8787/api/v1/health',
+    url: `${origin}/api/v1/health`,
     reuseExistingServer: false,
     timeout: 120_000,
   },

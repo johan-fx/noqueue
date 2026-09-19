@@ -19,6 +19,8 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      // Auth verification links must reach the Worker, never the SPA navigation fallback.
+      workbox: { navigateFallbackDenylist: [/^\/api(?:\/|$)/] },
       manifest: {
         name: 'No Queue',
         short_name: 'No Queue',

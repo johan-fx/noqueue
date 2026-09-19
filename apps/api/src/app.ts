@@ -1,3 +1,8 @@
+import { publicServices } from './features/staff/public'
+import { createAuth } from './auth/server'
+import { readLocalMail } from './auth/mail'
+import { staffRoutes } from './features/staff/routes'
+import { bodyLimit } from 'hono/body-limit'
 import { experimentPage } from './features/queue/experiment-page'
 import {
   experimentQueueId,
@@ -21,6 +26,81 @@ import { Hono } from 'hono'
 export const app = new Hono<{ Bindings: CloudflareBindings }>().basePath(
   '/api/v1',
 )
+
+// Deliberate HTTP allowlist: global admin and organization mutation APIs are server-only.
+const authPaths = new Set([
+  '/get-session',
+  '/sign-out',
+  '/sign-in/username',
+  '/sign-in/email',
+  '/change-password',
+  '/change-email',
+  '/verify-email',
+  '/update-user',
+  '/list-sessions',
+  '/revoke-session',
+  '/revoke-other-sessions',
+  '/list-accounts',
+])
+app.use('/auth/*', bodyLimit({ maxSize: 4096 }))
+app.all('/auth/*', async (c) => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Referrer-Policy', 'no-referrer')
+  const path = c.req.path.slice('/api/v1/auth'.length)
+  if (!authPaths.has(path)) return c.json({ error: 'not_found' }, 404)
+  if (
+    c.req.method !== 'GET' &&
+    c.req.header('Origin') !== c.env.PUBLIC_APP_ORIGIN
+  )
+    return c.json({ error: 'origin_not_allowed' }, 403)
+  // Only explicitly supported profile fields; never accept roles, verified flags or usernames.
+  if (path === '/update-user') {
+    const body = await c.req.raw.clone().json()
+    if (
+      !z
+        .object({ name: z.string().trim().min(2).max(100) })
+        .strict()
+        .safeParse(body).success
+    )
+      return c.json({ error: 'invalid_profile' }, 400)
+  }
+  if (path === '/change-email') {
+    const body = await c.req.raw.clone().json()
+    const parsed = z
+      .object({
+        newEmail: z
+          .email()
+          .refine((v) => !v.toLowerCase().endsWith('.invalid')),
+      })
+      .safeParse(body)
+    if (!parsed.success) return c.json({ error: 'real_email_required' }, 400)
+    if (!c.env.AUTH_EMAIL_API_KEY || !c.env.AUTH_EMAIL_FROM)
+      return c.json({ error: 'email_delivery_unavailable' }, 503)
+  }
+  return createAuth(c.env).handler(c.req.raw)
+})
+app.route('/staff', staffRoutes)
+app.route('/public/services', publicServices)
+
+// A local-only mailbox for manually following Better Auth verification links.
+// It is both runtime- and host-gated, and requires a local secret header.
+app.get('/dev/local-mail', async (c) => {
+  const host = new URL(c.req.url).hostname
+  if (
+    c.env.APP_ENV !== 'local' ||
+    !['localhost', '127.0.0.1'].includes(host) ||
+    !(await secureEqual(
+      c.req.header('X-NoQueue-Dev-Token') ?? '',
+      c.env.LOCAL_DEV_TOKEN,
+    ))
+  )
+    return c.json({ error: 'not_found' }, 404)
+  const email = z.email().safeParse(c.req.query('email'))
+  if (!email.success) return c.json({ error: 'invalid_email' }, 400)
+  const message = readLocalMail(email.data)
+  if (!message) return c.json({ error: 'not_found' }, 404)
+  return c.json(message)
+})
 
 app.get('/health', (context) => {
   const response = healthResponseSchema.parse({

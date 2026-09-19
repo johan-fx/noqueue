@@ -11,12 +11,14 @@
     "test": "vitest run",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "smoke:360dialog": "node scripts/smoke-360dialog.mjs",
-    "dev:e2e": "node scripts/dev-e2e.mjs"
+    "dev:e2e": "node scripts/dev-e2e.mjs",
+    "auth:bootstrap": "node scripts/bootstrap-staff.mjs"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",
     "@hono/zod-validator": "0.9.1",
     "@noqueue/contracts": "workspace:*",
+    "better-auth": "1.7.5",
     "drizzle-orm": "0.45.2",
     "hono": "^4.13.7",
     "zod": "catalog:"

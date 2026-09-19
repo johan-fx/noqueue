@@ -1,7 +1,7 @@
-@import "tailwindcss";
-@import "tw-animate-css";
-@import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+@import '@fontsource-variable/geist';
 
 @custom-variant dark (&:is(.dark *));
 
@@ -144,4 +144,8 @@ input {
   html {
     @apply font-sans;
   }
+}
+/* Base UI Drawer overlay positioning on iOS Safari. */
+body {
+  position: relative;
 }

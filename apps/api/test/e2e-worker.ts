@@ -6,14 +6,21 @@ import { setupNetwork } from '@msw/cloudflare'
 import { http, HttpResponse } from 'msw'
 import worker from '../src/index'
 import { app } from '../src/app'
+import { createAuth } from '../src/auth/server'
 import { z } from 'zod'
 import { confirmationPage } from './confirmation-page'
 import { confirmationExperimentEnabled } from '../src/features/queue/confirmation'
 import { decryptPhone, hash, secureEqual } from '../src/features/queue/crypto'
 import { receiveWebhook } from '../src/features/queue/webhook'
 export { QueueCoordinator } from '../src/index'
+const staffMail = new Map<string, string>()
 const network = setupNetwork()
 network.use(
+  http.post('https://api.resend.com/emails', async ({ request }) => {
+    const message = (await request.json()) as { to: string[]; text: string }
+    staffMail.set(message.to[0]!, message.text)
+    return HttpResponse.json({ id: 'local-test-email' })
+  }),
   http.post(
     'https://noqueue-experiment.invalid/messages',
     async ({ request }) => {
@@ -145,15 +152,58 @@ app.post('/experiments/local/reply', async (context) => {
     context.env.D360DIALOG_WEBHOOK_TOKEN,
   )
 })
-export default {
-  fetch: worker.fetch,
-  async queue(batch: MessageBatch, bindings: CloudflareBindings) {
+// Isolated local test harness only: never mounted by src/index.ts.
+app.use('/experiments/local/staff/*', async (c, next) => {
+  if (
+    !(await secureEqual(
+      c.req.header('X-NoQueue-Pilot-Token') ?? '',
+      c.env.PILOT_ACCESS_TOKEN,
+    ))
+  )
+    return c.json({ error: 'unauthorized' }, 401)
+  await next()
+})
+app.post('/experiments/local/staff/identity', async (c) => {
+  const body = z
+    .object({
+      username: z.string().regex(/^[a-z0-9_.]{3,30}$/),
+      password: z.string().min(15).max(128),
+    })
+    .parse(await c.req.json())
+  const created = await createAuth(c.env).api.createUser({
+    body: {
+      email: `${body.username}@accounts.noqueue.invalid`,
+      password: body.password,
+      data: { username: body.username },
+      name: 'Test Commercial',
+      role: 'commercial_operator',
+    },
+  })
+  await c.env.DB.prepare('DELETE FROM rateLimit').run()
+  return c.json({ id: created.user.id })
+})
+app.get('/experiments/local/staff/mail', (c) =>
+  c.json({ text: staffMail.get(c.req.query('email') ?? '') ?? '' }),
+)
+let networkEnabled = false
+function enableNetwork() {
+  if (!networkEnabled) {
     network.enable()
-    try {
-      await worker.queue(batch, bindings)
-    } finally {
-      network.disable()
-    }
+    networkEnabled = true
+  }
+}
+export default {
+  async fetch(
+    request: Request,
+    bindings: CloudflareBindings,
+    ctx: ExecutionContext,
+  ) {
+    enableNetwork()
+    return worker.fetch(request, bindings, ctx)
+  },
+  async queue(batch: MessageBatch, bindings: CloudflareBindings) {
+    enableNetwork()
+    await worker.queue(batch, bindings)
   },
   scheduled: worker.scheduled,
 }

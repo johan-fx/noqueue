@@ -1,3 +1,6 @@
+import { HTTPException } from 'hono/http-exception'
+import type { QueueCommand } from '@noqueue/contracts/staff'
+import { runQueueCommand, configureQueue } from './features/staff/commands'
 import { DurableObject } from 'cloudflare:workers'
 import type { JoinQueue } from '@noqueue/contracts/queue'
 import { app } from './app'
@@ -18,6 +21,33 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     const result = this.tail.then(operation)
     this.tail = result.catch(() => undefined)
     return result
+  }
+  private async staffResult(work: () => Promise<{ ok: boolean }>) {
+    try {
+      return { status: 200, body: await work() }
+    } catch (error) {
+      if (error instanceof HTTPException)
+        return { status: error.status, body: { error: error.message } }
+      console.error('staff_command_failed')
+      return { status: 503, body: { error: 'temporarily_unavailable' } }
+    }
+  }
+  staffCommand(
+    actor: string,
+    queueId: string,
+    key: string,
+    input: QueueCommand,
+  ) {
+    return this.serialize(() =>
+      this.staffResult(() =>
+        runQueueCommand(this.env, actor, queueId, key, input),
+      ),
+    )
+  }
+  staffConfigure(actor: string, queueId: string, input: unknown) {
+    return this.serialize(() =>
+      this.staffResult(() => configureQueue(this.env, actor, queueId, input)),
+    )
   }
   experiment(action: 'seed' | 'advance', key: string) {
     return this.serialize(() => changeExperiment(this.env, action, key))
@@ -57,5 +87,19 @@ export default {
   },
   async scheduled(_controller, env) {
     await reconcile(env)
+    await env.DB.batch([
+      env.DB.prepare(
+        "DELETE FROM staff_rate WHERE CAST(substr(key,instr(key,':')+1) AS INTEGER) < ?",
+      ).bind(Math.floor(Date.now() / 60000) - 5),
+      env.DB.prepare('DELETE FROM rateLimit WHERE lastRequest < ?').bind(
+        Date.now() - 86400000,
+      ),
+      env.DB.prepare('DELETE FROM verification WHERE expiresAt < ?').bind(
+        new Date(Date.now() - 86400000).toISOString(),
+      ),
+      env.DB.prepare('DELETE FROM session WHERE expiresAt < ?').bind(
+        new Date().toISOString(),
+      ),
+    ])
   },
 } satisfies ExportedHandler<CloudflareBindings>

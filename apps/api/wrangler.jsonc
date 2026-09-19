@@ -3,6 +3,7 @@
   "name": "noqueue-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
   "assets": {
     "directory": "../web/dist",
     "binding": "ASSETS",

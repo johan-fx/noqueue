@@ -5,6 +5,19 @@
 **Product languages:** Spanish and English  
 **Time boundary:** up to eight sprints; any additional work requires an explicit scope extension.
 
+## Development increment — sales-led onboarding (2026-09-19)
+
+Commercial-led onboarding is the current launch path; payment is handled manually.
+Self-service and Stripe remain a later phase. Individual closed-access email OTP
+accounts replace shared establishment credentials. Owners already manage members
+and services, even without billing screens. Platform commercial roles are separate
+from establishment owner/manager/queue-staff/viewer roles.
+
+Implemented scope and explicit limitations: [ADR 0004](decisions/0004-sales-led-auth-tenancy.md).
+Local setup and release checklist: [staff access runbook](runbooks/staff-access.md).
+This increment does not claim completion of the broader realtime/native/bilingual
+scope below.
+
 ## 1. Executive summary
 
 No Queue lets a hospitality customer join a venue queue from a QR code, follow the status of their turn, and receive operational notifications. Staff operate the queue from an authenticated console. The WebApp remains the primary entry channel and is wrapped with Capacitor for iOS and Android distribution, including builds, native push, deep links, certificates, and initial App Store and Google Play publication.
@@ -391,3 +404,10 @@ This sequence orders dependencies. It is not a delivery promise and authorizes n
 - [ ] Keep secrets, OTPs, signing keys, and recovery in the client secure vault.
 - [ ] Create staging and `staging.noqueue-app.com` only when an application is ready to deploy.
 - [ ] Prepare a fictional-data demo account, bilingual store metadata, Data Safety/App Privacy, and review material.
+
+### Decisión de acceso inicial (2026-09-19)
+
+Sustituye el prototipo de OTP/invitaciones: alta manual con username/password y
+membresía inmediata. Sin `mustChangePassword`. Ajustes permiten nombre, cambio
+voluntario de contraseña y sustituir email sintético tras verificar el nuevo email.
+La entrega de correo no es requisito para alta/primer acceso. Ver runbook staff-access.

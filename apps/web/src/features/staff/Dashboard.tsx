@@ -19,14 +19,6 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
-  Table,
-  TableHeader,
-  TableRow,
-  TableHead,
-  TableBody,
-  TableCell,
-} from '@/components/ui/table'
-import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -42,17 +34,12 @@ import {
   DrawerDescription,
   DrawerFooter,
 } from '@/components/ui/drawer'
-import { Plus } from 'lucide-react'
+import { Plus, MoveRight } from 'lucide-react'
 import { ServiceForm } from './ServiceForm'
 import { api, errorMessage } from './api'
 import { Members } from './Members'
-const actionLabels = {
-  call: 'Llamar',
-  complete: 'Confirmar llegada',
-  cancel: 'Cancelar turno',
-  no_show: 'No presentado',
-  skip: 'Pasar al final',
-}
+import { QueueView } from './QueueView'
+import { queueActionLabels as actionLabels } from './queue-labels'
 export function Dashboard({ venue }: { venue: VenueSummary }) {
   const creationRequest = useRef<{ payload: string; key: string } | null>(null)
   const [drawer, setDrawer] = useState<
@@ -72,6 +59,7 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
     drawerTrigger.current = trigger
     creationRequest.current = null
     setDrawerError('')
+    if (mode === 'queue') setTab('active')
     setDrawer(mode)
   }
   function closeDrawer() {
@@ -227,13 +215,7 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
       setBusy(false)
     }
   }
-  const visible = entries.filter((e) =>
-    tab === 'active'
-      ? ['waiting', 'called'].includes(e.status)
-      : tab === 'completed'
-        ? ['completed', 'served'].includes(e.status)
-        : ['cancelled', 'no_show', 'expired'].includes(e.status),
-  )
+  const nextEntry = entries.find((entry) => entry.status === 'waiting')
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -291,7 +273,9 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
                       <CardHeader>
                         <CardTitle className="flex flex-wrap items-center gap-2">
                           {service.name}
-                          <Badge variant={service.open ? 'default' : 'secondary'}>
+                          <Badge
+                            variant={service.open ? 'default' : 'secondary'}
+                          >
                             {service.open ? 'Abierto' : 'Cerrado'}
                           </Badge>
                         </CardTitle>
@@ -412,116 +396,23 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
               </p>
             )}
             {drawer === 'queue' && queue && (
-              <div className="space-y-4">
-                <Card>
-                  <CardHeader>
-                    <div className="flex flex-wrap justify-between gap-3">
-                      <CardTitle>
-                        {queue.name}{' '}
-                        <Badge variant={queue.open ? 'default' : 'secondary'}>
-                          {queue.open ? 'Abierto' : 'Cerrado'}
-                        </Badge>
-                      </CardTitle>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      Última lectura: {lastSync || 'cargando…'} · Actualización
-                      cada 5 segundos
-                    </p>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex flex-wrap gap-2">
-                      {[
-                        ['active', 'En espera / llamados'],
-                        ['completed', 'Completados'],
-                        ['cancelled', 'Cancelados / ausentes'],
-                      ].map(([key, label]) => (
-                        <Button
-                          key={key}
-                          variant={tab === key ? 'default' : 'outline'}
-                          onClick={() => setTab(key!)}
-                        >
-                          {label}
-                        </Button>
-                      ))}
-                      <Button
-                        variant="ghost"
-                        onClick={() =>
-                          void refresh().catch((e) => setError(errorMessage(e)))
-                        }
-                      >
-                        Actualizar
-                      </Button>
-                    </div>
-                    <p className="text-sm">
-                      <a
-                        className="underline"
-                        href={`/q/${queue.id}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        Abrir enlace público de la cola
-                      </a>
-                    </p>
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Turno</TableHead>
-                          <TableHead>Personas</TableHead>
-                          <TableHead>Estado</TableHead>
-                          <TableHead>Acciones</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {visible.map((entry) => (
-                          <TableRow key={entry.id}>
-                            <TableCell className="font-mono">
-                              {entry.code}
-                            </TableCell>
-                            <TableCell>{entry.partySize}</TableCell>
-                            <TableCell>{entry.status}</TableCell>
-                            <TableCell>
-                              <div className="flex flex-wrap gap-2">
-                                {permissions.includes('queue.operate') &&
-                                  (
-                                    (entry.status === 'waiting'
-                                      ? ['call', 'skip', 'cancel']
-                                      : entry.status === 'called'
-                                        ? ['complete', 'no_show', 'cancel']
-                                        : []) as QueueCommand['action'][]
-                                  ).map((action) => (
-                                    <Button
-                                      variant="outline"
-                                      key={action}
-                                      onClick={() =>
-                                        setPending({
-                                          entry,
-                                          action,
-                                          key: crypto.randomUUID(),
-                                        })
-                                      }
-                                    >
-                                      {actionLabels[action]}
-                                    </Button>
-                                  ))}
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                        {!visible.length && (
-                          <TableRow>
-                            <TableCell
-                              colSpan={4}
-                              className="py-10 text-center text-muted-foreground"
-                            >
-                              No hay turnos en esta lista.
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              </div>
+              <QueueView
+                key={queue.id}
+                queue={queue}
+                entries={entries}
+                tab={tab}
+                onTabChange={setTab}
+                canOperate={permissions.includes('queue.operate')}
+                busy={busy}
+                lastSync={lastSync}
+                error={error}
+                onRefresh={() =>
+                  void refresh().catch((e) => setError(errorMessage(e)))
+                }
+                onAction={(entry, action) =>
+                  setPending({ entry, action, key: crypto.randomUUID() })
+                }
+              />
             )}
             {drawer === 'members' && permissions.includes('members.manage') && (
               <Members venueId={venue.id} name={venue.name} compact />
@@ -563,7 +454,29 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
               )}
           </div>
           <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
-            <Button variant="outline" disabled={saving} onClick={closeDrawer}>
+            {drawer === 'queue' &&
+              tab === 'active' &&
+              permissions.includes('queue.operate') && (
+                <Button
+                  className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
+                  disabled={busy || !nextEntry}
+                  onClick={() => {
+                    if (nextEntry)
+                      setPending({
+                        entry: nextEntry,
+                        action: 'call',
+                        key: crypto.randomUUID(),
+                      })
+                  }}
+                >
+                  Avanzar un turno <MoveRight aria-hidden="true" />
+                </Button>
+              )}
+            <Button
+              variant="outline"
+              disabled={saving || busy}
+              onClick={closeDrawer}
+            >
               {drawer === 'members' || drawer === 'queue'
                 ? 'Cerrar'
                 : 'Cancelar'}

@@ -46,6 +46,10 @@ No hay compatibilidad con el prototipo OTP.
   «Gestionar accesos» abre su propio Drawer para el owner. Los botones respetan
   los permisos por rol. «Gestionar cola» abre su Drawer con los turnos, filtros,
   actualización y acciones operativas; al cerrar, el foco vuelve al botón de la fila.
+  La gestión usa tabs «Lista», «Completados» y «Cancelados», con tarjetas por turno.
+  «Avanzar un turno» llama al primer turno en espera y pide confirmación; las acciones
+  individuales se despliegan en cada tarjeta según permisos. Se muestran códigos
+  y tamaños de grupo reales: el API aún no expone nombres de clientes ni ETA.
 - Owner/comercial autorizado: Accesos → nombre, username, contraseña y rol.
   Usernames únicos globalmente, normalizados a minúsculas e inmutables (3–30,
   letras ASCII, números, punto o guion bajo). Nunca se reutiliza una cuenta ajena.

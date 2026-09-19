@@ -318,15 +318,52 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await queueDrawer
     .getByRole('button', { name: 'Actualizar', exact: true })
     .click()
-  await queueDrawer.getByRole('button', { name: 'Llamar', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await expect(
-    queueDrawer.getByRole('cell', { name: 'called', exact: true }),
-  ).toBeVisible()
+    queueDrawer.getByRole('button', { name: 'Avanzar un turno' }),
+  ).toBeEnabled()
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('queue-list-mobile.png'),
+    fullPage: true,
+  })
+  await queueDrawer
+    .getByRole('button', { name: 'Avanzar un turno', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(queueDrawer.getByText('Llamado', { exact: true })).toBeVisible()
   await guest.reload()
   await expect(
     guest.getByText('Estado: Es tu turno. Acude al servicio.', { exact: true }),
   ).toBeVisible()
+  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
+  await queueDrawer
+    .getByRole('button', { name: 'Confirmar llegada', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await queueDrawer
+    .getByRole('tab', { name: 'Completados', exact: true })
+    .click()
+  await expect(
+    queueDrawer.getByRole('tab', { name: 'Completados', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(
+    queueDrawer.getByText('Completado', { exact: true }),
+  ).toBeVisible()
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('queue-completed-mobile.png'),
+    fullPage: true,
+  })
+  await queueDrawer
+    .getByRole('tab', { name: 'Cancelados', exact: true })
+    .click()
+  await expect(
+    queueDrawer.getByText('No hay turnos cancelados ni ausentes.'),
+  ).toBeVisible()
+  await queueDrawer.getByRole('tab', { name: 'Lista', exact: true }).click()
+  await expect(
+    queueDrawer.getByRole('button', { name: 'Avanzar un turno' }),
+  ).toBeDisabled()
   await guest.close()
   await queueDrawer.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await expect(queueDrawer).toHaveCount(0)

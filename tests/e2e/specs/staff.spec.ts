@@ -40,9 +40,10 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await page.getByRole('button', { name: 'Crear nuevo' }).click()
   await expect(page.getByLabel('Empresa / organización')).toHaveValue('')
   await page.getByLabel('Empresa / organización').fill('Hotel E2E')
-  await page
-    .getByLabel('Identificador único (sin espacios)')
-    .fill(`hotel-${suffix}`)
+  await expect(
+    page.getByLabel('Identificador único (sin espacios)'),
+  ).toHaveCount(0)
+  await expect(page.getByLabel('Zona horaria IANA')).toHaveCount(0)
   await page
     .getByLabel('Hotel / establecimiento', { exact: true })
     .fill('Hotel Madrid E2E')

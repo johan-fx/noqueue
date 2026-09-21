@@ -53,10 +53,23 @@ const defaults: ClientInput = {
   organizationName: '',
   slug: '',
   venueName: '',
+  // Solo España por ahora: no pedimos la zona al comercial.
   timezone: 'Europe/Madrid',
   ownerName: '',
   ownerUsername: '',
   ownerPassword: '',
+}
+// Identificador interno: minúsculas, guiones y un sufijo para que no choque.
+function slugFrom(value: string) {
+  const base = value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40)
+  const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 8)
+  return `${base || 'hotel'}-${suffix}`.slice(0, 60)
 }
 export function Commercial() {
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -262,18 +275,28 @@ export function Commercial() {
             <div hidden={step !== 1}>
               <form
                 id={clientFormId}
-                onSubmit={form.handleSubmit(() => {
-                  setSaveError('')
-                  setStep(2)
-                })}
+                onSubmit={(event) => {
+                  // El comercial no ve el identificador; lo rellenamos antes de validar.
+                  if (!form.getValues('slug')) {
+                    form.setValue(
+                      'slug',
+                      slugFrom(
+                        form.getValues('venueName') ||
+                          form.getValues('organizationName'),
+                      ),
+                    )
+                  }
+                  void form.handleSubmit(() => {
+                    setSaveError('')
+                    setStep(2)
+                  })(event)
+                }}
                 className="space-y-4"
               >
                 {(
                   [
                     ['organizationName', 'Empresa / organización'],
-                    ['slug', 'Identificador único (sin espacios)'],
                     ['venueName', 'Hotel / establecimiento'],
-                    ['timezone', 'Zona horaria IANA'],
                     ['ownerName', 'Nombre del administrador'],
                     ['ownerUsername', 'Usuario del administrador'],
                     [

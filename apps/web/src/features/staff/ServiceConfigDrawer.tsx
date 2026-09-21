@@ -113,7 +113,7 @@ export function ServiceConfigDrawer({
     >
       <DrawerContent
         finalFocus={finalFocus}
-        className="w-full sm:w-[28rem]"
+        className="w-full sm:w-md"
       >
         <DrawerHeader className="gap-4 border-b p-6">
           <div className="flex items-center gap-2">

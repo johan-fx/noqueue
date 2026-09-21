@@ -3,12 +3,13 @@ import type { ServiceInput } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
+import { Switch } from '@/components/ui/switch'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { TimeInput } from '@/components/shadcn-studio/date-picker/date-picker-09'
 import { Choice } from '../ServiceForm'
 import { readHours, weekdays, writeHours } from './hours'
 import { cutoffOptions } from './model'
-import { PlusIcon } from 'lucide-react'
+import { PlusIcon, Trash2Icon } from 'lucide-react'
 
 export function GeneralStep({
   form,
@@ -98,49 +99,71 @@ export function GeneralStep({
           ))}
         </ToggleGroup>
       </Field>
-      <Button
-        type="button"
-        variant={values.twentyFourHours ? 'default' : 'outline'}
-        aria-pressed={values.twentyFourHours}
-        onClick={() => {
-          const next = !values.twentyFourHours
-          form.setValue('twentyFourHours', next)
-          form.setValue(
-            'schedules',
-            next ? [] : writeHours(hours.days, hours.ranges),
-          )
-        }}
-      >
-        24 horas, todos los días
-      </Button>
+      <Field orientation="horizontal">
+        <Switch
+          id="service-twenty-four-hours"
+          checked={values.twentyFourHours}
+          onCheckedChange={(checked) => {
+            form.setValue('twentyFourHours', checked)
+            form.setValue(
+              'schedules',
+              checked ? [] : writeHours(hours.days, hours.ranges),
+            )
+          }}
+        />
+        <FieldLabel htmlFor="service-twenty-four-hours">
+          24 horas, todos los días
+        </FieldLabel>
+      </Field>
       {!values.twentyFourHours && (
         <div className="space-y-3">
-          {hours.ranges.map((range, index) => (
-            <div key={index} className="grid grid-cols-2 gap-3">
-              <TimeInput
-                id={`from-${index}`}
-                label="Desde"
-                value={range.from}
-                onChange={(from) => {
-                  const ranges = hours.ranges.map((item, itemIndex) =>
-                    itemIndex === index ? { ...item, from } : item,
-                  )
-                  applyHours(hours.days, ranges)
-                }}
-              />
-              <TimeInput
-                id={`to-${index}`}
-                label="Hasta"
-                value={range.to}
-                onChange={(to) => {
-                  const ranges = hours.ranges.map((item, itemIndex) =>
-                    itemIndex === index ? { ...item, to } : item,
-                  )
-                  applyHours(hours.days, ranges)
-                }}
-              />
-            </div>
-          ))}
+          {/* Each added range stays editable and can be removed. */}
+          <ul className="space-y-3">
+            {hours.ranges.map((range, index) => (
+              <li key={index} className="flex items-end gap-2">
+                <div className="grid min-w-0 flex-1 grid-cols-2 gap-3">
+                  <TimeInput
+                    id={`from-${index}`}
+                    label="Desde"
+                    value={range.from}
+                    onChange={(from) => {
+                      const ranges = hours.ranges.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, from } : item,
+                      )
+                      applyHours(hours.days, ranges)
+                    }}
+                  />
+                  <TimeInput
+                    id={`to-${index}`}
+                    label="Hasta"
+                    value={range.to}
+                    onChange={(to) => {
+                      const ranges = hours.ranges.map((item, itemIndex) =>
+                        itemIndex === index ? { ...item, to } : item,
+                      )
+                      applyHours(hours.days, ranges)
+                    }}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="shrink-0 size-11"
+                  aria-label={`Eliminar franja ${index + 1}`}
+                  onClick={() =>
+                    applyHours(
+                      hours.days,
+                      hours.ranges.filter((_, itemIndex) => itemIndex !== index),
+                    )
+                  }
+                >
+                  <Trash2Icon />
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <FieldError errors={[form.formState.errors.schedules]} />
           <Button
             type="button"
             size="lg"
@@ -155,7 +178,6 @@ export function GeneralStep({
           >
             <PlusIcon className="size-4" /> Añadir franja
           </Button>
-          <FieldError errors={[form.formState.errors.schedules]} />
         </div>
       )}
       <Field>

@@ -26,7 +26,8 @@ export function readHours(schedules: ServiceInput['schedules']): {
   }
   return {
     days: days.length ? days : [1],
-    ranges: ranges.length ? ranges : [{ from: '12:00', to: '23:00' }],
+    // An empty schedule stays empty so a deleted range does not come back.
+    ranges,
   }
 }
 

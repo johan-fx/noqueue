@@ -20,7 +20,7 @@ import {
   StepperSeparator,
   StepperTrigger,
 } from '@/components/reui/stepper'
-import { AddSpaceStep } from './service-config/AddSpaceStep'
+import { AddSpaceDrawer } from './service-config/AddSpaceStep'
 import { CapacityStep } from './service-config/CapacityStep'
 import { GeneralStep } from './service-config/GeneralStep'
 import { PreferenceStep } from './service-config/PreferenceStep'
@@ -76,13 +76,7 @@ export function ServiceConfigDrawer({
     setAddingSpace(false)
   }, [open, resetKey, initial, form])
   const step = steps[index] ?? 'general'
-  const title = addingSpace ? 'Añadir nuevo espacio' : serviceTitles[type]
-
   function back() {
-    if (addingSpace) {
-      setAddingSpace(false)
-      return
-    }
     if (index === 0) onClose()
     else setIndex((current) => current - 1)
   }
@@ -139,12 +133,10 @@ export function ServiceConfigDrawer({
               <ChevronLeft aria-hidden="true" />
             </Button>
             <div>
-              <DrawerTitle className="text-xl">{title}</DrawerTitle>
-              {addingSpace && <DrawerDescription>Capacidad</DrawerDescription>}
+              <DrawerTitle className="text-xl">{serviceTitles[type]}</DrawerTitle>
             </div>
           </div>
-          {!addingSpace && (
-            <div className="space-y-2">
+          <div className="space-y-2">
               <Stepper value={index + 1} onValueChange={() => undefined}>
                 <StepperNav>
                   {steps.map((item, itemIndex) => (
@@ -156,7 +148,11 @@ export function ServiceConfigDrawer({
                       >
                         <StepperIndicator className="size-2.5 border-0 bg-muted data-[state=active]:bg-foreground data-[state=completed]:bg-foreground" />
                       </StepperTrigger>
-                      {itemIndex < steps.length - 1 && <StepperSeparator />}
+                      {itemIndex < steps.length - 1 && (
+                        // The stock separator stays bg-muted. Completed steps
+                        // only turn the line dark when this state class is set.
+                        <StepperSeparator className="data-[state=completed]:bg-foreground" />
+                      )}
                     </StepperItem>
                   ))}
                 </StepperNav>
@@ -165,10 +161,9 @@ export function ServiceConfigDrawer({
                 {index + 1}. {stepLabels[step]}
               </DrawerDescription>
             </div>
-          )}
         </DrawerHeader>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-6">
-          {mode === 'edit' && !addingSpace && (
+          {mode === 'edit' && (
             <div className="flex items-center gap-3">
               <Badge variant={queueOpen ? 'default' : 'secondary'}>
                 {queueOpen ? 'Abierto' : 'Cerrado'}
@@ -188,9 +183,13 @@ export function ServiceConfigDrawer({
               {error || form.formState.errors.root?.message}
             </p>
           )}
-          {addingSpace && type !== 'reception' ? (
-            <AddSpaceStep
+          {step === 'general' ? (
+            <GeneralStep form={form} lockType={mode === 'edit'} />
+          ) : step === 'capacity' && type !== 'reception' ? (
+            <AddSpaceDrawer
+              open={addingSpace}
               type={type}
+              onOpenChange={setAddingSpace}
               onAdd={(name) => {
                 form.setValue('spaces', [
                   ...form.getValues('spaces'),
@@ -198,11 +197,11 @@ export function ServiceConfigDrawer({
                 ])
                 setAddingSpace(false)
               }}
-            />
-          ) : step === 'general' ? (
-            <GeneralStep form={form} lockType={mode === 'edit'} />
+            >
+              <CapacityStep form={form} />
+            </AddSpaceDrawer>
           ) : step === 'capacity' ? (
-            <CapacityStep form={form} onAddSpace={() => setAddingSpace(true)} />
+            <CapacityStep form={form} />
           ) : step === 'queue' ? (
             <QueueStep form={form} />
           ) : step === 'preference' ? (
@@ -212,20 +211,14 @@ export function ServiceConfigDrawer({
           )}
         </div>
         <DrawerFooter className="border-t bg-background p-4">
-          {addingSpace ? (
-            <Button type="submit" form="add-space" className="h-12 w-full">
-              Añadir
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              className="h-12 w-full"
-              disabled={saving}
-              onClick={() => void forward()}
-            >
-              {saving ? 'Guardando…' : step === 'summary' ? 'Confirmar' : 'Siguiente'}
-            </Button>
-          )}
+          <Button
+            type="button"
+            className="h-12 w-full"
+            disabled={saving}
+            onClick={() => void forward()}
+          >
+            {saving ? 'Guardando…' : step === 'summary' ? 'Confirmar' : 'Siguiente'}
+          </Button>
         </DrawerFooter>
       </DrawerContent>
     </Drawer>

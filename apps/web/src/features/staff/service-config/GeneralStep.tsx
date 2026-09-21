@@ -25,7 +25,8 @@ export function GeneralStep({
     : [values.cutoffMinutes, ...cutoffOptions]
 
   function applyHours(days: number[], ranges: typeof hours.ranges) {
-    form.setValue('schedules', writeHours(days, ranges), { shouldValidate: true })
+    // Overlap is checked when the footer "Siguiente" button runs the step.
+    form.setValue('schedules', writeHours(days, ranges))
   }
 
   return (

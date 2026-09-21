@@ -1,9 +1,70 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { Check, ChevronLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
-import { Check } from 'lucide-react'
 import { spacePresets } from './model'
+
+// Nested drawer: the capacity step stays mounted and stacks behind this panel.
+export function AddSpaceDrawer({
+  open,
+  type,
+  onOpenChange,
+  onAdd,
+  children,
+}: {
+  open: boolean
+  type: 'restaurant' | 'pool'
+  onOpenChange: (open: boolean) => void
+  onAdd: (name: string) => void
+  children: ReactNode
+}) {
+  return (
+    <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
+      {children}
+      <DrawerContent className="w-full sm:w-[28rem]">
+        <DrawerHeader className="gap-4 border-b p-6">
+          <div className="flex items-center gap-2">
+            <DrawerClose
+              render={
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label="Volver"
+                />
+              }
+            >
+              <ChevronLeft aria-hidden="true" />
+            </DrawerClose>
+            <div>
+              <DrawerTitle className="text-xl">Añadir nuevo espacio</DrawerTitle>
+              <DrawerDescription>Capacidad</DrawerDescription>
+            </div>
+          </div>
+        </DrawerHeader>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">
+          {/* Remount so the name field starts from the first preset each time. */}
+          {open && <AddSpaceStep key="open" type={type} onAdd={onAdd} />}
+        </div>
+        <DrawerFooter className="border-t bg-background p-4">
+          <Button type="submit" form="add-space" className="h-12 w-full">
+            Añadir
+          </Button>
+        </DrawerFooter>
+      </DrawerContent>
+    </Drawer>
+  )
+}
 
 export function AddSpaceStep({
   type,

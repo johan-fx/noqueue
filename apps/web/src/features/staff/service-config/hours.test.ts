@@ -28,6 +28,14 @@ describe('service opening hours', () => {
     })
   })
 
+  it('keeps two identical ranges so another slot can be added', () => {
+    const ranges = [
+      { from: '12:00', to: '23:00' },
+      { from: '12:00', to: '23:00' },
+    ]
+    expect(readHours(writeHours([1], ranges)).ranges).toEqual(ranges)
+  })
+
   it('labels a contiguous week span', () => {
     expect(formatDays([2, 3, 4, 5, 6, 0])).toBe('Martes - Domingo')
   })

@@ -1,9 +1,11 @@
 import type { UseFormReturn } from 'react-hook-form'
 import type { ServiceInput } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
+import { DrawerTrigger } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { seatLabel } from './model'
+import { PlusIcon, Trash2Icon } from 'lucide-react'
 
 const receptionLabels = {
   check_in: 'Check-in',
@@ -11,13 +13,7 @@ const receptionLabels = {
   other: 'Otros',
 } as const
 
-export function CapacityStep({
-  form,
-  onAddSpace,
-}: {
-  form: UseFormReturn<ServiceInput>
-  onAddSpace: () => void
-}) {
+export function CapacityStep({ form }: { form: UseFormReturn<ServiceInput> }) {
   const values = form.watch()
   const seats = seatLabel(values.type)
   if (values.type === 'reception') {
@@ -91,13 +87,18 @@ export function CapacityStep({
                 form.setValue('assignmentPreference', 'fastest')
             }}
           >
-            Quitar espacio
+           <Trash2Icon className="size-4 text-red-500 hover:text-red-600" /> Quitar espacio
           </Button>
         </section>
       ))}
-      <Button type="button" variant="outline" className="w-full" onClick={onAddSpace}>
-        + Añadir espacio
-      </Button>
+      {/* Opens the nested add-space drawer. The capacity list stays mounted behind it. */}
+      <DrawerTrigger
+        render={
+          <Button type="button" size="lg" variant="outline" className="w-full" />
+        }
+      >
+        <PlusIcon className="size-4" /> Añadir espacio
+      </DrawerTrigger>
       <FieldError errors={[form.formState.errors.spaces]} />
     </div>
   )

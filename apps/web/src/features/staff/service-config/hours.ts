@@ -19,11 +19,15 @@ export function readHours(schedules: ServiceInput['schedules']): {
   ranges: TimeRange[]
 } {
   const days = dayOrder.filter((day) => schedules.some((slot) => slot.day === day))
-  const ranges: TimeRange[] = []
-  for (const slot of schedules) {
-    if (!ranges.some((range) => range.from === slot.from && range.to === slot.to))
-      ranges.push({ from: slot.from, to: slot.to })
-  }
+  // Every day stores the same ranges. Read one day so two equal ranges
+  // stay as two rows. Deduping by from/to hid the second "Añadir franja" click.
+  const sourceDay = days[0]
+  const ranges =
+    sourceDay === undefined
+      ? []
+      : schedules
+          .filter((slot) => slot.day === sourceDay)
+          .map((slot) => ({ from: slot.from, to: slot.to }))
   return {
     days: days.length ? days : [1],
     // An empty schedule stays empty so a deleted range does not come back.

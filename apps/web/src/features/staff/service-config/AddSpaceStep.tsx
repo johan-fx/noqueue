@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
+import { cn } from 'cn'
 import { spacePresets } from './model'
 
 // Nested drawer: the capacity step stays mounted and stacks behind this panel.
@@ -87,7 +88,7 @@ export function AddSpaceStep({
     >
       <Field>
         <FieldLabel>Espacio predefinido</FieldLabel>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-2 gap-4">
           {presets.map((item) => {
             const selected = preset === item
             return (
@@ -95,15 +96,19 @@ export function AddSpaceStep({
                 key={item}
                 type="button"
                 variant="outline"
+                size="lg"
                 aria-pressed={selected}
-                className="justify-between"
+                className={cn(
+                  'h-12 w-full justify-between px-4 text-base font-normal text-gray-700 shadow-xs',
+                  selected ? 'border-gray-800' : 'border-input',
+                )}
                 onClick={() => {
                   setPreset(item)
                   setName(item)
                 }}
               >
                 {item}
-                {selected && <Check aria-hidden="true" />}
+                {selected && <Check aria-hidden="true" className="size-6" />}
               </Button>
             )
           })}

@@ -5,12 +5,13 @@ import { DrawerTrigger } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { seatLabel } from './model'
-import { PlusIcon, Trash2Icon } from 'lucide-react'
+import { CheckIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { cn } from 'cn'
 
 const receptionLabels = {
   check_in: 'Check-in',
   check_out: 'Check-out',
-  other: 'Otros',
+  other: 'Otros temas',
 } as const
 
 export function CapacityStep({ form }: { form: UseFormReturn<ServiceInput> }) {
@@ -20,15 +21,21 @@ export function CapacityStep({ form }: { form: UseFormReturn<ServiceInput> }) {
     return (
       <Field>
         <FieldLabel>Servicios de recepción</FieldLabel>
-        <div className="flex flex-wrap gap-2">
+        {/* Two equal cards per row. Selected: dark border + check on the right. */}
+        <div className="grid grid-cols-2 gap-4">
           {(['check_in', 'check_out', 'other'] as const).map((key) => {
             const selected = values.receptionServices.includes(key)
             return (
               <Button
                 key={key}
                 type="button"
-                variant={selected ? 'default' : 'outline'}
+                variant="outline"
+                size="lg"
                 aria-pressed={selected}
+                className={cn(
+                  'h-12 w-full justify-between px-4 text-base font-normal text-gray-700 shadow-xs',
+                  selected ? 'border-gray-800' : 'border-input',
+                )}
                 onClick={() => {
                   const current = form.getValues('receptionServices')
                   form.setValue(
@@ -41,6 +48,7 @@ export function CapacityStep({ form }: { form: UseFormReturn<ServiceInput> }) {
                 }}
               >
                 {receptionLabels[key]}
+                {selected && <CheckIcon className="size-6" />}
               </Button>
             )
           })}

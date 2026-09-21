@@ -3,7 +3,6 @@ import { useForm, useWatch, type FieldPath } from 'react-hook-form'
 import { ChevronLeft } from 'lucide-react'
 import { serviceSchema, type ServiceInput } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import {
   Drawer,
   DrawerContent,
@@ -33,19 +32,16 @@ export function ServiceConfigDrawer({
   open,
   mode,
   initial,
-  queueOpen = false,
   saving = false,
   error = '',
   resetKey = 'create',
   finalFocus,
   onClose,
   onSave,
-  onToggleOpen,
 }: {
   open: boolean
   mode: 'create' | 'edit'
   initial?: ServiceInput
-  queueOpen?: boolean
   saving?: boolean
   error?: string
   // Identifies which service is being edited. The drawer itself stays mounted
@@ -54,7 +50,6 @@ export function ServiceConfigDrawer({
   finalFocus?: RefObject<HTMLElement | null>
   onClose: () => void
   onSave: (input: ServiceInput) => void | Promise<void>
-  onToggleOpen?: () => void
 }) {
   const form = useForm<ServiceInput>({
     defaultValues: { ...emptyService, ...initial },
@@ -163,21 +158,6 @@ export function ServiceConfigDrawer({
             </div>
         </DrawerHeader>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-6">
-          {mode === 'edit' && (
-            <div className="flex items-center gap-3">
-              <Badge variant={queueOpen ? 'default' : 'secondary'}>
-                {queueOpen ? 'Abierto' : 'Cerrado'}
-              </Badge>
-              <Button
-                type="button"
-                variant="outline"
-                disabled={saving}
-                onClick={onToggleOpen}
-              >
-                {queueOpen ? 'Cerrar cola' : 'Abrir cola'}
-              </Button>
-            </div>
-          )}
           {(error || form.formState.errors.root) && (
             <p role="alert" className="text-destructive">
               {error || form.formState.errors.root?.message}

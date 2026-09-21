@@ -265,13 +265,12 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .fill('Borrador cancelado')
   await configDrawer.getByRole('button', { name: 'Volver' }).click()
   await expect(configDrawer).toHaveCount(0)
+  await restaurant.getByRole('switch', { name: 'Abrir cola' }).click()
+  await expect(restaurant.getByRole('switch', { name: 'Abrir cola' })).toBeChecked()
   await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
   await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
     'Restaurante E2E',
   )
-
-  await page.getByRole('button', { name: 'Abrir cola', exact: true }).click()
-  await expect(configDrawer.getByText('Abierto', { exact: true })).toBeVisible()
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({
     path: testInfo.outputPath('staff-mobile.png'),

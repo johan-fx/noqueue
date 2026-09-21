@@ -18,6 +18,8 @@ import {
 } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import {
   Dialog,
   DialogContent,
@@ -34,7 +36,7 @@ import {
   DrawerDescription,
   DrawerFooter,
 } from '@/components/ui/drawer'
-import { Plus, MoveRight } from 'lucide-react'
+import { Plus, MoveRight, UsersIcon } from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, errorMessage } from './api'
 import { Members } from './Members'
@@ -171,21 +173,20 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
       setSaving(false)
     }
   }
-  async function toggleQueue() {
-    if (!queue || savingRef.current) return
+  async function toggleQueue(target: QueueSummary) {
+    if (savingRef.current) return
     savingRef.current = true
     setSaving(true)
-    setDrawerError('')
+    setError('')
     try {
-      await api(`/queues/${queue.id}`, 'PATCH', {
-        ...queue.config,
-        version: queue.version,
-        open: !queue.open,
+      await api(`/queues/${target.id}`, 'PATCH', {
+        ...target.config,
+        version: target.version,
+        open: !target.open,
       })
       setQueues(await api<QueueSummary[]>(`/venues/${venue.id}/queues`))
-      setError('')
     } catch (e) {
-      setDrawerError(errorMessage(e))
+      setError(errorMessage(e))
     } finally {
       savingRef.current = false
       setSaving(false)
@@ -228,9 +229,10 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
         {permissions.includes('members.manage') && (
           <Button
             variant="outline"
+            className="text-sm!"
             onClick={(event) => openDrawer('members', event.currentTarget)}
           >
-            Gestionar accesos
+            <UsersIcon className="size-4" /> Accesos
           </Button>
         )}
       </div>
@@ -271,13 +273,32 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
                       }
                     >
                       <CardHeader>
-                        <CardTitle className="flex flex-wrap items-center gap-2">
-                          {service.name}
-                          <Badge
-                            variant={service.open ? 'default' : 'secondary'}
-                          >
-                            {service.open ? 'Abierto' : 'Cerrado'}
-                          </Badge>
+                        <CardTitle className="flex w-full items-center justify-between gap-2">
+                          <span className="flex min-w-0 items-center gap-2">
+                            {service.name}
+                            <Badge
+                              variant={service.open ? 'default' : 'secondary'}
+                            >
+                              {service.open ? 'Abierto' : 'Cerrado'}
+                            </Badge>
+                          </span>
+                          {permissions.includes('queue.configure') && (
+                            <Label
+                              htmlFor={`queue-open-${service.id}`}
+                              className="shrink-0 font-normal"
+                            >
+                              Abrir cola
+                              <Switch
+                                id={`queue-open-${service.id}`}
+                                size="sm"
+                                checked={service.open}
+                                disabled={saving}
+                                onCheckedChange={() =>
+                                  void toggleQueue(service)
+                                }
+                              />
+                            </Label>
+                          )}
                         </CardTitle>
                         <CardDescription>
                           {
@@ -367,13 +388,11 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
         open={drawer === 'create' || drawer === 'edit'}
         mode={drawer === 'edit' ? 'edit' : 'create'}
         {...(drawer === 'edit' && queue ? { initial: queue.config } : {})}
-        queueOpen={!!queue?.open}
         saving={saving}
         error={drawerError}
         finalFocus={drawerTrigger}
         onClose={closeDrawer}
         onSave={saveService}
-        onToggleOpen={() => void toggleQueue()}
       />
       <Drawer
         open={drawer === 'members' || drawer === 'queue'}

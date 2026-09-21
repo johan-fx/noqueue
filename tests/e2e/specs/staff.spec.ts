@@ -230,25 +230,21 @@ test('sales provisioning, direct owner access and staff console use passwords an
   })
   await addService.click()
   const newService = page.getByRole('dialog', {
-    name: 'Añadir servicio',
+    name: 'Configuración restaurante',
     exact: true,
   })
   await newService.getByLabel('Nombre del servicio').fill('Borrador')
-  await newService
-    .getByRole('button', { name: 'Cancelar', exact: true })
-    .click()
+  await newService.getByRole('button', { name: 'Volver', exact: true }).click()
   await expect(newService).toHaveCount(0)
   await expect(services.getByRole('article')).toHaveCount(1)
   await addService.click()
   await expect(newService.getByLabel('Nombre del servicio')).toHaveValue('')
-  await newService
-    .getByRole('button', { name: 'Añadir servicio', exact: true })
-    .click()
+  await newService.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await expect(newService).toBeVisible()
   await newService.getByLabel('Nombre del servicio').fill('Segundo restaurante')
-  await newService
-    .getByRole('button', { name: 'Añadir servicio', exact: true })
-    .click()
+  for (let step = 0; step < 4; step++)
+    await newService.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await newService.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await expect(newService).toHaveCount(0)
   await expect(services.getByRole('article')).toHaveCount(2)
   await expect(
@@ -258,14 +254,16 @@ test('sales provisioning, direct owner access and staff console use passwords an
     name: 'Servicio Restaurante E2E',
   })
   await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
-  const configDrawer = page.getByRole('dialog', { name: 'Configurar servicio' })
+  const configDrawer = page.getByRole('dialog', {
+    name: 'Configuración restaurante',
+  })
   await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
     'Restaurante E2E',
   )
   await configDrawer
     .getByLabel('Nombre del servicio')
     .fill('Borrador cancelado')
-  await configDrawer.getByRole('button', { name: 'Cancelar' }).click()
+  await configDrawer.getByRole('button', { name: 'Volver' }).click()
   await expect(configDrawer).toHaveCount(0)
   await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
   await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
@@ -279,10 +277,11 @@ test('sales provisioning, direct owner access and staff console use passwords an
     path: testInfo.outputPath('staff-mobile.png'),
     fullPage: true,
   })
-  await page.getByRole('combobox', { name: 'Horario', exact: true }).click()
-  await page.getByRole('option', { name: '24 horas, todos los días' }).click()
+  await page.getByRole('button', { name: '24 horas, todos los días' }).click()
+  for (let step = 0; step < 4; step++)
+    await configDrawer.getByRole('button', { name: 'Siguiente' }).click()
   await expect(
-    configDrawer.getByRole('button', { name: 'Guardar configuración' }),
+    configDrawer.getByRole('button', { name: 'Confirmar' }),
   ).toBeInViewport()
   await page.route('**/api/v1/staff/queues/*', async (route) => {
     if (route.request().method() === 'PATCH') {
@@ -294,15 +293,13 @@ test('sales provisioning, direct owner access and staff console use passwords an
       await page.unroute('**/api/v1/staff/queues/*')
     } else await route.continue()
   })
-  await page.getByRole('button', { name: 'Guardar configuración' }).click()
+  await page.getByRole('button', { name: 'Confirmar' }).click()
   await expect(configDrawer.getByRole('alert')).toBeVisible()
   await expect(
-    configDrawer.getByRole('combobox', { name: 'Horario', exact: true }),
-  ).toContainText('24 horas')
-  await page.getByRole('button', { name: 'Guardar configuración' }).click()
-  await expect(
-    page.getByRole('button', { name: 'Guardar configuración' }),
-  ).toHaveCount(0)
+    configDrawer.getByText('24 horas, todos los días'),
+  ).toBeVisible()
+  await page.getByRole('button', { name: 'Confirmar' }).click()
+  await expect(page.getByRole('button', { name: 'Confirmar' })).toHaveCount(0)
   await restaurant.getByRole('button', { name: 'Gestionar cola' }).click()
   const queueDrawer = page.getByRole('dialog', { name: 'Gestionar cola' })
   await expect(queueDrawer).toBeVisible()

@@ -55,6 +55,9 @@ export const serviceSchema = z
     receptionServices: z
       .array(z.enum(['check_in', 'check_out', 'other']))
       .max(3),
+    // Optional so queues saved before the wizard still parse.
+    // `fastest` means assign the space with the shortest wait.
+    assignmentPreference: z.string().trim().min(1).max(100).optional(),
   })
   .superRefine((v, ctx) => {
     if (!v.twentyFourHours && !v.schedules.length)

@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef, useId } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import type {
   QueueSummary,
   StaffEntry,
@@ -35,7 +35,7 @@ import {
   DrawerFooter,
 } from '@/components/ui/drawer'
 import { Plus, MoveRight } from 'lucide-react'
-import { ServiceForm } from './ServiceForm'
+import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, errorMessage } from './api'
 import { Members } from './Members'
 import { QueueView } from './QueueView'
@@ -51,7 +51,6 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
   const [loading, setLoading] = useState(true)
   const savingRef = useRef(false)
   const drawerTrigger = useRef<HTMLButtonElement | null>(null)
-  const serviceFormId = useId()
   function openDrawer(
     mode: 'create' | 'edit' | 'members' | 'queue',
     trigger: HTMLButtonElement,
@@ -363,8 +362,21 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
           </Button>
         </div>
       )}
+      <ServiceConfigDrawer
+        resetKey={drawer === 'edit' ? (queue?.id ?? 'edit') : 'create'}
+        open={drawer === 'create' || drawer === 'edit'}
+        mode={drawer === 'edit' ? 'edit' : 'create'}
+        {...(drawer === 'edit' && queue ? { initial: queue.config } : {})}
+        queueOpen={!!queue?.open}
+        saving={saving}
+        error={drawerError}
+        finalFocus={drawerTrigger}
+        onClose={closeDrawer}
+        onSave={saveService}
+        onToggleOpen={() => void toggleQueue()}
+      />
       <Drawer
-        open={drawer !== null}
+        open={drawer === 'members' || drawer === 'queue'}
         onOpenChange={(open) => {
           if (!open) closeDrawer()
         }}
@@ -376,18 +388,10 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
         >
           <DrawerHeader className="border-b p-6">
             <DrawerTitle className="text-xl">
-              {drawer === 'create'
-                ? 'Añadir servicio'
-                : drawer === 'edit'
-                  ? 'Configurar servicio'
-                  : drawer === 'queue'
-                    ? 'Gestionar cola'
-                    : 'Gestionar accesos'}
+              {drawer === 'queue' ? 'Gestionar cola' : 'Gestionar accesos'}
             </DrawerTitle>
             <DrawerDescription>
-              {drawer === 'edit' || drawer === 'queue'
-                ? queue?.name
-                : venue.name}
+              {drawer === 'queue' ? queue?.name : venue.name}
             </DrawerDescription>
           </DrawerHeader>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">
@@ -418,41 +422,6 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
             {drawer === 'members' && permissions.includes('members.manage') && (
               <Members venueId={venue.id} name={venue.name} compact />
             )}
-            {drawer === 'create' && permissions.includes('queue.configure') && (
-              <ServiceForm
-                key="create"
-                formId={serviceFormId}
-                hideSubmit
-                disabled={saving}
-                onSave={saveService}
-              />
-            )}
-            {drawer === 'edit' &&
-              queue &&
-              permissions.includes('queue.configure') && (
-                <div className="space-y-5">
-                  <div className="flex items-center gap-3">
-                    <Badge variant={queue.open ? 'default' : 'secondary'}>
-                      {queue.open ? 'Abierto' : 'Cerrado'}
-                    </Badge>
-                    <Button
-                      variant="outline"
-                      disabled={saving}
-                      onClick={() => void toggleQueue()}
-                    >
-                      {queue.open ? 'Cerrar cola' : 'Abrir cola'}
-                    </Button>
-                  </div>
-                  <ServiceForm
-                    key={queue.id}
-                    formId={serviceFormId}
-                    hideSubmit
-                    initial={queue.config}
-                    disabled={saving}
-                    onSave={saveService}
-                  />
-                </div>
-              )}
           </div>
           <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
             {drawer === 'queue' &&
@@ -478,19 +447,8 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
               disabled={saving || busy}
               onClick={closeDrawer}
             >
-              {drawer === 'members' || drawer === 'queue'
-                ? 'Cerrar'
-                : 'Cancelar'}
+              Cerrar
             </Button>
-            {drawer !== 'members' && drawer !== 'queue' && (
-              <Button type="submit" form={serviceFormId} disabled={saving}>
-                {saving
-                  ? 'Guardando…'
-                  : drawer === 'create'
-                    ? 'Añadir servicio'
-                    : 'Guardar configuración'}
-              </Button>
-            )}
           </DrawerFooter>
         </DrawerContent>
       </Drawer>

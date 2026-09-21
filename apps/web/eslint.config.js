@@ -20,7 +20,11 @@ export default defineConfig([
     },
   },
   {
-    files: ['src/components/ui/**/*.tsx'],
+    files: [
+      'src/components/ui/**/*.tsx',
+      'src/components/reui/**/*.tsx',
+      'src/components/shadcn-studio/**/*.tsx',
+    ],
     rules: {
       'react-refresh/only-export-components': 'off',
     },

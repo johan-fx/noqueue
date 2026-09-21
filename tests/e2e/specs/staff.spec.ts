@@ -185,7 +185,8 @@ test('sales provisioning, direct owner access and staff console use passwords an
     path: testInfo.outputPath('commercial.png'),
     fullPage: true,
   })
-  await page.getByRole('button', { name: 'Cerrar sesión' }).click()
+  await page.getByRole('button', { name: 'Ajustes', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Cerrar sesión' }).click()
   await page.getByLabel('Usuario o email').fill(owner)
   await page.getByLabel('Contraseña', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Entrar', exact: true }).click()
@@ -368,7 +369,8 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await queueDrawer.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await expect(queueDrawer).toHaveCount(0)
   await page.setViewportSize({ width: 1280, height: 900 })
-  await page.getByRole('link', { name: 'Ajustes', exact: true }).click()
+  await page.getByRole('button', { name: 'Ajustes', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Ajustes', exact: true }).click()
   await expect(
     page.getByRole('heading', { name: 'Cambiar email', exact: true }),
   ).toBeVisible()

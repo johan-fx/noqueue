@@ -1,8 +1,18 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
 import type { VenueSummary } from '@noqueue/contracts/staff'
+import { LogOut, Settings, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { authClient } from '@/data/auth/client'
 import { api, ApiError, errorMessage } from './api'
 import { Choice } from './ServiceForm'
@@ -36,21 +46,37 @@ export function StaffApp() {
           <Link to="/staff" className="text-xl font-semibold tracking-tight">
             NoQueue
           </Link>
-          <div className="flex items-center gap-4">
-            <Link to="/settings/account">Ajustes</Link>
-            <span className="hidden text-sm text-muted-foreground sm:block">
-              {me?.user.username}
-            </span>
-            <Button
-              variant="outline"
-              onClick={async () => {
-                await authClient.signOut()
-                navigate('/login')
-              }}
+          {/* Account menu: settings icon opens Ajustes + sign out. */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={<Button variant="outline" size="icon" />}
             >
-              Cerrar sesión
-            </Button>
-          </div>
+              <Settings />
+              <span className="sr-only">Ajustes</span>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>{me?.user.username}</DropdownMenuLabel>
+                <DropdownMenuItem
+                  render={<Link to="/settings/account" />}
+                >
+                  <User />
+                  Ajustes
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onClick={async () => {
+                  await authClient.signOut()
+                  navigate('/login')
+                }}
+              >
+                <LogOut />
+                Cerrar sesión
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
       <main className="mx-auto max-w-7xl space-y-6 p-6">
@@ -63,14 +89,16 @@ export function StaffApp() {
         {me?.commercial && <Commercial />}
         {!!me?.venues.length && (
           <>
-            <div className="max-w-sm">
-              <Choice
-                label="Establecimiento"
-                value={venueId}
-                items={Object.fromEntries(me.venues.map((v) => [v.id, v.name]))}
-                onChange={setVenueId}
-              />
-            </div>
+            {me.venues.length > 1 && (
+              <div className="max-w-sm">
+                <Choice
+                  label="Establecimiento"
+                  value={venueId}
+                  items={Object.fromEntries(me.venues.map((v) => [v.id, v.name]))}
+                  onChange={setVenueId}
+                />
+              </div>
+            )}
             {me.venues.find((v) => v.id === venueId) && (
               <Dashboard
                 key={venueId}

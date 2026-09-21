@@ -79,7 +79,7 @@ export function Login() {
               <FieldError errors={[form.formState.errors.password]} />
             </Field>
             {error && <p role="alert">{error}</p>}
-            <Button type="submit" disabled={form.formState.isSubmitting}>
+            <Button type="submit" size="lg" disabled={form.formState.isSubmitting}>
               Entrar
             </Button>
             <p className="text-sm text-muted-foreground">

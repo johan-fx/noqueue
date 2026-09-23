@@ -291,7 +291,7 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
                               <Switch
                                 id={`queue-open-${service.id}`}
                                 size="sm"
-                                checked={service.open}
+                                checked={!!service.open}
                                 disabled={saving}
                                 onCheckedChange={() =>
                                   void toggleQueue(service)

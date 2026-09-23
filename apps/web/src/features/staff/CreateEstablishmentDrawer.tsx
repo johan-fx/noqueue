@@ -143,8 +143,8 @@ export function CreateEstablishmentDrawer({
                 <FieldLabel htmlFor={`${prefix}-${name}`}>{label}</FieldLabel>
                 <Input
                   id={`${prefix}-${name}`}
-                  autoComplete={name === 'ownerPassword' ? 'new-password' : 'off'}
-                  type={name === 'ownerPassword' ? 'password' : 'text'}
+                  autoComplete="off"
+                  type="text"
                   {...form.register(name)}
                   aria-invalid={!!form.formState.errors[name]}
                 />
@@ -227,7 +227,8 @@ function PasswordField({
   label: string
   visible: boolean
   value: string
-  error?: string
+  // `undefined` is allowed so callers can pass an optional form message directly.
+  error?: string | undefined
   autoComplete: string
   onToggle: () => void
   onChange: (value: string) => void

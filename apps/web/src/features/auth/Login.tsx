@@ -3,6 +3,7 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { useNavigate } from 'react-router'
+import { Eye, EyeOff } from 'lucide-react'
 import { authClient } from '@/data/auth/client'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -20,7 +21,8 @@ const schema = z.object({
 })
 export function Login() {
   const navigate = useNavigate(),
-    [error, setError] = useState('')
+    [error, setError] = useState(''),
+    [showPassword, setShowPassword] = useState(false)
   const form = useForm({
     resolver: zodResolver(schema),
     defaultValues: { identifier: '', password: '' },
@@ -70,12 +72,32 @@ export function Login() {
             </Field>
             <Field>
               <FieldLabel htmlFor="password">Contraseña</FieldLabel>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                {...form.register('password')}
-              />
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  className="pr-11"
+                  {...form.register('password')}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute top-1/2 right-1 -translate-y-1/2"
+                  aria-label={
+                    showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'
+                  }
+                  aria-pressed={showPassword}
+                  onClick={() => setShowPassword((value) => !value)}
+                >
+                  {showPassword ? (
+                    <EyeOff aria-hidden="true" />
+                  ) : (
+                    <Eye aria-hidden="true" />
+                  )}
+                </Button>
+              </div>
               <FieldError errors={[form.formState.errors.password]} />
             </Field>
             {error && <p role="alert">{error}</p>}

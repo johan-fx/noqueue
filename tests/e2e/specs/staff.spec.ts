@@ -120,17 +120,17 @@ test('sales provisioning, direct owner access and staff console use passwords an
   })
   await actions.click()
   await page.getByRole('menuitem', { name: 'Configuración' }).click()
-  const configDrawer = page.getByRole('dialog', {
+  const initialConfigDrawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
-  await expect(configDrawer).toBeVisible()
-  await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
+  await expect(initialConfigDrawer).toBeVisible()
+  await expect(initialConfigDrawer.getByLabel('Nombre del servicio')).toHaveValue(
     'Restaurante E2E',
   )
-  await configDrawer
+  await initialConfigDrawer
     .getByRole('button', { name: 'Volver', exact: true })
     .click()
-  await expect(configDrawer).toHaveCount(0)
+  await expect(initialConfigDrawer).toHaveCount(0)
   await actions.click()
   await page.getByRole('menuitem', { name: 'Gestionar accesos' }).click()
   const accessDrawer = page.getByRole('dialog', { name: 'Gestionar accesos' })

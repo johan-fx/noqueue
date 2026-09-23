@@ -74,7 +74,7 @@ describe('establishment list permissions', () => {
         ).queryByRole('button', { name: 'Configurar servicio' }) !== null,
       ).toBe(configure)
       expect(
-        screen.queryByRole('button', { name: 'Gestionar accesos' }) !== null,
+        screen.queryByRole('button', { name: 'Accesos' }) !== null,
       ).toBe(members)
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(

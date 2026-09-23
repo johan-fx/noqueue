@@ -31,7 +31,7 @@ test('publishes only local static assets, contact links and page anchors', async
     }
   }
   assert.doesNotMatch(await read('styles.css'), /@import|https?:\/\//i);
-  assert.deepEqual((await readdir(source)).sort(), ['404.html', '_headers', 'favicon.svg', 'index.html', 'preferences.js', 'robots.txt', 'styles.css']);
+  assert.deepEqual((await readdir(source)).sort(), ['404.html', '_headers', 'favicon.svg', 'googlebc43045699d02e9c.html', 'index.html', 'preferences.js', 'robots.txt', 'styles.css']);
 });
 
 test('isolates deployment from the pilot and rejects unknown routes with 404', async () => {

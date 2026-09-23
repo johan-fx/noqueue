@@ -1,6 +1,6 @@
 import { HTTPException } from 'hono/http-exception'
 import type { Capability, StaffRole } from '@noqueue/contracts/staff'
-import { permits } from './permissions'
+import { isCommercial, permits } from './permissions'
 export async function venueAccess(
   env: CloudflareBindings,
   userId: string,
@@ -15,10 +15,36 @@ export async function venueAccess(
   )
     .bind(userId, venueId)
     .first<{ role: StaffRole; organizationId: string }>()
-  if (!row) throw new HTTPException(404, { message: 'not_found' })
+  if (!row) {
+    // Sales staff have no venue membership. They may read and edit services
+    // only for tenants they created. Operating the queue stays forbidden.
+    const commercial = await commercialVenue(env, userId, venueId, permission)
+    if (commercial) return commercial
+    throw new HTTPException(404, { message: 'not_found' })
+  }
   if (!permits(row.role, permission))
     throw new HTTPException(403, { message: 'forbidden' })
   return row
+}
+async function commercialVenue(
+  env: CloudflareBindings,
+  userId: string,
+  venueId: string,
+  permission: Capability,
+) {
+  if (permission !== 'queue.read' && permission !== 'queue.configure') return
+  const user = await env.DB.prepare('SELECT role FROM user WHERE id=?')
+    .bind(userId)
+    .first<{ role: string }>()
+  if (!user || !isCommercial(user.role)) return
+  const owned = await env.DB.prepare(
+    `SELECT v.organization_id AS organizationId FROM venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE v.id=? AND (t.created_by=? OR ?='platform_admin')`,
+  )
+    .bind(venueId, userId, user.role)
+    .first<{ organizationId: string }>()
+  if (!owned) return
+  // Callers only need the organization id. The role is not used to authorize again.
+  return { role: 'owner' as StaffRole, organizationId: owned.organizationId }
 }
 export async function queueAccess(
   env: CloudflareBindings,

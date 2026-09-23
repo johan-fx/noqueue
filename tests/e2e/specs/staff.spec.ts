@@ -115,7 +115,24 @@ test('sales provisioning, direct owner access and staff console use passwords an
     page.getByRole('cell', { name: 'Hotel Madrid E2E', exact: true }),
   ).toBeVisible()
   await expect(page.getByRole('status')).toContainText('Establecimiento creado')
-  await page.getByRole('button', { name: 'Gestionar accesos' }).click()
+  const actions = page.getByRole('button', {
+    name: 'Acciones de Hotel Madrid E2E',
+  })
+  await actions.click()
+  await page.getByRole('menuitem', { name: 'Configuración' }).click()
+  const configDrawer = page.getByRole('dialog', {
+    name: 'Configuración restaurante',
+  })
+  await expect(configDrawer).toBeVisible()
+  await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
+    'Restaurante E2E',
+  )
+  await configDrawer
+    .getByRole('button', { name: 'Volver', exact: true })
+    .click()
+  await expect(configDrawer).toHaveCount(0)
+  await actions.click()
+  await page.getByRole('menuitem', { name: 'Gestionar accesos' }).click()
   const accessDrawer = page.getByRole('dialog', { name: 'Gestionar accesos' })
   await expect(accessDrawer).toBeVisible()
   await expect(accessDrawer.getByText(owner, { exact: true })).toBeVisible()
@@ -169,10 +186,9 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .click()
   await expect(accessDrawer).toHaveCount(0)
   await expect(page.getByLabel('Usuario', { exact: true })).toHaveCount(0)
-  await expect(
-    page.getByRole('button', { name: 'Gestionar accesos' }),
-  ).toBeFocused()
-  await page.getByRole('button', { name: 'Gestionar accesos' }).click()
+  await expect(actions).toBeFocused()
+  await actions.click()
+  await page.getByRole('menuitem', { name: 'Gestionar accesos' }).click()
   await expect(accessDrawer.getByLabel('Usuario', { exact: true })).toHaveValue(
     '',
   )

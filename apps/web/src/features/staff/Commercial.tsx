@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import type { ServiceInput } from '@noqueue/contracts/staff'
+import type { QueueSummary, ServiceInput } from '@noqueue/contracts/staff'
+import { EllipsisVertical, Settings, Users } from 'lucide-react'
 import {
   Card,
   CardAction,
@@ -19,6 +20,14 @@ import {
 } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
   Table,
   TableBody,
   TableCell,
@@ -31,6 +40,7 @@ import {
   type ClientInput,
 } from './CreateEstablishmentDrawer'
 import { Members } from './Members'
+import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, errorMessage } from './api'
 
 type Customer = {
@@ -44,23 +54,45 @@ type Customer = {
 
 export function Commercial() {
   const [customers, setCustomers] = useState<Customer[]>([])
+  const [services, setServices] = useState<Record<string, QueueSummary[]>>({})
   const [selected, setSelected] = useState<Customer | null>(null)
+  const [editing, setEditing] = useState<QueueSummary | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [open, setOpen] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [configError, setConfigError] = useState('')
+  const [configSaving, setConfigSaving] = useState(false)
   const pending = useRef(false)
   const requestKey = useRef(crypto.randomUUID())
   const fingerprint = useRef('')
   const accessTriggerRef = useRef<HTMLButtonElement | null>(null)
+  const triggers = useRef(new Map<string, HTMLButtonElement>())
+
+  async function loadServices(rows: Customer[]) {
+    // The action menu lists one item per service, so the queues must be known
+    // before the menu opens.
+    const lists = await Promise.all(
+      rows.map(async (customer) => {
+        const queues = await api<QueueSummary[]>(
+          `/venues/${customer.venueId}/queues`,
+        )
+        return [customer.venueId, queues] as const
+      }),
+    )
+    return Object.fromEntries(lists)
+  }
 
   useEffect(() => {
     let active = true
     api<Customer[]>('/commercial/organizations')
-      .then((data) => {
-        if (active) setCustomers(data)
+      .then(async (data) => {
+        const queues = await loadServices(data)
+        if (!active) return
+        setCustomers(data)
+        setServices(queues)
       })
       .catch((e) => {
         if (active) setError(errorMessage(e))
@@ -77,11 +109,47 @@ export function Commercial() {
     setLoading(true)
     setError('')
     try {
-      setCustomers(await api<Customer[]>('/commercial/organizations'))
+      const data = await api<Customer[]>('/commercial/organizations')
+      setCustomers(data)
+      setServices(await loadServices(data))
     } catch (e) {
       setError(`No se pudo actualizar el listado. ${errorMessage(e)}`)
     } finally {
       setLoading(false)
+    }
+  }
+
+  function rememberTrigger(customerId: string) {
+    accessTriggerRef.current = triggers.current.get(customerId) ?? null
+  }
+
+  function openService(customerId: string, queue: QueueSummary) {
+    if (configSaving) return
+    rememberTrigger(customerId)
+    setConfigError('')
+    setEditing(queue)
+  }
+
+  async function saveService(config: ServiceInput) {
+    if (!editing || pending.current) return
+    pending.current = true
+    setConfigSaving(true)
+    setConfigError('')
+    const venueId = editing.venueId
+    try {
+      await api(`/queues/${editing.id}`, 'PATCH', {
+        ...config,
+        version: editing.version,
+        open: !!editing.open,
+      })
+      setEditing(null)
+      const queues = await api<QueueSummary[]>(`/venues/${venueId}/queues`)
+      setServices((current) => ({ ...current, [venueId]: queues }))
+    } catch (e) {
+      setConfigError(errorMessage(e))
+    } finally {
+      pending.current = false
+      setConfigSaving(false)
     }
   }
 
@@ -163,7 +231,7 @@ export function Commercial() {
                 <TableHead>Empresa</TableHead>
                 <TableHead>Establecimiento</TableHead>
                 <TableHead>Estado</TableHead>
-                <TableHead>Accesos</TableHead>
+                <TableHead>Acciones</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -189,15 +257,19 @@ export function Commercial() {
                     {customer.status === 'active' ? 'Activo' : 'Suspendido'}
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="outline"
-                      onClick={(event) => {
-                        accessTriggerRef.current = event.currentTarget
+                    <EstablishmentActions
+                      customer={customer}
+                      queues={services[customer.venueId] ?? []}
+                      triggerRef={(node) => {
+                        if (node) triggers.current.set(customer.id, node)
+                        else triggers.current.delete(customer.id)
+                      }}
+                      onAccess={() => {
+                        rememberTrigger(customer.id)
                         setSelected(customer)
                       }}
-                    >
-                      Gestionar accesos
-                    </Button>
+                      onConfigure={(queue) => openService(customer.id, queue)}
+                    />
                   </TableCell>
                 </TableRow>
               ))}
@@ -237,6 +309,77 @@ export function Commercial() {
           </DrawerFooter>
         </DrawerContent>
       </Drawer>
+      <ServiceConfigDrawer
+        open={editing !== null}
+        mode="edit"
+        resetKey={editing?.id ?? 'edit'}
+        {...(editing ? { initial: editing.config } : {})}
+        saving={configSaving}
+        error={configError}
+        finalFocus={accessTriggerRef}
+        onClose={() => {
+          if (!configSaving) setEditing(null)
+        }}
+        onSave={saveService}
+      />
     </div>
+  )
+}
+
+function EstablishmentActions({
+  customer,
+  queues,
+  triggerRef,
+  onAccess,
+  onConfigure,
+}: {
+  customer: Customer
+  queues: QueueSummary[]
+  triggerRef: (node: HTMLButtonElement | null) => void
+  onAccess: () => void
+  onConfigure: (queue: QueueSummary) => void
+}) {
+  const label = `Acciones de ${customer.venueName}`
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label={label}
+            ref={triggerRef}
+          />
+        }
+      >
+        <EllipsisVertical />
+      </DropdownMenuTrigger>
+      <DropdownMenuContent className="w-56">
+        <DropdownMenuItem onClick={onAccess}>
+          <Users />
+          Gestionar accesos
+        </DropdownMenuItem>
+        {queues.length === 1 && queues[0] && (
+          <DropdownMenuItem onClick={() => onConfigure(queues[0]!)}>
+            <Settings />
+            Configuración
+          </DropdownMenuItem>
+        )}
+        {queues.length > 1 && (
+          <DropdownMenuGroup>
+            <DropdownMenuLabel>Configuración</DropdownMenuLabel>
+            {queues.map((queue) => (
+              <DropdownMenuItem
+                key={queue.id}
+                onClick={() => onConfigure(queue)}
+              >
+                <Settings />
+                {queue.name}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuGroup>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
   )
 }

@@ -551,6 +551,47 @@ describe('manual username authentication and scoped provisioning', () => {
       .first<{ n: number }>()
     expect(count!.n).toBe(1)
   })
+  it('lets the provisioning commercial read and update a service, and hides it from other sales staff', async () => {
+    const t = await tenant()
+    const other = await identity('commercial_operator')
+    const list = await request(
+      `/staff/venues/${t.venueId}/queues`,
+      t.sales.cookie,
+    )
+    expect(list.status).toBe(200)
+    const queues = (await list.json()) as {
+      id: string
+      version: number
+      open: number
+      config: Record<string, unknown>
+    }[]
+    const queue = queues.find((item) => item.id === t.queueId)
+    expect(queue).toBeTruthy()
+    expect(
+      (
+        await request(`/staff/queues/${t.queueId}`, t.sales.cookie, 'PATCH', {
+          ...queue!.config,
+          name: 'Terraza',
+          version: queue!.version,
+          open: !!queue!.open,
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (await request(`/staff/venues/${t.venueId}/queues`, other.cookie)).status,
+    ).toBe(404)
+    expect(
+      (
+        await request(
+          `/staff/queues/${t.queueId}/commands`,
+          t.sales.cookie,
+          'POST',
+          { entryId: crypto.randomUUID(), version: 0, action: 'call' },
+          crypto.randomUUID(),
+        )
+      ).status,
+    ).toBe(404)
+  })
   it('denies a previously authenticated commercial after server role removal', async () => {
     const sales = await identity('commercial_operator')
     await env.DB.prepare("UPDATE user SET role='user' WHERE id=?")

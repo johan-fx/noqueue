@@ -90,6 +90,17 @@ export const serviceSchema = z
     // Optional so queues saved before the wizard still parse.
     // `fastest` means assign the space with the shortest wait.
     assignmentPreference: z.string().trim().min(1).max(100).optional(),
+    // Per table size. Absent means the global average and capacity apply.
+    queueBySeat: z
+      .array(
+        z.object({
+          seats: z.number().int().min(1).max(100),
+          averageMinutes: z.number().int().min(1).max(1440),
+          capacity: z.number().int().min(1).max(10000),
+        }),
+      )
+      .max(40)
+      .optional(),
   })
   .superRefine((v, ctx) => {
     if (!v.twentyFourHours && !v.schedules.length)
@@ -121,6 +132,18 @@ export const serviceSchema = z
         path: ['receptionServices'],
         message: 'Select a reception service',
       })
+    const seenSeats = new Set<number>()
+    for (const item of v.queueBySeat ?? []) {
+      if (seenSeats.has(item.seats)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['queueBySeat'],
+          message: 'Duplicate table size',
+        })
+        return
+      }
+      seenSeats.add(item.seats)
+    }
   })
 export type ServiceInput = z.infer<typeof serviceSchema>
 export const provisionSchema = z.object({

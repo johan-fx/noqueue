@@ -96,6 +96,27 @@ describe('staff contracts', () => {
       }).success,
     ).toBe(false)
   })
+  it('keeps per-seat queue settings optional and unique', () => {
+    expect(serviceSchema.safeParse(service).success).toBe(true)
+    expect(
+      serviceSchema.safeParse({
+        ...service,
+        queueBySeat: [
+          { seats: 2, averageMinutes: 50, capacity: 10 },
+          { seats: 4, averageMinutes: 70, capacity: 6 },
+        ],
+      }).success,
+    ).toBe(true)
+    expect(
+      serviceSchema.safeParse({
+        ...service,
+        queueBySeat: [
+          { seats: 2, averageMinutes: 50, capacity: 10 },
+          { seats: 2, averageMinutes: 40, capacity: 4 },
+        ],
+      }).success,
+    ).toBe(false)
+  })
   it('cannot invite an owner or platform administrator through staff invitations', () => {
     for (const role of ['owner', 'platform_admin', 'commercial_operator'])
       expect(

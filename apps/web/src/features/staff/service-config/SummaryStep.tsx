@@ -23,6 +23,12 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
         Nº máximo de {values.type === 'reception' ? 'personas' : seats} en cola:{' '}
         {values.capacity}
       </p>
+      {values.queueBySeat?.map((item) => (
+        <p key={item.seats}>
+          {values.type === 'pool' ? 'Plazas' : 'Mesas'} de {item.seats}:{' '}
+          {item.averageMinutes} min, máx. {item.capacity}
+        </p>
+      ))}
       {values.type === 'reception' ? (
         <p>Servicios: {values.receptionServices.join(', ') || 'Ninguno'}</p>
       ) : (

@@ -1,10 +1,18 @@
 import type { UseFormReturn } from 'react-hook-form'
 import type { ServiceInput } from '@noqueue/contracts/staff'
+import { Settings2Icon } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { seatLabel } from './model'
 
-export function QueueStep({ form }: { form: UseFormReturn<ServiceInput> }) {
+export function QueueStep({
+  form,
+  onConfigure,
+}: {
+  form: UseFormReturn<ServiceInput>
+  onConfigure?: () => void
+}) {
   const type = form.watch('type')
   const seats = seatLabel(type)
   const fields = [
@@ -36,6 +44,17 @@ export function QueueStep({ form }: { form: UseFormReturn<ServiceInput> }) {
           <FieldError errors={[form.formState.errors[name]]} />
         </Field>
       ))}
+      {onConfigure && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="text-gray-500"
+          onClick={onConfigure}
+        >
+          <Settings2Icon aria-hidden="true" /> Configuración avanzada
+        </Button>
+      )}
     </div>
   )
 }

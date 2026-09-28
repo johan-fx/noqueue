@@ -10,30 +10,34 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/drawer'
-import { SpaceConfigForm } from './SpaceConfigForm'
+import { QueueConfigForm } from './QueueConfigForm'
+import { seatSizes, type QueueBySeat } from './model'
 
-type Space = ServiceInput['spaces'][number]
-type TableType = NonNullable<Space['tableTypes']>[number]
-
-// Nested drawer on the service wizard. Draft stays local until Confirmar.
-export function SpaceConfigDrawer({
+// Nested drawer on the queue step. Draft stays local until Confirmar.
+export function QueueConfigDrawer({
   open,
-  space,
-  draftKey,
   type,
+  spaces,
+  averageMinutes,
+  capacity,
+  queueBySeat,
   onOpenChange,
   onConfirm,
 }: {
   open: boolean
-  space: Space | undefined
-  draftKey: number
   type: 'restaurant' | 'pool'
+  spaces: ServiceInput['spaces']
+  averageMinutes: number
+  capacity: number
+  queueBySeat: QueueBySeat[] | undefined
   onOpenChange: (open: boolean) => void
-  onConfirm: (tableTypes: TableType[]) => void
+  onConfirm: (rows: QueueBySeat[] | null) => void
 }) {
+  const fallbackMinutes = Number.isInteger(averageMinutes) ? averageMinutes : 60
+  const fallbackCapacity = Number.isInteger(capacity) ? capacity : 20
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
-      <DrawerContent className="w-full sm:w-[28rem]">
+      <DrawerContent className="w-full sm:w-md">
         <DrawerHeader className="gap-4 border-b p-6">
           <div className="flex items-center gap-2">
             <DrawerClose
@@ -52,23 +56,25 @@ export function SpaceConfigDrawer({
               <DrawerTitle className="text-xl">
                 Configuración avanzada
               </DrawerTitle>
-              <DrawerDescription>Capacidad</DrawerDescription>
+              <DrawerDescription>Gestión de la cola</DrawerDescription>
             </div>
           </div>
         </DrawerHeader>
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">
-          {/* Remount so each open starts from the saved breakdown. */}
-          {open && space && (
-            <SpaceConfigForm
-              key={draftKey}
-              space={space}
+          {/* Remount so each open starts from the saved overrides. */}
+          {open && (
+            <QueueConfigForm
               type={type}
+              sizes={seatSizes(spaces)}
+              averageMinutes={fallbackMinutes}
+              capacity={fallbackCapacity}
+              saved={queueBySeat}
               onConfirm={onConfirm}
             />
           )}
         </div>
         <DrawerFooter className="border-t bg-background p-4">
-          <Button type="submit" form="space-config" className="h-12 w-full">
+          <Button type="submit" form="queue-config" className="h-12 w-full">
             Confirmar
           </Button>
         </DrawerFooter>

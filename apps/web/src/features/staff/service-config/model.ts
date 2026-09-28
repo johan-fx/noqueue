@@ -46,3 +46,24 @@ export const emptyService: ServiceInput = {
 export function seatLabel(type: ServiceInput['type']) {
   return type === 'pool' ? 'plazas' : 'mesas'
 }
+
+export type QueueBySeat = NonNullable<ServiceInput['queueBySeat']>[number]
+
+// One row per size, even when several spaces share it.
+export function seatSizes(spaces: ServiceInput['spaces']) {
+  const sizes = new Set<number>()
+  for (const space of spaces)
+    for (const item of space.tableTypes ?? []) sizes.add(item.seats)
+  return [...sizes].sort((a, b) => a - b)
+}
+
+// Drop overrides for sizes the spaces no longer list.
+export function pruneQueueBySeat(input: ServiceInput): ServiceInput {
+  const allowed = new Set(seatSizes(input.spaces))
+  const queueBySeat = input.queueBySeat?.filter((item) => allowed.has(item.seats))
+  if (!queueBySeat?.length) {
+    const { queueBySeat: _drop, ...rest } = input
+    return rest
+  }
+  return { ...input, queueBySeat }
+}

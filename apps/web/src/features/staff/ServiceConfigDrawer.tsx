@@ -21,12 +21,13 @@ import {
 } from '@/components/reui/stepper'
 import { AddSpaceDrawer } from './service-config/AddSpaceStep'
 import { SpaceConfigDrawer } from './service-config/SpaceConfigDrawer'
+import { QueueConfigDrawer } from './service-config/QueueConfigDrawer'
 import { CapacityStep } from './service-config/CapacityStep'
 import { GeneralStep } from './service-config/GeneralStep'
 import { PreferenceStep } from './service-config/PreferenceStep'
 import { QueueStep } from './service-config/QueueStep'
 import { SummaryStep } from './service-config/SummaryStep'
-import { emptyService, serviceTitles, stepLabels, stepsFor } from './service-config/model'
+import { emptyService, pruneQueueBySeat, serviceTitles, stepLabels, stepsFor } from './service-config/model'
 import { issuesFor } from './service-config/validate'
 
 export function ServiceConfigDrawer({
@@ -60,6 +61,7 @@ export function ServiceConfigDrawer({
   const [index, setIndex] = useState(0)
   const [addingSpace, setAddingSpace] = useState(false)
   const [configuringSpace, setConfiguringSpace] = useState<number | null>(null)
+  const [configuringQueue, setConfiguringQueue] = useState(false)
   const openedKey = useRef<string | null>(null)
   useLayoutEffect(() => {
     if (!open) {
@@ -72,6 +74,7 @@ export function ServiceConfigDrawer({
     setIndex(0)
     setAddingSpace(false)
     setConfiguringSpace(null)
+    setConfiguringQueue(false)
   }, [open, resetKey, initial, form])
   const step = steps[index] ?? 'general'
   function back() {
@@ -95,7 +98,7 @@ export function ServiceConfigDrawer({
       setIndex((current) => current + 1)
       return
     }
-    const parsed = serviceSchema.safeParse(form.getValues())
+    const parsed = serviceSchema.safeParse(pruneQueueBySeat(form.getValues()))
     if (!parsed.success) {
       form.setError('root', { message: 'Revisa los datos antes de confirmar.' })
       return
@@ -218,7 +221,31 @@ export function ServiceConfigDrawer({
           ) : step === 'capacity' ? (
             <CapacityStep form={form} />
           ) : step === 'queue' ? (
-            <QueueStep form={form} />
+            <>
+              <QueueStep
+                form={form}
+                {...(type === 'reception'
+                  ? {}
+                  : { onConfigure: () => setConfiguringQueue(true) })}
+              />
+              {type !== 'reception' && (
+                <QueueConfigDrawer
+                  open={configuringQueue}
+                  type={type}
+                  spaces={form.getValues('spaces')}
+                  averageMinutes={form.getValues('averageMinutes')}
+                  capacity={form.getValues('capacity')}
+                  queueBySeat={form.getValues('queueBySeat')}
+                  onOpenChange={(next) => {
+                    if (!next) setConfiguringQueue(false)
+                  }}
+                  onConfirm={(rows) => {
+                    if (rows) form.setValue('queueBySeat', rows)
+                    setConfiguringQueue(false)
+                  }}
+                />
+              )}
+            </>
           ) : step === 'preference' ? (
             <PreferenceStep form={form} />
           ) : (

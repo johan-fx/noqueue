@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { emptyService } from './service-config/model'
@@ -90,6 +90,49 @@ describe('service configuration wizard', () => {
     )
   })
 
+  it('saves queue times per table size from the advanced drawer', async () => {
+    const onSave = renderWizard()
+    fireEvent.change(screen.getByLabelText('Nombre del servicio'), {
+      target: { value: 'Chez Paul' },
+    })
+    await next()
+    fireEvent.click(screen.getByRole('button', { name: 'Configuración avanzada' }))
+    fireEvent.click(screen.getByRole('button', { name: 'De 2' }))
+    fireEvent.click(screen.getByRole('button', { name: 'De 4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await next()
+    fireEvent.click(screen.getByRole('button', { name: 'Configuración avanzada' }))
+    const advanced = screen.getByRole('dialog', { name: 'Configuración avanzada' })
+    fireEvent.change(within(advanced).getByLabelText('Tiempo medio del cliente en mesa'), {
+      target: { value: '50' },
+    })
+    fireEvent.change(within(advanced).getByLabelText('Nº máximo de mesas en la cola'), {
+      target: { value: '10' },
+    })
+    fireEvent.click(within(advanced).getByRole('button', { name: 'Mesas de 4' }))
+    fireEvent.change(within(advanced).getByLabelText('Tiempo medio del cliente en mesa'), {
+      target: { value: '70' },
+    })
+    fireEvent.change(within(advanced).getByLabelText('Nº máximo de mesas en la cola'), {
+      target: { value: '6' },
+    })
+    fireEvent.click(within(advanced).getByRole('button', { name: 'Confirmar' }))
+    await next()
+    await next()
+    expect(screen.getByText('Mesas de 2: 50 min, máx. 10')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          queueBySeat: [
+            { seats: 2, averageMinutes: 50, capacity: 10 },
+            { seats: 4, averageMinutes: 70, capacity: 6 },
+          ],
+        }),
+      ),
+    )
+  })
+
   it('does not ask a reception for spaces', async () => {
     render(
       <ServiceConfigDrawer
@@ -109,5 +152,9 @@ describe('service configuration wizard', () => {
     expect(screen.getByText('Servicios de recepción')).toBeVisible()
     expect(screen.queryByRole('button', { name: '+ Añadir espacio' })).not.toBeInTheDocument()
     expect(screen.queryByText('Preferencia de espacio por asignación')).not.toBeInTheDocument()
+    await next()
+    expect(
+      screen.queryByRole('button', { name: 'Configuración avanzada' }),
+    ).not.toBeInTheDocument()
   })
 })

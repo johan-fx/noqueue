@@ -55,6 +55,41 @@ describe('service configuration wizard', () => {
     ))
   })
 
+  it('saves the table breakdown from the advanced space drawer', async () => {
+    const onSave = renderWizard()
+    fireEvent.change(screen.getByLabelText('Nombre del servicio'), {
+      target: { value: 'Chez Paul' },
+    })
+    await next()
+    fireEvent.click(screen.getByRole('button', { name: 'Configuración avanzada' }))
+    expect(screen.getByRole('dialog', { name: 'Configuración avanzada' })).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'De 2' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Añadir una mesa de 2' }))
+    fireEvent.click(screen.getByRole('button', { name: 'De 4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    expect(screen.getByLabelText('Nº total de mesas disponibles')).toHaveValue(3)
+    await next()
+    await next()
+    await next()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          spaces: [
+            {
+              name: 'Interior',
+              tables: 3,
+              tableTypes: [
+                { seats: 2, count: 2 },
+                { seats: 4, count: 1 },
+              ],
+            },
+          ],
+        }),
+      ),
+    )
+  })
+
   it('does not ask a reception for spaces', async () => {
     render(
       <ServiceConfigDrawer

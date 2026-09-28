@@ -1,11 +1,22 @@
 import type { UseFormReturn } from 'react-hook-form'
 import type { ServiceInput } from '@noqueue/contracts/staff'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { DrawerTrigger } from '@/components/ui/drawer'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { seatLabel } from './model'
-import { CheckIcon, PlusIcon, Trash2Icon } from 'lucide-react'
+import { CheckIcon, PlusIcon, Settings2Icon, Trash2Icon } from 'lucide-react'
 import { cn } from 'cn'
 
 const receptionLabels = {
@@ -14,7 +25,13 @@ const receptionLabels = {
   other: 'Otros temas',
 } as const
 
-export function CapacityStep({ form }: { form: UseFormReturn<ServiceInput> }) {
+export function CapacityStep({
+  form,
+  onConfigure,
+}: {
+  form: UseFormReturn<ServiceInput>
+  onConfigure?: (index: number) => void
+}) {
   const values = form.watch()
   const seats = seatLabel(values.type)
   if (values.type === 'reception') {
@@ -74,29 +91,66 @@ export function CapacityStep({ form }: { form: UseFormReturn<ServiceInput> }) {
               value={space.tables}
               onChange={(event) => {
                 const spaces = form.getValues('spaces')
-                spaces[index] = {
-                  ...spaces[index]!,
-                  tables: Number(event.target.value),
-                }
+                // A hand-edited total no longer matches the saved breakdown.
+                const next = { ...spaces[index]!, tables: Number(event.target.value) }
+                delete next.tableTypes
+                spaces[index] = next
                 form.setValue('spaces', spaces, { shouldValidate: true })
               }}
             />
           </Field>
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => {
-              const spaces = form.getValues('spaces').filter((_, i) => i !== index)
-              form.setValue('spaces', spaces)
-              if (
-                form.getValues('assignmentPreference') === space.name &&
-                !spaces.some((item) => item.name === space.name)
-              )
-                form.setValue('assignmentPreference', 'fastest')
-            }}
-          >
-           <Trash2Icon className="size-4 text-red-500 hover:text-red-600" /> Quitar espacio
-          </Button>
+          <div className="flex flex-wrap items-center gap-2 justify-between">
+            {onConfigure && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="text-gray-500"
+                onClick={() => onConfigure(index)}
+              >
+                <Settings2Icon aria-hidden="true" /> Configuración avanzada
+              </Button>
+            )}
+            {/* Confirm before removing a space so a stray tap does not drop it. */}
+            <AlertDialog>
+              <AlertDialogTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label={`Eliminar espacio ${index + 1}`}
+                  />
+                }
+              >
+                <Trash2Icon className="size-4 text-red-500 hover:text-red-600" />
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>¿Eliminar este espacio?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    Se quitará {space.name || `el espacio ${index + 1}`} de este servicio.
+                    Puedes volver a añadirlo después.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={() => {
+                      const spaces = form.getValues('spaces').filter((_, i) => i !== index)
+                      form.setValue('spaces', spaces)
+                      if (
+                        form.getValues('assignmentPreference') === space.name &&
+                        !spaces.some((item) => item.name === space.name)
+                      )
+                        form.setValue('assignmentPreference', 'fastest')
+                    }}
+                  >
+                    Eliminar
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </div>
         </section>
       ))}
       {/* Opens the nested add-space drawer. The capacity list stays mounted behind it. */}

@@ -20,6 +20,7 @@ import {
   StepperTrigger,
 } from '@/components/reui/stepper'
 import { AddSpaceDrawer } from './service-config/AddSpaceStep'
+import { SpaceConfigDrawer } from './service-config/SpaceConfigDrawer'
 import { CapacityStep } from './service-config/CapacityStep'
 import { GeneralStep } from './service-config/GeneralStep'
 import { PreferenceStep } from './service-config/PreferenceStep'
@@ -58,6 +59,7 @@ export function ServiceConfigDrawer({
   const steps = stepsFor(type)
   const [index, setIndex] = useState(0)
   const [addingSpace, setAddingSpace] = useState(false)
+  const [configuringSpace, setConfiguringSpace] = useState<number | null>(null)
   const openedKey = useRef<string | null>(null)
   useLayoutEffect(() => {
     if (!open) {
@@ -69,6 +71,7 @@ export function ServiceConfigDrawer({
     form.reset({ ...emptyService, ...initial })
     setIndex(0)
     setAddingSpace(false)
+    setConfiguringSpace(null)
   }, [open, resetKey, initial, form])
   const step = steps[index] ?? 'general'
   function back() {
@@ -166,6 +169,7 @@ export function ServiceConfigDrawer({
           {step === 'general' ? (
             <GeneralStep form={form} lockType={mode === 'edit'} />
           ) : step === 'capacity' && type !== 'reception' ? (
+            <>
             <AddSpaceDrawer
               open={addingSpace}
               type={type}
@@ -178,8 +182,39 @@ export function ServiceConfigDrawer({
                 setAddingSpace(false)
               }}
             >
-              <CapacityStep form={form} />
+              <CapacityStep form={form} onConfigure={setConfiguringSpace} />
             </AddSpaceDrawer>
+            <SpaceConfigDrawer
+              open={configuringSpace !== null}
+              draftKey={configuringSpace ?? 0}
+              space={
+                configuringSpace === null
+                  ? undefined
+                  : form.getValues('spaces')[configuringSpace]
+              }
+              type={type}
+              onOpenChange={(next) => {
+                if (!next) setConfiguringSpace(null)
+              }}
+              onConfirm={(tableTypes) => {
+                if (configuringSpace === null) return
+                const spaces = form.getValues('spaces').map((item) => ({ ...item }))
+                const current = spaces[configuringSpace]
+                if (!current) return
+                if (!tableTypes.length) {
+                  delete current.tableTypes
+                } else {
+                  current.tableTypes = tableTypes
+                  current.tables = tableTypes.reduce(
+                    (sum, item) => sum + item.count,
+                    0,
+                  )
+                }
+                form.setValue('spaces', spaces, { shouldValidate: true })
+                setConfiguringSpace(null)
+              }}
+            />
+            </>
           ) : step === 'capacity' ? (
             <CapacityStep form={form} />
           ) : step === 'queue' ? (

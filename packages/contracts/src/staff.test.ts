@@ -51,6 +51,51 @@ describe('staff contracts', () => {
       serviceSchema.safeParse({ ...service, type: 'pool', spaces: [] }).success,
     ).toBe(true)
   })
+  it('keeps old spaces valid and checks that table types add up', () => {
+    expect(serviceSchema.safeParse(service).success).toBe(true)
+    expect(
+      serviceSchema.safeParse({
+        ...service,
+        spaces: [
+          {
+            name: 'Interior',
+            tables: 6,
+            tableTypes: [
+              { seats: 2, count: 4 },
+              { seats: 4, count: 2 },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(true)
+    expect(
+      serviceSchema.safeParse({
+        ...service,
+        spaces: [
+          {
+            name: 'Interior',
+            tables: 10,
+            tableTypes: [{ seats: 2, count: 4 }],
+          },
+        ],
+      }).success,
+    ).toBe(false)
+    expect(
+      serviceSchema.safeParse({
+        ...service,
+        spaces: [
+          {
+            name: 'Interior',
+            tables: 2,
+            tableTypes: [
+              { seats: 2, count: 1 },
+              { seats: 2, count: 1 },
+            ],
+          },
+        ],
+      }).success,
+    ).toBe(false)
+  })
   it('cannot invite an owner or platform administrator through staff invitations', () => {
     for (const role of ['owner', 'platform_admin', 'commercial_operator'])
       expect(

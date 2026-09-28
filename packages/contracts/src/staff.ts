@@ -29,6 +29,40 @@ export const usernameSchema = z
   .regex(/^[a-z0-9_.]+$/)
 export const passwordSchema = z.string().min(15).max(128)
 const name = z.string().trim().min(2).max(100)
+// Optional breakdown of a space. Absent on queues saved before this field existed.
+const tableTypeSchema = z.object({
+  seats: z.number().int().min(1).max(100),
+  count: z.number().int().min(1).max(1000),
+})
+export const spaceSchema = z
+  .object({
+    name,
+    tables: z.number().int().min(1).max(1000),
+    tableTypes: z.array(tableTypeSchema).max(20).optional(),
+  })
+  .superRefine((space, ctx) => {
+    const types = space.tableTypes
+    if (!types?.length) return
+    const seen = new Set<number>()
+    for (const item of types) {
+      if (seen.has(item.seats)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['tableTypes'],
+          message: 'Duplicate table size',
+        })
+        return
+      }
+      seen.add(item.seats)
+    }
+    const total = types.reduce((sum, item) => sum + item.count, 0)
+    if (total !== space.tables)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['tables'],
+        message: 'Table types must add up to the space total',
+      })
+  })
 export const scheduleSchema = z
   .object({
     day: z.number().int().min(0).max(6),
@@ -49,9 +83,7 @@ export const serviceSchema = z
     cutoffMinutes: z.number().int().min(0).max(240),
     twentyFourHours: z.boolean(),
     schedules: z.array(scheduleSchema).max(28),
-    spaces: z
-      .array(z.object({ name, tables: z.number().int().min(1).max(1000) }))
-      .max(30),
+    spaces: z.array(spaceSchema).max(30),
     receptionServices: z
       .array(z.enum(['check_in', 'check_out', 'other']))
       .max(3),

@@ -97,6 +97,7 @@ staffRoutes.get('/me', async (c) => {
   return c.json({
     user: { id: user.id, email: user.email, username: user.username },
     commercial: isCommercial(user.role),
+    platformAdmin: user.role === 'platform_admin',
     venues: venues.results,
   })
 })
@@ -118,12 +119,35 @@ staffRoutes.post('/commercial/organizations', async (c) => {
 })
 staffRoutes.get('/commercial/organizations', async (c) => {
   commercial(c.get('actor').role)
-  const rows = await c.env.DB.prepare(
-    `SELECT o.id,o.name,o.slug,t.status,v.id AS venueId,v.name AS venueName FROM organization o JOIN tenant_account t ON t.organization_id=o.id JOIN venue v ON v.organization_id=o.id WHERE t.created_by=? OR ?='platform_admin' ORDER BY o.createdAt DESC LIMIT 100`,
+  const rawPage = c.req.query('page') ?? '1'
+  const page = Number(rawPage)
+  if (
+    !/^[1-9]\d*$/.test(rawPage) ||
+    !Number.isSafeInteger(page) ||
+    page > Math.floor(Number.MAX_SAFE_INTEGER / 24)
   )
-    .bind(c.get('actor').id, c.get('actor').role)
+    return c.json({ error: 'invalid_page' }, 400)
+  const rows = await c.env.DB.prepare(
+    `SELECT o.id,o.name,o.slug,t.status,v.id AS venueId,v.name AS venueName FROM organization o JOIN tenant_account t ON t.organization_id=o.id JOIN venue v ON v.organization_id=o.id WHERE t.created_by=? OR ?='platform_admin' ORDER BY o.createdAt DESC,o.id,v.id LIMIT 25 OFFSET ?`,
+  )
+    .bind(c.get('actor').id, c.get('actor').role, (page - 1) * 24)
     .all()
-  return c.json(rows.results)
+  return c.json({
+    items: rows.results.slice(0, 24),
+    page,
+    hasMore: rows.results.length > 24,
+  })
+})
+staffRoutes.get('/commercial/venues/:id', async (c) => {
+  const actor = c.get('actor')
+  commercial(actor.role)
+  const venue = await c.env.DB.prepare(
+    `SELECT v.id,v.name,v.organization_id AS organizationId,o.name AS organizationName FROM venue v JOIN organization o ON o.id=v.organization_id JOIN tenant_account t ON t.organization_id=o.id WHERE v.id=? AND (t.created_by=? OR ?='platform_admin')`,
+  )
+    .bind(c.req.param('id'), actor.id, actor.role)
+    .first()
+  if (!venue) throw new HTTPException(404, { message: 'not_found' })
+  return c.json(venue)
 })
 async function canManage(c: Context<StaffEnv>, venueId: string) {
   const actor = c.get('actor')
@@ -241,7 +265,9 @@ staffRoutes.patch('/venues/:id/members/:userId', async (c) => {
     .first<{ role: string }>()
   if (!target) throw new HTTPException(404, { message: 'not_found' })
   if (target.role === 'owner' || c.req.param('userId') === c.get('actor').id)
-    throw new HTTPException(403, { message: 'owner_or_self_change_forbidden' })
+    throw new HTTPException(403, {
+      message: 'owner_or_self_change_forbidden',
+    })
   await c.env.DB.batch([
     c.env.DB.prepare(
       "UPDATE venue_membership SET role=?,active=? WHERE user_id=? AND venue_id=? AND role!='owner'",

@@ -83,3 +83,30 @@ describe('establishment list permissions', () => {
     },
   )
 })
+
+it('commercial management permits configuration and access but only reads queues', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues') ? [service] : [],
+  )
+  render(
+    <Dashboard
+      mode="commercial"
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+      }}
+    />,
+  )
+  expect(
+    await screen.findByRole('button', { name: 'Ver cola' }),
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Gestionar cola' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Configurar servicio' }),
+  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Accesos' })).toBeVisible()
+})

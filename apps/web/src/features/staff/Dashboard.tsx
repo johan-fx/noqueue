@@ -1,5 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import type {
+  Capability,
   QueueSummary,
   StaffEntry,
   VenueSummary,
@@ -43,7 +44,12 @@ import { Members } from './Members'
 import { QueueView } from './QueueView'
 import { queueActionLabels as actionLabels } from './queue-labels'
 
-export function Dashboard({ venue }: { venue: VenueSummary }) {
+type DashboardProps =
+  | { venue: VenueSummary; mode?: 'membership' }
+  | { venue: Omit<VenueSummary, 'role'>; mode: 'commercial' }
+
+export function Dashboard(props: DashboardProps) {
+  const { venue } = props
   const creationRequest = useRef<{ payload: string; key: string } | null>(null)
   const [drawer, setDrawer] = useState<
     'create' | 'edit' | 'members' | 'queue' | null
@@ -79,7 +85,10 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
     action: QueueCommand['action']
     key: string
   } | null>(null)
-  const permissions = roleCapabilities[venue.role]
+  const permissions: readonly Capability[] = props.mode === 'commercial'
+    ? ['queue.read', 'queue.configure', 'members.manage']
+    : roleCapabilities[props.venue.role]
+  const queueLabel = props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
   const queue = queues.find((q) => q.id === selected)
   useEffect(() => {
     let live = true
@@ -223,7 +232,7 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
         <div>
           <h1 className="text-2xl font-semibold">{venue.name}</h1>
           <p className="text-sm text-muted-foreground">
-            {venue.organizationName} · {venue.role}
+            {venue.organizationName} · {props.mode === 'commercial' ? 'Administración comercial' : props.venue.role}
           </p>
         </div>
         {permissions.includes('members.manage') && (
@@ -341,7 +350,7 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
                             openDrawer('queue', event.currentTarget)
                           }}
                         >
-                          Gestionar cola
+                          {queueLabel}
                         </Button>
                         {permissions.includes('queue.configure') && (
                           <Button
@@ -407,7 +416,7 @@ export function Dashboard({ venue }: { venue: VenueSummary }) {
         >
           <DrawerHeader className="border-b p-6">
             <DrawerTitle className="text-xl">
-              {drawer === 'queue' ? 'Gestionar cola' : 'Gestionar accesos'}
+              {drawer === 'queue' ? queueLabel : 'Gestionar accesos'}
             </DrawerTitle>
             <DrawerDescription>
               {drawer === 'queue' ? queue?.name : venue.name}

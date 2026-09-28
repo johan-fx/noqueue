@@ -100,14 +100,15 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.setViewportSize({ width: 1280, height: 900 })
   await expect(
-    page.getByRole('cell', { name: 'Hotel Madrid E2E', exact: true }),
+    page.getByRole('link', { name: /Hotel Madrid E2E/ }),
   ).toBeVisible()
   await expect(page.getByRole('status')).toContainText('Establecimiento creado')
-  const actions = page.getByRole('button', {
-    name: 'Acciones de Hotel Madrid E2E',
-  })
-  await actions.click()
-  await page.getByRole('menuitem', { name: 'Configuración' }).click()
+  await expect(page.getByRole('button', { name: /Acciones de/ })).toHaveCount(0)
+  await expect(page.getByRole('navigation', { name: 'Paginación de establecimientos' })).toHaveCount(0)
+  await page.getByRole('link', { name: /Hotel Madrid E2E/ }).click()
+  await expect(page.getByRole('heading', { name: 'Hotel Madrid E2E', exact: true })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name: 'Configurar servicio' }).click()
   const initialConfigDrawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
@@ -119,8 +120,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .getByRole('button', { name: 'Volver', exact: true })
     .click()
   await expect(initialConfigDrawer).toHaveCount(0)
-  await actions.click()
-  await page.getByRole('menuitem', { name: 'Gestionar accesos' }).click()
+  await page.getByRole('button', { name: 'Accesos', exact: true }).click()
   const accessDrawer = page.getByRole('dialog', { name: 'Gestionar accesos' })
   await expect(accessDrawer).toBeVisible()
   await expect(accessDrawer.getByText(owner, { exact: true })).toBeVisible()
@@ -174,9 +174,8 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .click()
   await expect(accessDrawer).toHaveCount(0)
   await expect(page.getByLabel('Usuario', { exact: true })).toHaveCount(0)
-  await expect(actions).toBeFocused()
-  await actions.click()
-  await page.getByRole('menuitem', { name: 'Gestionar accesos' }).click()
+  await expect(page.getByRole('button', { name: 'Accesos', exact: true })).toBeFocused()
+  await page.getByRole('button', { name: 'Accesos', exact: true }).click()
   await expect(accessDrawer.getByLabel('Usuario', { exact: true })).toHaveValue(
     '',
   )
@@ -406,7 +405,10 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await page
     .getByLabel('Confirmar contraseña', { exact: true })
     .fill('changed-e2e-password-12345')
-  await page.getByRole('button', { name: 'Guardar cambios' }).click()
+  await page
+    .getByRole('tabpanel', { name: 'Seguridad' })
+    .getByRole('button', { name: 'Guardar cambios' })
+    .click()
   await expect(
     page.getByText('Cambios guardados.', { exact: true }),
   ).toBeVisible()

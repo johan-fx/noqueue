@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { Link, useNavigate, useParams, useLocation } from 'react-router'
 import type { VenueSummary } from '@noqueue/contracts/staff'
 import { LogOut, Settings, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -18,8 +18,10 @@ import { api, ApiError, errorMessage } from './api'
 import { Choice } from './ServiceForm'
 import { Commercial } from './Commercial'
 import { Dashboard } from './Dashboard'
+import { CommercialEstablishment } from './CommercialEstablishment'
 type Me = {
   user: { id: string; email: string; username: string }
+  platformAdmin: boolean
   commercial: boolean
   venues: VenueSummary[]
 }
@@ -28,6 +30,8 @@ export function StaffApp() {
     [venueId, setVenueId] = useState(''),
     [error, setError] = useState('')
   const navigate = useNavigate()
+  const { venueId: detailId } = useParams()
+  const location = useLocation()
   useEffect(() => {
     api<Me>('/me')
       .then((data) => {
@@ -57,9 +61,7 @@ export function StaffApp() {
             <DropdownMenuContent align="end" className="w-56">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>{me?.user.username}</DropdownMenuLabel>
-                <DropdownMenuItem
-                  render={<Link to="/settings/account" />}
-                >
+                <DropdownMenuItem render={<Link to="/settings/account" />}>
                   <User />
                   Ajustes
                 </DropdownMenuItem>
@@ -86,15 +88,30 @@ export function StaffApp() {
           </p>
         )}
         {!me && !error && <p role="status">Comprobando acceso…</p>}
-        {me?.commercial && <Commercial />}
-        {!!me?.venues.length && (
+        {me &&
+          detailId &&
+          (me.commercial ? (
+            <CommercialEstablishment
+              key={detailId}
+              venueId={detailId}
+              returnPage={location.state?.returnPage}
+            />
+          ) : (
+            <p role="alert">No tienes acceso a este establecimiento.</p>
+          ))}
+        {me?.commercial && !detailId && (
+          <Commercial />
+        )}
+        {!detailId && !!me?.venues.length && (
           <>
             {me.venues.length > 1 && (
               <div className="max-w-sm">
                 <Choice
                   label="Establecimiento"
                   value={venueId}
-                  items={Object.fromEntries(me.venues.map((v) => [v.id, v.name]))}
+                  items={Object.fromEntries(
+                    me.venues.map((v) => [v.id, v.name]),
+                  )}
                   onChange={setVenueId}
                 />
               </div>
@@ -107,7 +124,7 @@ export function StaffApp() {
             )}
           </>
         )}
-        {me && !me.commercial && !me.venues.length && (
+        {me && !detailId && !me.commercial && !me.venues.length && (
           <Card>
             <CardContent className="py-8">
               No tienes establecimientos asignados. Contacta con el

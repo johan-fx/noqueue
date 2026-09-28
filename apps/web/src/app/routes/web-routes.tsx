@@ -17,6 +17,12 @@ export const webRoutes: RouteObject[] = [
     }),
   },
   {
+    path: '/staff/establishments/:venueId',
+    lazy: async () => ({
+      Component: (await import('@/features/staff/StaffApp')).StaffApp,
+    }),
+  },
+  {
     path: '/staff',
     lazy: async () => ({
       Component: (await import('@/features/staff/StaffApp')).StaffApp,

@@ -694,3 +694,99 @@ describe('service lifecycle and public access', () => {
     ).toBe(404)
   })
 })
+
+describe('platform establishment navigation', () => {
+  it('paginates over 100 venues with stable ties and scopes operator access', async () => {
+    const t = await tenant()
+    await env.DB.batch(
+      Array.from({ length: 104 }, (_, index) =>
+        env.DB.prepare(
+          'INSERT INTO venue(id,organization_id,name) VALUES (?,?,?)',
+        ).bind(
+          `pagination-${t.venueId}-${String(index).padStart(3, '0')}`,
+          t.organizationId,
+          'Same name',
+        ),
+      ),
+    )
+    const seen: string[] = []
+    for (let page = 1; page <= 5; page++) {
+      const response = await request(
+        `/staff/commercial/organizations?page=${page}`,
+        t.sales.cookie,
+      )
+      expect(response.status).toBe(200)
+      const data = (await response.json()) as {
+        items: { venueId: string }[]
+        page: number
+        hasMore: boolean
+      }
+      expect(data.page).toBe(page)
+      expect(data.items).toHaveLength(page < 5 ? 24 : 9)
+      expect(data.hasMore).toBe(page < 5)
+      seen.push(...data.items.map((item) => item.venueId))
+    }
+    expect(seen).toEqual([...seen].sort())
+    expect(new Set(seen).size).toBe(105)
+    expect(
+      await (
+        await request(
+          '/staff/commercial/organizations?page=6',
+          t.sales.cookie,
+        )
+      ).json(),
+    ).toEqual({ items: [], page: 6, hasMore: false })
+    for (const page of ['0', '-1', '1.5', 'abc', '9007199254740991'])
+      expect(
+        (
+          await request(
+            `/staff/commercial/organizations?page=${page}`,
+            t.sales.cookie,
+          )
+        ).status,
+      ).toBe(400)
+    const other = await identity('commercial_operator')
+    expect(
+      await (
+        await request('/staff/commercial/organizations', other.cookie)
+      ).json(),
+    ).toEqual({ items: [], page: 1, hasMore: false })
+  })
+  it('exposes platform role, allows scoped commercial identity lookup and denies operations', async () => {
+    const t = await tenant(),
+      admin = await identity('platform_admin')
+    expect(
+      await (await request('/staff/me', admin.cookie)).json(),
+    ).toMatchObject({ platformAdmin: true })
+    expect(
+      await (await request('/staff/me', t.sales.cookie)).json(),
+    ).toMatchObject({ platformAdmin: false })
+    const path = `/staff/commercial/venues/${t.venueId}`
+    expect(await (await request(path, admin.cookie)).json()).toMatchObject({
+      id: t.venueId,
+      name: 'Hotel Madrid',
+      organizationId: t.organizationId,
+      organizationName: 'Hotel Test',
+    })
+    expect((await request(path, t.sales.cookie)).status).toBe(200)
+    const other = await identity('commercial_operator')
+    expect((await request(path, other.cookie)).status).toBe(404)
+    expect((await request(path, t.owner.cookie)).status).toBe(403)
+    expect(
+      (await request('/staff/commercial/venues/missing', admin.cookie))
+        .status,
+    ).toBe(404)
+    expect((await request(path)).status).toBe(401)
+    for (const cookie of [admin.cookie, t.sales.cookie]) expect(
+      (
+        await request(
+          `/staff/queues/${t.queueId}/commands`,
+          cookie,
+          'POST',
+          {},
+          crypto.randomUUID(),
+        )
+      ).status,
+    ).toBe(404)
+  })
+})

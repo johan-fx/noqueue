@@ -93,6 +93,34 @@ no cambia hasta verificarla; el servidor registra solo `auth_email_delivery_fail
 sin direcciones, tokens ni cuerpos. Configurar una alerta sobre ese evento.
 Las operaciones sensibles de Better Auth pueden pedir volver a iniciar sesión.
 
+## Bootstrap del administrador de plataforma en staging
+
+**Estado (2026-09-23): ejecutado.** `admin` / `NoQueue Admin` existe en
+staging con rol `platform_admin`; no volver a ejecutar el bootstrap sobre esa
+identidad. Login, lectura `/staff/me`, listado comercial y cierre de sesión se
+verificaron por HTTPS. La copia local de la credencial requiere transferencia
+al custodio y eliminación posterior.
+
+Solo con acceso Wrangler a la cuenta `fa5fab4df1b0f12c946a3ea47fab96eb`,
+después de confirmar el bookmark de recuperación D1 y aplicar la migración 0005:
+
+1. Instalar `BETTER_AUTH_SECRET` de al menos 32 caracteres como secreto del Worker
+   `--env staging`. Guardar una copia de recuperación fuera de Git.
+2. Ejecutar una sola vez `node apps/api/scripts/bootstrap-staging-admin.mjs`.
+   El script fija la cuenta, comprueba que `admin` no exista, genera la contraseña,
+   inserta identidad y credential con hash Better Auth y verifica el rol.
+   Guarda la credencial en `apps/api/.wrangler/staging-platform-admin.json`, ignorado
+   por Git y con modo `0600`. Tras entregarla al custodio en un gestor seguro,
+   eliminar esa copia local. Nunca mostrarla en chat, logs ni argumentos.
+3. Desplegar conservando los valores remotos activos del piloto de WhatsApp:
+   los `false` versionados son valores seguros por defecto, **no** la configuración
+   que se debe publicar sin comprobar. Verificar login y rol antes de dar acceso
+   al equipo de diseño.
+
+El owner de cada establecimiento es otra identidad, creada después por el
+administrador/comercial mediante el flujo de alta. No compartir `admin` con
+todo el equipo de diseño.
+
 ## Antes de producción — NO ejecutado
 
 Revisar migración/bindings y backup, aplicar migraciones al entorno explícito tras

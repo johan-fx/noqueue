@@ -22,12 +22,9 @@ test('sales provisioning, direct owner access and staff console use passwords an
   ).toBeVisible()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.getByRole('button', { name: 'Crear nuevo' }).click()
-  await page
-    .getByRole('button', { name: 'Crear establecimiento', exact: true })
-    .click()
   await expect(
     page.getByRole('heading', {
-      name: '1. Cliente y administrador',
+      name: 'Cliente y administrador',
       exact: true,
     }),
   ).toBeVisible()
@@ -49,32 +46,27 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .fill('Hotel Madrid E2E')
   await page.getByLabel('Nombre del administrador').fill('Owner E2E')
   await page.getByLabel('Usuario del administrador').fill(owner)
-  await page.getByLabel('Contraseña inicial').fill(password)
+  await page.getByLabel('Contraseña inicial (mínimo 15 caracteres)').fill(password)
+  await page.getByLabel('Confirmar contraseña').fill(password)
   await page
-    .getByRole('button', { name: 'Crear establecimiento', exact: true })
+    .getByRole('button', { name: 'Continuar', exact: true })
     .click()
-  await expect(
-    page.getByRole('heading', {
-      name: '2. Configuración de servicios',
-      exact: true,
-    }),
-  ).toBeVisible()
-  await page
-    .getByRole('button', { name: 'Añadir servicio', exact: true })
-    .click()
-  await expect(page.getByRole('dialog')).toBeVisible()
+  const creationService = page.getByRole('dialog', {
+    name: 'Configuración restaurante',
+  })
+  await expect(creationService).toBeVisible()
   await page.getByLabel('Nombre del servicio').fill('Restaurante E2E')
-  await page.getByRole('button', { name: 'Atrás', exact: true }).click()
+  await creationService.getByRole('button', { name: 'Volver', exact: true }).click()
   await expect(page.getByLabel('Usuario del administrador')).toHaveValue(owner)
   await page
-    .getByRole('button', { name: 'Crear establecimiento', exact: true })
+    .getByRole('button', { name: 'Continuar', exact: true })
     .click()
-  await expect(page.getByLabel('Nombre del servicio')).toHaveValue(
-    'Restaurante E2E',
-  )
+  await creationService.getByLabel('Nombre del servicio').fill('Restaurante E2E')
+  for (let step = 0; step < 4; step++)
+    await creationService.getByRole('button', { name: 'Siguiente' }).click()
   await page.setViewportSize({ width: 390, height: 844 })
-  const save = page.getByRole('button', {
-    name: 'Añadir servicio',
+  const save = creationService.getByRole('button', {
+    name: 'Confirmar',
     exact: true,
   })
   await expect(save).toBeInViewport()
@@ -100,15 +92,11 @@ test('sales provisioning, direct owner access and staff console use passwords an
     },
   )
   await save.click()
-  await expect(page.getByRole('dialog').getByRole('alert')).toContainText(
+  await expect(creationService.getByRole('alert')).toContainText(
     'Servicio temporalmente no disponible',
   )
-  await expect(page.getByLabel('Nombre del servicio')).toHaveValue(
-    'Restaurante E2E',
-  )
-  await page
-    .getByRole('button', { name: 'Añadir servicio', exact: true })
-    .click()
+  await expect(creationService).toBeVisible()
+  await save.click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
   await page.setViewportSize({ width: 1280, height: 900 })
   await expect(
@@ -234,7 +222,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   })
   await page.setViewportSize({ width: 1280, height: 900 })
   await page
-    .getByRole('button', { name: 'Gestionar accesos', exact: true })
+    .getByRole('button', { name: 'Accesos', exact: true })
     .click()
   const ownerAccess = page.getByRole('dialog', { name: 'Gestionar accesos' })
   await expect(ownerAccess.getByText(owner, { exact: true })).toBeVisible()
@@ -293,7 +281,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     path: testInfo.outputPath('staff-mobile.png'),
     fullPage: true,
   })
-  await page.getByRole('button', { name: '24 horas, todos los días' }).click()
+  await configDrawer.getByRole('switch', { name: '24 horas, todos los días' }).click()
   for (let step = 0; step < 4; step++)
     await configDrawer.getByRole('button', { name: 'Siguiente' }).click()
   await expect(

@@ -33,9 +33,11 @@ const name = z.string().trim().min(2).max(100)
 const tableTypeSchema = z.object({
   seats: z.number().int().min(1).max(100),
   count: z.number().int().min(1).max(1000),
+  averageMinutes: z.number().int().min(1).max(1440).optional(),
 })
 export const spaceSchema = z
   .object({
+    id: z.string().min(1).max(100).optional(),
     name,
     tables: z.number().int().min(1).max(1000),
     tableTypes: z.array(tableTypeSchema).max(20).optional(),
@@ -84,6 +86,31 @@ export const serviceSchema = z
     twentyFourHours: z.boolean(),
     schedules: z.array(scheduleSchema).max(28),
     spaces: z.array(spaceSchema).max(30),
+    estimationMode: z.enum(['shadow', 'active']).optional(),
+    resourceStateKnown: z.boolean().optional(),
+    stations: z.number().int().min(1).max(1000).optional(),
+    adjustments: z
+      .array(
+        z.union([
+          z.object({
+            kind: z.literal('duration').optional(),
+            spaceId: z.string().min(1),
+            seats: z.number().int().min(1).max(100),
+            minutes: z.number().int().min(1).max(1440),
+            reason: z.string().trim().min(3).max(300),
+            expiresAt: z.number().int().positive(),
+          }),
+          z.object({
+            kind: z.literal('availability'),
+            spaceId: z.string().min(1),
+            seats: z.number().int().min(1).max(100),
+            reason: z.string().trim().min(3).max(300),
+            expiresAt: z.number().int().positive(),
+          }),
+        ]),
+      )
+      .max(40)
+      .optional(),
     receptionServices: z
       .array(z.enum(['check_in', 'check_out', 'other']))
       .max(3),
@@ -131,6 +158,13 @@ export const serviceSchema = z
         code: 'custom',
         path: ['receptionServices'],
         message: 'Select a reception service',
+      })
+    const ids = v.spaces.flatMap((s) => (s.id ? [s.id] : []))
+    if (new Set(ids).size !== ids.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['spaces'],
+        message: 'Duplicate space identity',
       })
     const seenSeats = new Set<number>()
     for (const item of v.queueBySeat ?? []) {
@@ -180,7 +214,8 @@ export const inviteSchema = z.object({
 export const queueCommandSchema = z.object({
   entryId: z.string().uuid(),
   version: z.number().int().min(0),
-  action: z.enum(['call', 'complete', 'cancel', 'no_show', 'skip']),
+  action: z.enum(['call', 'complete', 'release', 'cancel', 'no_show', 'skip']),
+  overrideReason: z.string().trim().min(3).max(300).optional(),
 })
 export type QueueCommand = z.infer<typeof queueCommandSchema>
 export const queueSettingsSchema = serviceSchema.extend({
@@ -216,4 +251,10 @@ export type StaffEntry = {
   sequence: number
   version: number
   calledAt: number | null
+  position?: number
+  etaMinutes?: number
+  predictedAt?: number | null
+  estimateQuality?: 'estimated' | 'provisional' | 'unknown'
+  resourceId?: string | null
+  callable?: boolean
 }

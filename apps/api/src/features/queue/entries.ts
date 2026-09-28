@@ -1,6 +1,11 @@
+import { recalculateQueue, readProjection } from './projection'
 import { serviceSchema } from '@noqueue/contracts/staff'
 import { serviceAcceptsEntries } from '../staff/availability'
-import { entrySchema, type JoinQueue } from '@noqueue/contracts/queue'
+import {
+  entrySchema,
+  type JoinQueue,
+  type Entry,
+} from '@noqueue/contracts/queue'
 import { readConfirmation } from './confirmation'
 import { encryptPhone, hash, hmac, phoneHash, recoveryToken } from './crypto'
 
@@ -12,7 +17,28 @@ interface StoredEntry {
   request_hash: string
   status: string
 }
-export async function readEntry(env: CloudflareBindings, token: string) {
+export async function readEntry(
+  env: CloudflareBindings,
+  token: string,
+): Promise<Entry | null> {
+  const entry = await env.DB.prepare(
+    'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE recovery_hash=?',
+  )
+    .bind(await hash(token))
+    .first<StoredEntry>()
+  if (!entry) return null
+  return (
+    env.APP_ENV === 'local'
+      ? env.QUEUE_COORDINATOR
+      : env.QUEUE_COORDINATOR.jurisdiction('eu')
+  )
+    .getByName(entry.queue_id)
+    .read(entry.queue_id, token)
+}
+export async function readEntrySnapshot(
+  env: CloudflareBindings,
+  token: string,
+): Promise<Entry | null> {
   const entry = await env.DB.prepare(
     'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE recovery_hash=?',
   )
@@ -20,6 +46,7 @@ export async function readEntry(env: CloudflareBindings, token: string) {
     .first<StoredEntry>()
   return entry ? presentEntry(env, entry) : null
 }
+
 async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   const row = await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM queue_entry WHERE queue_id=? AND status='waiting' AND sequence<=?) AS position,
@@ -32,13 +59,14 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
       notification: string
     }>()
   if (!row) throw new Error('Entry queue missing')
+  const projection = await readProjection(env, entry.id)
   return entrySchema.parse({
     code: entry.code,
     position: entry.status === 'waiting' ? row.position : 0,
-    etaMinutes:
-      entry.status === 'waiting'
-        ? Math.max(0, row.position - 1) * row.average_minutes
-        : 0,
+    etaMinutes: 0,
+    ...(entry.status === 'waiting'
+      ? projection ?? { estimateQuality: 'unknown', predictedAt: null }
+      : {}),
     status: entry.status,
     notification: row.notification,
     ...(await readConfirmation(env, entry.id)),
@@ -65,6 +93,7 @@ export async function joinQueue(
   if (existing) {
     if (existing.request_hash !== requestHash)
       return { status: 409, body: { error: 'idempotency_conflict' } }
+    await recalculateQueue(env, queueId)
     return {
       status: 200,
       body: {
@@ -201,6 +230,7 @@ export async function joinQueue(
       )
   }
   await env.DB.batch(statements)
+  await recalculateQueue(env, queueId)
   // Publishing is best-effort only after the durable transaction. The scheduled sweep repairs this gap.
   if (input.whatsapp.consent && env.WHATSAPP_ENABLED === 'true') {
     try {
@@ -215,16 +245,14 @@ export async function joinQueue(
   return {
     status: 201,
     body: {
-      code,
-      position: queue.waiting + 1,
-      etaMinutes: queue.waiting * queue.average_minutes,
-      status: 'waiting',
-      notification: input.whatsapp.consent
-        ? env.WHATSAPP_ENABLED === 'true'
-          ? 'pending'
-          : 'cancelled'
-        : 'disabled',
-      ...(experiment ? { confirmation: 'pending' } : {}),
+      ...(await presentEntry(env, {
+        id,
+        code,
+        queue_id: queueId,
+        sequence: queue.sequence,
+        request_hash: requestHash,
+        status: 'waiting',
+      })),
       recoveryToken: token,
     },
   }

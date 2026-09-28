@@ -46,22 +46,24 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .fill('Hotel Madrid E2E')
   await page.getByLabel('Nombre del administrador').fill('Owner E2E')
   await page.getByLabel('Usuario del administrador').fill(owner)
-  await page.getByLabel('Contraseña inicial (mínimo 15 caracteres)').fill(password)
-  await page.getByLabel('Confirmar contraseña').fill(password)
   await page
-    .getByRole('button', { name: 'Continuar', exact: true })
-    .click()
+    .getByLabel('Contraseña inicial (mínimo 15 caracteres)')
+    .fill(password)
+  await page.getByLabel('Confirmar contraseña').fill(password)
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   const creationService = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
   await expect(creationService).toBeVisible()
   await page.getByLabel('Nombre del servicio').fill('Restaurante E2E')
-  await creationService.getByRole('button', { name: 'Volver', exact: true }).click()
-  await expect(page.getByLabel('Usuario del administrador')).toHaveValue(owner)
-  await page
-    .getByRole('button', { name: 'Continuar', exact: true })
+  await creationService
+    .getByRole('button', { name: 'Volver', exact: true })
     .click()
-  await creationService.getByLabel('Nombre del servicio').fill('Restaurante E2E')
+  await expect(page.getByLabel('Usuario del administrador')).toHaveValue(owner)
+  await page.getByRole('button', { name: 'Continuar', exact: true }).click()
+  await creationService
+    .getByLabel('Nombre del servicio')
+    .fill('Restaurante E2E')
   for (let step = 0; step < 4; step++)
     await creationService.getByRole('button', { name: 'Siguiente' }).click()
   await page.setViewportSize({ width: 390, height: 844 })
@@ -104,18 +106,22 @@ test('sales provisioning, direct owner access and staff console use passwords an
   ).toBeVisible()
   await expect(page.getByRole('status')).toContainText('Establecimiento creado')
   await expect(page.getByRole('button', { name: /Acciones de/ })).toHaveCount(0)
-  await expect(page.getByRole('navigation', { name: 'Paginación de establecimientos' })).toHaveCount(0)
+  await expect(
+    page.getByRole('navigation', { name: 'Paginación de establecimientos' }),
+  ).toHaveCount(0)
   await page.getByRole('link', { name: /Hotel Madrid E2E/ }).click()
-  await expect(page.getByRole('heading', { name: 'Hotel Madrid E2E', exact: true })).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Hotel Madrid E2E', exact: true }),
+  ).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: 'Configurar servicio' }).click()
   const initialConfigDrawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
   await expect(initialConfigDrawer).toBeVisible()
-  await expect(initialConfigDrawer.getByLabel('Nombre del servicio')).toHaveValue(
-    'Restaurante E2E',
-  )
+  await expect(
+    initialConfigDrawer.getByLabel('Nombre del servicio'),
+  ).toHaveValue('Restaurante E2E')
   await initialConfigDrawer
     .getByRole('button', { name: 'Volver', exact: true })
     .click()
@@ -174,7 +180,9 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .click()
   await expect(accessDrawer).toHaveCount(0)
   await expect(page.getByLabel('Usuario', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Accesos', exact: true })).toBeFocused()
+  await expect(
+    page.getByRole('button', { name: 'Accesos', exact: true }),
+  ).toBeFocused()
   await page.getByRole('button', { name: 'Accesos', exact: true }).click()
   await expect(accessDrawer.getByLabel('Usuario', { exact: true })).toHaveValue(
     '',
@@ -220,9 +228,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     fullPage: true,
   })
   await page.setViewportSize({ width: 1280, height: 900 })
-  await page
-    .getByRole('button', { name: 'Accesos', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Accesos', exact: true }).click()
   const ownerAccess = page.getByRole('dialog', { name: 'Gestionar accesos' })
   await expect(ownerAccess.getByText(owner, { exact: true })).toBeVisible()
   await ownerAccess.getByRole('button', { name: 'Cerrar', exact: true }).click()
@@ -243,12 +249,18 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(services.getByRole('article')).toHaveCount(1)
   await addService.click()
   await expect(newService.getByLabel('Nombre del servicio')).toHaveValue('')
-  await newService.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await newService
+    .getByRole('button', { name: 'Siguiente', exact: true })
+    .click()
   await expect(newService).toBeVisible()
   await newService.getByLabel('Nombre del servicio').fill('Segundo restaurante')
   for (let step = 0; step < 4; step++)
-    await newService.getByRole('button', { name: 'Siguiente', exact: true }).click()
-  await newService.getByRole('button', { name: 'Confirmar', exact: true }).click()
+    await newService
+      .getByRole('button', { name: 'Siguiente', exact: true })
+      .click()
+  await newService
+    .getByRole('button', { name: 'Confirmar', exact: true })
+    .click()
   await expect(newService).toHaveCount(0)
   await expect(services.getByRole('article')).toHaveCount(2)
   await expect(
@@ -270,7 +282,9 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await configDrawer.getByRole('button', { name: 'Volver' }).click()
   await expect(configDrawer).toHaveCount(0)
   await restaurant.getByRole('switch', { name: 'Abrir cola' }).click()
-  await expect(restaurant.getByRole('switch', { name: 'Abrir cola' })).toBeChecked()
+  await expect(
+    restaurant.getByRole('switch', { name: 'Abrir cola' }),
+  ).toBeChecked()
   await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
   await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
     'Restaurante E2E',
@@ -280,7 +294,9 @@ test('sales provisioning, direct owner access and staff console use passwords an
     path: testInfo.outputPath('staff-mobile.png'),
     fullPage: true,
   })
-  await configDrawer.getByRole('switch', { name: '24 horas, todos los días' }).click()
+  await configDrawer
+    .getByRole('switch', { name: '24 horas, todos los días' })
+    .click()
   for (let step = 0; step < 4; step++)
     await configDrawer.getByRole('button', { name: 'Siguiente' }).click()
   await expect(
@@ -298,9 +314,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   })
   await page.getByRole('button', { name: 'Confirmar' }).click()
   await expect(configDrawer.getByRole('alert')).toBeVisible()
-  await expect(
-    configDrawer.getByText('24 horas, todos los días'),
-  ).toBeVisible()
+  await expect(configDrawer.getByText('24 horas, todos los días')).toBeVisible()
   await page.getByRole('button', { name: 'Confirmar' }).click()
   await expect(page.getByRole('button', { name: 'Confirmar' })).toHaveCount(0)
   await restaurant.getByRole('button', { name: 'Gestionar cola' }).click()
@@ -348,7 +362,19 @@ test('sales provisioning, direct owner access and staff console use passwords an
     queueDrawer.getByRole('tab', { name: 'Completados', exact: true }),
   ).toHaveAttribute('aria-selected', 'true')
   await expect(
+    queueDrawer.getByText('En servicio', { exact: true }),
+  ).toBeVisible()
+  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
+  await queueDrawer
+    .getByRole('button', { name: 'Liberar recurso', exact: true })
+    .click()
+  await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(
     queueDrawer.getByText('Completado', { exact: true }),
+  ).toBeVisible()
+  await guest.reload()
+  await expect(
+    guest.getByText('Estado: Servicio finalizado', { exact: true }),
   ).toBeVisible()
   await page.screenshot({
     animations: 'disabled',
@@ -422,4 +448,289 @@ test('settings requires authentication', async ({ page }) => {
   await page.goto('/settings/account')
   await expect(page).toHaveURL(/\/login/)
   await expect(page.getByLabel('Usuario o email')).toBeVisible()
+})
+
+test('space-specific durations and an availability delay survive browser save and reload', async ({
+  page,
+  request,
+  baseURL,
+}, testInfo) => {
+  const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 16),
+    sales = `sales_${suffix}`,
+    owner = `owner_${suffix}`,
+    password = 'e2e-only-password-12345'
+  const origin = baseURL!
+  const seed = await request.post('/api/v1/experiments/local/staff/identity', {
+    headers: { 'X-NoQueue-Pilot-Token': pilot },
+    data: { username: sales, password },
+  })
+  expect(seed.ok(), await seed.text()).toBeTruthy()
+  const login = await request.post('/api/v1/auth/sign-in/username', {
+    headers: { Origin: origin },
+    data: { username: sales, password },
+  })
+  expect(login.ok(), await login.text()).toBeTruthy()
+  const provision = await request.post(
+    '/api/v1/staff/commercial/organizations',
+    {
+      headers: { Origin: origin, 'Idempotency-Key': crypto.randomUUID() },
+      data: {
+        organizationName: 'Timing Test',
+        slug: `timing-${suffix}`,
+        venueName: 'Timing Venue',
+        timezone: 'Europe/Madrid',
+        ownerName: 'Timing Owner',
+        ownerUsername: owner,
+        ownerPassword: password,
+        services: [
+          {
+            name: 'Timing Restaurant',
+            type: 'restaurant',
+            capacity: 20,
+            averageMinutes: 30,
+            graceMinutes: 5,
+            cutoffMinutes: 0,
+            twentyFourHours: true,
+            schedules: [],
+            receptionServices: [],
+            assignmentPreference: 'fastest',
+            spaces: [
+              {
+                id: 'terrace',
+                name: 'Terrace',
+                tables: 1,
+                tableTypes: [{ seats: 4, count: 1, averageMinutes: 35 }],
+              },
+              {
+                id: 'salon',
+                name: 'Salon',
+                tables: 1,
+                tableTypes: [{ seats: 4, count: 1, averageMinutes: 25 }],
+              },
+              {
+                id: 'patio',
+                name: 'Patio exterior junto a la piscina',
+                tables: 1,
+              },
+              { id: 'events', name: 'Sala para eventos privados', tables: 1 },
+            ],
+          },
+        ],
+      },
+    },
+  )
+  expect(provision.ok(), await provision.text()).toBeTruthy()
+  await page.goto('/login')
+  await page.getByLabel('Usuario o email').fill(owner)
+  await page.getByLabel('Contraseña', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click()
+  await expect(
+    page.getByRole('heading', { name: 'Timing Venue', exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Configurar servicio', exact: true })
+    .click()
+  const drawer = page.getByRole('dialog', {
+    name: 'Configuración restaurante',
+    exact: true,
+  })
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer
+    .getByRole('button', { name: 'Configuración avanzada', exact: true })
+    .click()
+  const advanced = page.getByRole('dialog', {
+    name: 'Configuración avanzada',
+    exact: true,
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await advanced.getByLabel('Terrace · 4 plazas (min)').fill('99')
+  await advanced.getByRole('button', { name: 'Volver', exact: true }).click()
+  await expect(advanced).toHaveCount(0)
+  await expect(
+    drawer.getByRole('button', { name: 'Configuración avanzada', exact: true }),
+  ).toBeFocused()
+  await drawer
+    .getByRole('button', { name: 'Configuración avanzada', exact: true })
+    .click()
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await expect(advanced.getByLabel('Terrace · 4 plazas (min)')).toHaveValue(
+    '35',
+  )
+  await advanced.getByLabel('Terrace · 4 plazas (min)').fill('70')
+  await advanced.getByRole('tab', { name: 'Terrace', exact: true }).focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(
+    advanced.getByRole('tab', { name: 'Salon', exact: true }),
+  ).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(
+    advanced.getByRole('tab', { name: 'Salon', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await expect(
+    advanced.getByRole('tabpanel', { name: 'Salon', exact: true }),
+  ).toBeVisible()
+  await expect(
+    advanced.getByRole('tabpanel', { name: 'Terrace', exact: true }),
+  ).toBeHidden()
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await expect(advanced.getByLabel('Terrace · 4 plazas (min)')).toHaveCount(0)
+  await advanced.getByLabel('Salon · 4 plazas (min)').fill('20')
+  await advanced.getByRole('tab', { name: 'Terrace', exact: true }).click()
+  await expect(
+    advanced.getByRole('tabpanel', { name: 'Salon', exact: true }),
+  ).toBeHidden()
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await expect(advanced.getByLabel('Terrace · 4 plazas (min)')).toHaveValue(
+    '70',
+  )
+  await expect(
+    advanced
+      .getByRole('button', { name: 'Mesas de 4', exact: true })
+      .locator('span'),
+  ).toHaveCSS('font-size', '18px')
+  await advanced
+    .getByRole('heading', { name: 'Configuración avanzada', exact: true })
+    .hover()
+  await advanced.getByRole('tab', { name: 'Terrace', exact: true }).focus()
+  await page.keyboard.press('End')
+  await page.keyboard.press('Enter')
+  await expect(
+    advanced.getByRole('tab', {
+      name: 'Sala para eventos privados',
+      exact: true,
+    }),
+  ).toBeInViewport()
+  await expect(
+    advanced.getByRole('tabpanel', {
+      name: 'Sala para eventos privados',
+      exact: true,
+    }),
+  ).toBeVisible()
+  await page.keyboard.press('Home')
+  await page.keyboard.press('Enter')
+  await expect(
+    advanced.getByRole('tabpanel', {
+      name: 'Sala para eventos privados',
+      exact: true,
+    }),
+  ).toBeHidden()
+  await expect(
+    advanced.getByRole('tab', { name: 'Terrace', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await page.screenshot({
+    path: testInfo.outputPath('queue-advanced-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await advanced
+    .getByRole('button', { name: 'Opciones de operación', exact: true })
+    .click()
+  const adjustment = advanced.getByRole('group', {
+    name: 'Ajuste Terrace · 4 plazas',
+    exact: true,
+  })
+  await adjustment
+    .getByRole('button', { name: 'Añadir ajuste', exact: true })
+    .click()
+  await adjustment.getByLabel('Tipo de ajuste').selectOption('availability')
+  await adjustment
+    .getByLabel('Motivo', { exact: true })
+    .fill('Terrace cleaning')
+  await expect(adjustment.getByLabel('Duración temporal (min)')).toHaveCount(0)
+  await advanced.getByLabel('Motor de estimación').selectOption('active')
+  await advanced
+    .getByLabel('Confirmo que todos los recursos están vacíos al inicializar')
+    .check()
+  await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(advanced).toHaveCount(0)
+  await expect(drawer.getByRole('spinbutton')).toHaveCount(3)
+  await expect(
+    drawer.getByRole('button', { name: 'Configuración avanzada', exact: true }),
+  ).toBeFocused()
+  await page.screenshot({
+    path: testInfo.outputPath('queue-basic-mobile.png'),
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Terrace', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(drawer).toHaveCount(0)
+  await page.reload()
+  await page
+    .getByRole('button', { name: 'Configurar servicio', exact: true })
+    .click()
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer
+    .getByRole('button', { name: 'Configuración avanzada', exact: true })
+    .click()
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await expect(advanced.getByLabel('Terrace · 4 plazas (min)')).toHaveValue(
+    '70',
+  )
+  await advanced.getByRole('tab', { name: 'Salon', exact: true }).click()
+  await expect(
+    advanced.getByRole('tabpanel', { name: 'Terrace', exact: true }),
+  ).toBeHidden()
+  await advanced
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
+    .click()
+  await expect(advanced.getByLabel('Salon · 4 plazas (min)')).toHaveValue('20')
+  await advanced.getByRole('tab', { name: 'Terrace', exact: true }).click()
+  await expect(
+    advanced.getByRole('tabpanel', { name: 'Salon', exact: true }),
+  ).toBeHidden()
+  await advanced
+    .getByRole('button', { name: 'Opciones de operación', exact: true })
+    .click()
+  await expect(adjustment.getByLabel('Tipo de ajuste')).toHaveValue(
+    'availability',
+  )
+  await expect(adjustment.getByLabel('Motivo', { exact: true })).toHaveValue(
+    'Terrace cleaning',
+  )
+  await page.keyboard.press('Escape')
+  await expect(advanced).toHaveCount(0)
+  await page.keyboard.press('Escape')
+  await expect(drawer).toHaveCount(0)
+  await page.getByRole('switch', { name: 'Abrir cola' }).click()
+  await expect(page.getByRole('switch', { name: 'Abrir cola' })).toBeChecked()
+  await expect(page.getByRole('switch', { name: 'Abrir cola' })).toBeEnabled()
+  await page
+    .getByRole('button', { name: 'Gestionar cola', exact: true })
+    .click()
+  const queue = page.getByRole('dialog', {
+    name: 'Gestionar cola',
+    exact: true,
+  })
+  const publicURL = await queue
+    .getByRole('link', { name: 'Abrir enlace público de la cola' })
+    .getAttribute('href')
+  const guest = await page.context().newPage()
+  await guest.goto(publicURL!)
+  await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
+  await expect(guest).toHaveURL(/\/t\//)
+  await expect(guest.getByText(/Espera aproximada: (59|60) min/)).toBeVisible()
+  await queue.getByRole('button', { name: 'Actualizar', exact: true }).click()
+  await expect(
+    queue.getByRole('button', { name: 'Avanzar un turno', exact: true }),
+  ).toBeDisabled()
+  await guest.close()
 })

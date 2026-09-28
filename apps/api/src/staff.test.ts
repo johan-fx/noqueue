@@ -730,10 +730,7 @@ describe('platform establishment navigation', () => {
     expect(new Set(seen).size).toBe(105)
     expect(
       await (
-        await request(
-          '/staff/commercial/organizations?page=6',
-          t.sales.cookie,
-        )
+        await request('/staff/commercial/organizations?page=6', t.sales.cookie)
       ).json(),
     ).toEqual({ items: [], page: 6, hasMore: false })
     for (const page of ['0', '-1', '1.5', 'abc', '9007199254740991'])
@@ -773,20 +770,491 @@ describe('platform establishment navigation', () => {
     expect((await request(path, other.cookie)).status).toBe(404)
     expect((await request(path, t.owner.cookie)).status).toBe(403)
     expect(
-      (await request('/staff/commercial/venues/missing', admin.cookie))
-        .status,
+      (await request('/staff/commercial/venues/missing', admin.cookie)).status,
     ).toBe(404)
     expect((await request(path)).status).toBe(401)
-    for (const cookie of [admin.cookie, t.sales.cookie]) expect(
+    for (const cookie of [admin.cookie, t.sales.cookie])
+      expect(
+        (
+          await request(
+            `/staff/queues/${t.queueId}/commands`,
+            cookie,
+            'POST',
+            {},
+            crypto.randomUUID(),
+          )
+        ).status,
+      ).toBe(404)
+  })
+})
+
+it('reserves capacity at call, retains it at arrival and frees it only at release', async () => {
+  const t = await tenant()
+  const config = {
+    ...input().services[0]!,
+    estimationMode: 'active',
+    resourceStateKnown: true,
+    spaces: [
+      {
+        id: 'room',
+        name: 'Room',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 30 }],
+      },
+    ],
+  }
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+        ...config,
+        version: 0,
+        open: true,
+      })
+    ).status,
+  ).toBe(200)
+  const ids: string[] = []
+  for (let i = 1; i <= 2; i++) {
+    const id = crypto.randomUUID()
+    ids.push(id)
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,2,'en',?,?)",
+    )
+      .bind(id, t.queueId, id, 'hash', id, id, Date.now(), i)
+      .run()
+  }
+  const command = (
+    entryId: string,
+    version: number,
+    action: string,
+    key = crypto.randomUUID(),
+  ) =>
+    request(
+      `/staff/queues/${t.queueId}/commands`,
+      t.owner.cookie,
+      'POST',
+      { entryId, version, action },
+      key,
+    )
+  const results = await Promise.all([
+    command(ids[0]!, 0, 'call'),
+    command(ids[1]!, 0, 'call'),
+  ])
+  expect(results.map((r) => r.status)).toEqual([200, 409])
+  expect((await command(ids[0]!, 1, 'complete')).status).toBe(200)
+  expect((await command(ids[1]!, 0, 'call')).status).toBe(409)
+  const key = crypto.randomUUID()
+  expect((await command(ids[0]!, 2, 'release', key)).status).toBe(200)
+  expect((await command(ids[0]!, 2, 'release', key)).status).toBe(200)
+  expect((await command(ids[1]!, 0, 'call')).status).toBe(200)
+})
+
+it('audits explicit order overrides and preserves cancellation, no-show and skip semantics', async () => {
+  const t = await tenant()
+  const config = {
+    ...input().services[0]!,
+    estimationMode: 'active',
+    resourceStateKnown: true,
+    spaces: [
+      {
+        id: 'small',
+        name: 'Small',
+        tables: 1,
+        tableTypes: [{ seats: 2, count: 1, averageMinutes: 20 }],
+      },
+    ],
+  }
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+        ...config,
+        version: 0,
+        open: true,
+      })
+    ).status,
+  ).toBe(200)
+  const ids: string[] = []
+  for (let i = 1; i <= 3; i++) {
+    const id = crypto.randomUUID()
+    ids.push(id)
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,?,'en',?,?)",
+    )
+      .bind(id, t.queueId, id, 'hash', id, id, i === 1 ? 6 : 2, Date.now(), i)
+      .run()
+  }
+  const command = (
+    index: number,
+    version: number,
+    action: string,
+    overrideReason?: string,
+  ) =>
+    request(
+      `/staff/queues/${t.queueId}/commands`,
+      t.owner.cookie,
+      'POST',
+      {
+        entryId: ids[index]!,
+        version,
+        action,
+        ...(overrideReason ? { overrideReason } : {}),
+      },
+      crypto.randomUUID(),
+    )
+  expect((await command(2, 0, 'call')).status).toBe(409)
+  expect(
+    (await command(2, 0, 'call', 'Accessibility accommodation')).status,
+  ).toBe(200)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT reason FROM queue_override_audit WHERE entry_id=?',
+      )
+        .bind(ids[2]!)
+        .first<{ reason: string }>()
+    )?.reason,
+  ).toBe('Accessibility accommodation')
+  expect((await command(2, 1, 'no_show')).status).toBe(409)
+  await env.DB.prepare('UPDATE queue_entry SET called_at=? WHERE id=?')
+    .bind(Date.now() - 6 * 60000, ids[2]!)
+    .run()
+  expect((await command(2, 1, 'no_show')).status).toBe(200)
+  expect((await command(1, 0, 'call')).status).toBe(200)
+  expect((await command(1, 1, 'cancel')).status).toBe(200)
+  expect((await command(0, 0, 'skip')).status).toBe(200)
+  const row = await env.DB.prepare(
+    'SELECT sequence,status FROM queue_entry WHERE id=?',
+  )
+    .bind(ids[0]!)
+    .first<{ sequence: number; status: string }>()
+  expect(row).toMatchObject({ status: 'waiting', sequence: 4 })
+  expect(
+    (
+      await env.DB.prepare(
+        "SELECT COUNT(*) n FROM queue_allocation WHERE queue_id=? AND arrived_at IS NOT NULL AND outcome='served'",
+      )
+        .bind(t.queueId)
+        .first<{ n: number }>()
+    )?.n,
+  ).toBe(0)
+})
+
+it('requires operational authority for initialization and refuses an unsafe empty assertion', async () => {
+  const t = await tenant()
+  const config = {
+    ...input().services[0]!,
+    estimationMode: 'active',
+    resourceStateKnown: true,
+  }
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.sales.cookie, 'PATCH', {
+        ...config,
+        version: 0,
+        open: true,
+      })
+    ).status,
+  ).toBe(404)
+  const id = crypto.randomUUID()
+  await env.DB.prepare(
+    "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,2,'en',?,1,'called')",
+  )
+    .bind(id, t.queueId, id, 'hash', id, id, Date.now())
+    .run()
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+        ...config,
+        version: 0,
+        open: true,
+      })
+    ).status,
+  ).toBe(409)
+})
+
+it('shares honest unknown projections across shadow joins, token reads and staff reads', async () => {
+  const t = await tenant()
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
+    .bind(t.queueId)
+    .run()
+  const coordinator = env.QUEUE_COORDINATOR.getByName(t.queueId)
+  const joined = await coordinator.join(t.queueId, crypto.randomUUID(), {
+    partySize: 2,
+    locale: 'en',
+    whatsapp: { consent: false },
+  })
+  expect(joined.status).toBe(201)
+  expect(joined.body).toMatchObject({
+    position: 1,
+    etaMinutes: 0,
+    predictedAt: null,
+    estimateQuality: 'unknown',
+  })
+  const { readEntry } = await import('./features/queue/entries')
+  const token = (joined.body as { recoveryToken: string }).recoveryToken
+  expect(await readEntry(env, token)).toMatchObject({
+    position: 1,
+    etaMinutes: 0,
+    predictedAt: null,
+    estimateQuality: 'unknown',
+  })
+  const staff = await request(
+    `/staff/queues/${t.queueId}/entries`,
+    t.owner.cookie,
+  )
+  expect(((await staff.json()) as unknown[])[0]).toMatchObject({
+    position: 1,
+    etaMinutes: 0,
+    predictedAt: null,
+    estimateQuality: 'unknown',
+  })
+})
+
+it('does not activate enforcement over untracked shadow occupancy', async () => {
+  const t = await tenant()
+  const config = {
+    ...input().services[0]!,
+    estimationMode: 'shadow',
+    resourceStateKnown: true,
+    spaces: [
+      {
+        id: 'room',
+        name: 'Room',
+        tables: 1,
+        tableTypes: [{ seats: 2, count: 1, averageMinutes: 20 }],
+      },
+    ],
+  }
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+        ...config,
+        version: 0,
+        open: true,
+      })
+    ).status,
+  ).toBe(200)
+  for (let i = 1; i <= 2; i++) {
+    const id = crypto.randomUUID()
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,2,'en',?,?)",
+    )
+      .bind(id, t.queueId, id, 'hash', id, id, Date.now(), i)
+      .run()
+    expect(
       (
         await request(
           `/staff/queues/${t.queueId}/commands`,
-          cookie,
+          t.owner.cookie,
           'POST',
-          {},
+          { entryId: id, version: 0, action: 'call' },
           crypto.randomUUID(),
         )
       ).status,
-    ).toBe(404)
-  })
+    ).toBe(200)
+  }
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+        ...config,
+        estimationMode: 'active',
+        version: 1,
+        open: true,
+      })
+    ).status,
+  ).toBe(409)
+})
+
+async function resourceFixture(
+  spaces: unknown[],
+  extra: Record<string, unknown> = {},
+) {
+  const t = await tenant()
+  const config = {
+    ...input().services[0]!,
+    estimationMode: 'active',
+    resourceStateKnown: true,
+    spaces,
+    ...extra,
+  }
+  expect(
+    (
+      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+        ...config,
+        version: 0,
+        open: true,
+      })
+    ).status,
+  ).toBe(200)
+  const add = async (sequence: number, size: number, status = 'waiting') => {
+    const id = crypto.randomUUID()
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,?,'en',?,?,?)",
+    )
+      .bind(
+        id,
+        t.queueId,
+        id,
+        'hash',
+        id,
+        id,
+        size,
+        Date.now(),
+        sequence,
+        status,
+      )
+      .run()
+    return id
+  }
+  const command = (id: string, action: string, version = 0) =>
+    request(
+      `/staff/queues/${t.queueId}/commands`,
+      t.owner.cookie,
+      'POST',
+      { entryId: id, version, action },
+      crypto.randomUUID(),
+    )
+  return { ...t, config, add, command }
+}
+it('calls a fallback party without overriding a preferred-space-only older party', async () => {
+  const t = await resourceFixture(
+    [
+      {
+        id: 'terrace',
+        name: 'Terrace',
+        tables: 1,
+        tableTypes: [{ seats: 2, count: 1, averageMinutes: 20 }],
+      },
+      {
+        id: 'salon',
+        name: 'Salon',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
+      },
+    ],
+    { assignmentPreference: 'terrace' },
+  )
+  const occupied = await t.add(1, 2, 'completed')
+  await env.DB.prepare(
+    "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,'terrace:2:0','terrace',2,?,?)",
+  )
+    .bind(occupied, t.queueId, Date.now() - 10 * 60000, Date.now() - 10 * 60000)
+    .run()
+  await t.add(2, 2)
+  const fallback = await t.add(3, 4)
+  expect((await t.command(fallback, 'call')).status).toBe(200)
+})
+it('evaluates actual call against the immutable first forecast, not call-time refresh', async () => {
+  const t = await resourceFixture([
+    {
+      id: 'room',
+      name: 'Room',
+      tables: 1,
+      tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
+    },
+  ])
+  const id = await t.add(1, 2)
+  const { recalculateQueue } = await import('./features/queue/projection')
+  const forecastAt = Date.now() - 10 * 60000
+  await recalculateQueue(env, t.queueId, forecastAt)
+  await recalculateQueue(env, t.queueId)
+  expect((await t.command(id, 'call')).status).toBe(200)
+  const evidence = await env.DB.prepare(
+    'SELECT predicted_at,error_minutes FROM queue_wait_evidence WHERE entry_id=?',
+  )
+    .bind(id)
+    .first<{ predicted_at: number; error_minutes: number }>()
+  expect(evidence?.predicted_at).toBe(forecastAt)
+  expect(evidence?.error_minutes).toBeGreaterThanOrEqual(10)
+})
+it('blocks a free group until adjustment expiry without blocking another space', async () => {
+  const until = Date.now() + 10 * 60000
+  const t = await resourceFixture(
+    [
+      {
+        id: 'terrace',
+        name: 'Terrace',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
+      },
+      {
+        id: 'salon',
+        name: 'Salon',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 30 }],
+      },
+    ],
+    {
+      assignmentPreference: 'terrace',
+      adjustments: [
+        {
+          kind: 'availability',
+          spaceId: 'terrace',
+          seats: 4,
+          reason: 'Cleaning the terrace',
+          expiresAt: until,
+        },
+      ],
+    },
+  )
+  const id = await t.add(1, 2)
+  const { recalculateQueue } = await import('./features/queue/projection')
+  const before = await recalculateQueue(env, t.queueId)
+  expect(before.projections[0]?.etaMinutes).toBe(10)
+  expect(
+    before.resources.find((r) => r.spaceId === 'salon')?.availableAt,
+  ).toBeLessThan(until)
+  expect((await t.command(id, 'call')).status).toBe(409)
+  const after = await recalculateQueue(env, t.queueId, until + 1)
+  expect(after.projections[0]).toMatchObject({ etaMinutes: 0, callable: true })
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT actor_id,adjustments FROM queue_adjustment_audit WHERE queue_id=?',
+      )
+        .bind(t.queueId)
+        .first<{ actor_id: string; adjustments: string }>()
+    )?.actor_id,
+  ).toBe(t.owner.id)
+})
+it('expires an availability block on read and then permits a real call without another queue event', async () => {
+  const until = Date.now() + 2000
+  const t = await resourceFixture(
+    [
+      {
+        id: 'room',
+        name: 'Room',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
+      },
+    ],
+    {
+      adjustments: [
+        {
+          kind: 'availability',
+          spaceId: 'room',
+          seats: 4,
+          reason: 'Short cleaning',
+          expiresAt: until,
+        },
+      ],
+    },
+  )
+  const id = await t.add(1, 2)
+  expect((await t.command(id, 'call')).status).toBe(409)
+  await new Promise((resolve) =>
+    setTimeout(resolve, Math.max(0, until - Date.now() + 30)),
+  )
+  const read = await request(
+    `/staff/queues/${t.queueId}/entries`,
+    t.owner.cookie,
+  )
+  expect(((await read.json()) as { callable: boolean }[])[0]?.callable).toBe(
+    true,
+  )
+  expect((await t.command(id, 'call')).status).toBe(200)
+  expect((await t.command(id, 'complete', 1)).status).toBe(200)
+  const second = await t.add(2, 2)
+  expect((await t.command(second, 'call')).status).toBe(409)
+  expect((await t.command(id, 'release', 2)).status).toBe(200)
+  expect((await t.command(second, 'call')).status).toBe(200)
 })

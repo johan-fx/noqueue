@@ -80,14 +80,16 @@ export function Dashboard(props: DashboardProps) {
     [tab, setTab] = useState('active'),
     [busy, setBusy] = useState(false),
     [lastSync, setLastSync] = useState('')
+  const [overrideReason, setOverrideReason] = useState('')
   const [pending, setPending] = useState<{
     entry: StaffEntry
     action: QueueCommand['action']
     key: string
   } | null>(null)
-  const permissions: readonly Capability[] = props.mode === 'commercial'
-    ? ['queue.read', 'queue.configure', 'members.manage']
-    : roleCapabilities[props.venue.role]
+  const permissions: readonly Capability[] =
+    props.mode === 'commercial'
+      ? ['queue.read', 'queue.configure', 'members.manage']
+      : roleCapabilities[props.venue.role]
   const queueLabel = props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
   const queue = queues.find((q) => q.id === selected)
   useEffect(() => {
@@ -213,10 +215,14 @@ export function Dashboard(props: DashboardProps) {
           entryId: pending.entry.id,
           version: pending.entry.version,
           action: pending.action,
+          ...(pending.action === 'call' && overrideReason.trim()
+            ? { overrideReason: overrideReason.trim() }
+            : {}),
         },
         pending.key,
       )
       setPending(null)
+      setOverrideReason('')
       await refresh()
     } catch (e) {
       setError(errorMessage(e))
@@ -225,14 +231,21 @@ export function Dashboard(props: DashboardProps) {
       setBusy(false)
     }
   }
-  const nextEntry = entries.find((entry) => entry.status === 'waiting')
+  const nextEntry = entries.find(
+    (entry) =>
+      entry.status === 'waiting' &&
+      (queue?.config.estimationMode !== 'active' || entry.callable === true),
+  )
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold">{venue.name}</h1>
           <p className="text-sm text-muted-foreground">
-            {venue.organizationName} · {props.mode === 'commercial' ? 'Administración comercial' : props.venue.role}
+            {venue.organizationName} ·{' '}
+            {props.mode === 'commercial'
+              ? 'Administración comercial'
+              : props.venue.role}
           </p>
         </div>
         {permissions.includes('members.manage') && (
@@ -393,7 +406,7 @@ export function Dashboard(props: DashboardProps) {
         </div>
       )}
       <ServiceConfigDrawer
-        resetKey={drawer === 'edit' ? (queue?.id ?? 'edit') : 'create'}
+        resetKey={drawer === 'edit' ? queue?.id ?? 'edit' : 'create'}
         open={drawer === 'create' || drawer === 'edit'}
         mode={drawer === 'edit' ? 'edit' : 'create'}
         {...(drawer === 'edit' && queue ? { initial: queue.config } : {})}
@@ -442,9 +455,10 @@ export function Dashboard(props: DashboardProps) {
                 onRefresh={() =>
                   void refresh().catch((e) => setError(errorMessage(e)))
                 }
-                onAction={(entry, action) =>
+                onAction={(entry, action) => {
+                  setOverrideReason('')
                   setPending({ entry, action, key: crypto.randomUUID() })
-                }
+                }}
               />
             )}
             {drawer === 'members' && permissions.includes('members.manage') && (
@@ -459,6 +473,7 @@ export function Dashboard(props: DashboardProps) {
                   className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
                   disabled={busy || !nextEntry}
                   onClick={() => {
+                    setOverrideReason('')
                     if (nextEntry)
                       setPending({
                         entry: nextEntry,
@@ -503,6 +518,21 @@ export function Dashboard(props: DashboardProps) {
             <p role="alert" className="text-destructive">
               {error}
             </p>
+          )}
+          {pending?.action === 'call' && (
+            <label className="space-y-2 text-sm">
+              Motivo de excepción al orden (opcional)
+              <input
+                className="w-full rounded border p-2"
+                value={overrideReason}
+                minLength={3}
+                maxLength={300}
+                onChange={(event) => setOverrideReason(event.target.value)}
+              />
+              <span className="text-muted-foreground">
+                Solo para una llamada deliberada fuera de orden. Se auditará.
+              </span>
+            </label>
           )}
           <DialogFooter>
             <Button

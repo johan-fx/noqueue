@@ -4,7 +4,6 @@ import { Settings2Icon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
-import { seatLabel } from './model'
 
 export function QueueStep({
   form,
@@ -14,7 +13,6 @@ export function QueueStep({
   onConfigure?: () => void
 }) {
   const type = form.watch('type')
-  const seats = seatLabel(type)
   const fields = [
     [
       'averageMinutes',
@@ -25,13 +23,13 @@ export function QueueStep({
     ['graceMinutes', 'Tiempo para llegar después del aviso'],
     [
       'capacity',
-      type === 'reception'
+      type === 'pool'
         ? 'Nº máximo de personas en cola'
-        : `Nº máximo de ${seats} en cola`,
+        : 'Nº máximo de turnos en cola',
     ],
   ] as const
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       {fields.map(([name, label]) => (
         <Field key={name}>
           <FieldLabel htmlFor={name}>{label}</FieldLabel>

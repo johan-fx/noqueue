@@ -10,31 +10,31 @@ import {
   DrawerHeader,
   DrawerTitle,
 } from '@/components/ui/drawer'
-import { QueueConfigForm } from './QueueConfigForm'
-import { seatSizes, type QueueBySeat } from './model'
+import { QueueConfigForm, type QueueOptions } from './QueueConfigForm'
+import { type QueueBySeat } from './model'
 
 // Nested drawer on the queue step. Draft stays local until Confirmar.
 export function QueueConfigDrawer({
   open,
   type,
+  options,
   spaces,
   averageMinutes,
-  capacity,
   queueBySeat,
   onOpenChange,
   onConfirm,
 }: {
   open: boolean
-  type: 'restaurant' | 'pool'
+  type: ServiceInput['type']
+  options?: QueueOptions
   spaces: ServiceInput['spaces']
   averageMinutes: number
   capacity: number
   queueBySeat: QueueBySeat[] | undefined
   onOpenChange: (open: boolean) => void
-  onConfirm: (rows: QueueBySeat[] | null) => void
+  onConfirm: (spaces: ServiceInput['spaces'], options?: QueueOptions) => void
 }) {
   const fallbackMinutes = Number.isInteger(averageMinutes) ? averageMinutes : 60
-  const fallbackCapacity = Number.isInteger(capacity) ? capacity : 20
   return (
     <Drawer open={open} onOpenChange={onOpenChange} swipeDirection="right">
       <DrawerContent className="w-full sm:w-md">
@@ -56,7 +56,9 @@ export function QueueConfigDrawer({
               <DrawerTitle className="text-xl">
                 Configuración avanzada
               </DrawerTitle>
-              <DrawerDescription>Gestión de la cola</DrawerDescription>
+              <DrawerDescription className="text-base">
+                Gestión de la cola
+              </DrawerDescription>
             </div>
           </div>
         </DrawerHeader>
@@ -65,9 +67,9 @@ export function QueueConfigDrawer({
           {open && (
             <QueueConfigForm
               type={type}
-              sizes={seatSizes(spaces)}
+              options={options}
+              spaces={spaces}
               averageMinutes={fallbackMinutes}
-              capacity={fallbackCapacity}
               saved={queueBySeat}
               onConfirm={onConfirm}
             />

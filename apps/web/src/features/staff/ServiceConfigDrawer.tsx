@@ -27,7 +27,13 @@ import { GeneralStep } from './service-config/GeneralStep'
 import { PreferenceStep } from './service-config/PreferenceStep'
 import { QueueStep } from './service-config/QueueStep'
 import { SummaryStep } from './service-config/SummaryStep'
-import { emptyService, pruneQueueBySeat, serviceTitles, stepLabels, stepsFor } from './service-config/model'
+import {
+  emptyService,
+  pruneQueueBySeat,
+  serviceTitles,
+  stepLabels,
+  stepsFor,
+} from './service-config/model'
 import { issuesFor } from './service-config/validate'
 
 export function ServiceConfigDrawer({
@@ -54,7 +60,14 @@ export function ServiceConfigDrawer({
   onSave: (input: ServiceInput) => void | Promise<void>
 }) {
   const form = useForm<ServiceInput>({
-    defaultValues: { ...emptyService, ...initial },
+    defaultValues: {
+      ...emptyService,
+      ...initial,
+      spaces: (initial?.spaces ?? emptyService.spaces).map((space, index) => ({
+        ...space,
+        id: space.id ?? `legacy-${index}`,
+      })),
+    },
   })
   const type = useWatch({ control: form.control, name: 'type' })
   const steps = stepsFor(type)
@@ -70,7 +83,14 @@ export function ServiceConfigDrawer({
     }
     if (openedKey.current === resetKey) return
     openedKey.current = resetKey
-    form.reset({ ...emptyService, ...initial })
+    form.reset({
+      ...emptyService,
+      ...initial,
+      spaces: (initial?.spaces ?? emptyService.spaces).map((space, index) => ({
+        ...space,
+        id: space.id ?? `legacy-${index}`,
+      })),
+    })
     setIndex(0)
     setAddingSpace(false)
     setConfiguringSpace(null)
@@ -117,10 +137,7 @@ export function ServiceConfigDrawer({
       }}
       swipeDirection="right"
     >
-      <DrawerContent
-        finalFocus={finalFocus}
-        className="w-full sm:w-md"
-      >
+      <DrawerContent finalFocus={finalFocus} className="w-full sm:w-md">
         <DrawerHeader className="gap-4 border-b p-6">
           <div className="flex items-center gap-2">
             <Button
@@ -134,34 +151,36 @@ export function ServiceConfigDrawer({
               <ChevronLeft aria-hidden="true" />
             </Button>
             <div>
-              <DrawerTitle className="text-xl">{serviceTitles[type]}</DrawerTitle>
+              <DrawerTitle className="text-xl">
+                {serviceTitles[type]}
+              </DrawerTitle>
             </div>
           </div>
           <div className="space-y-2">
-              <Stepper value={index + 1} onValueChange={() => undefined}>
-                <StepperNav>
-                  {steps.map((item, itemIndex) => (
-                    <StepperItem key={item} step={itemIndex + 1}>
-                      <StepperTrigger
-                        className="pointer-events-none"
-                        tabIndex={-1}
-                        aria-hidden="true"
-                      >
-                        <StepperIndicator className="size-2.5 border-0 bg-muted data-[state=active]:bg-foreground data-[state=completed]:bg-foreground" />
-                      </StepperTrigger>
-                      {itemIndex < steps.length - 1 && (
-                        // The stock separator stays bg-muted. Completed steps
-                        // only turn the line dark when this state class is set.
-                        <StepperSeparator className="data-[state=completed]:bg-foreground" />
-                      )}
-                    </StepperItem>
-                  ))}
-                </StepperNav>
-              </Stepper>
-              <DrawerDescription>
-                {index + 1}. {stepLabels[step]}
-              </DrawerDescription>
-            </div>
+            <Stepper value={index + 1} onValueChange={() => undefined}>
+              <StepperNav>
+                {steps.map((item, itemIndex) => (
+                  <StepperItem key={item} step={itemIndex + 1}>
+                    <StepperTrigger
+                      className="pointer-events-none"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    >
+                      <StepperIndicator className="size-2.5 border-0 bg-muted data-[state=active]:bg-foreground data-[state=completed]:bg-foreground" />
+                    </StepperTrigger>
+                    {itemIndex < steps.length - 1 && (
+                      // The stock separator stays bg-muted. Completed steps
+                      // only turn the line dark when this state class is set.
+                      <StepperSeparator className="data-[state=completed]:bg-foreground" />
+                    )}
+                  </StepperItem>
+                ))}
+              </StepperNav>
+            </Stepper>
+            <DrawerDescription>
+              {index + 1}. {stepLabels[step]}
+            </DrawerDescription>
+          </div>
         </DrawerHeader>
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain p-6">
           {(error || form.formState.errors.root) && (
@@ -173,50 +192,52 @@ export function ServiceConfigDrawer({
             <GeneralStep form={form} lockType={mode === 'edit'} />
           ) : step === 'capacity' && type !== 'reception' ? (
             <>
-            <AddSpaceDrawer
-              open={addingSpace}
-              type={type}
-              onOpenChange={setAddingSpace}
-              onAdd={(name) => {
-                form.setValue('spaces', [
-                  ...form.getValues('spaces'),
-                  { name, tables: 1 },
-                ])
-                setAddingSpace(false)
-              }}
-            >
-              <CapacityStep form={form} onConfigure={setConfiguringSpace} />
-            </AddSpaceDrawer>
-            <SpaceConfigDrawer
-              open={configuringSpace !== null}
-              draftKey={configuringSpace ?? 0}
-              space={
-                configuringSpace === null
-                  ? undefined
-                  : form.getValues('spaces')[configuringSpace]
-              }
-              type={type}
-              onOpenChange={(next) => {
-                if (!next) setConfiguringSpace(null)
-              }}
-              onConfirm={(tableTypes) => {
-                if (configuringSpace === null) return
-                const spaces = form.getValues('spaces').map((item) => ({ ...item }))
-                const current = spaces[configuringSpace]
-                if (!current) return
-                if (!tableTypes.length) {
-                  delete current.tableTypes
-                } else {
-                  current.tableTypes = tableTypes
-                  current.tables = tableTypes.reduce(
-                    (sum, item) => sum + item.count,
-                    0,
-                  )
+              <AddSpaceDrawer
+                open={addingSpace}
+                type={type}
+                onOpenChange={setAddingSpace}
+                onAdd={(name) => {
+                  form.setValue('spaces', [
+                    ...form.getValues('spaces'),
+                    { id: crypto.randomUUID(), name, tables: 1 },
+                  ])
+                  setAddingSpace(false)
+                }}
+              >
+                <CapacityStep form={form} onConfigure={setConfiguringSpace} />
+              </AddSpaceDrawer>
+              <SpaceConfigDrawer
+                open={configuringSpace !== null}
+                draftKey={configuringSpace ?? 0}
+                space={
+                  configuringSpace === null
+                    ? undefined
+                    : form.getValues('spaces')[configuringSpace]
                 }
-                form.setValue('spaces', spaces, { shouldValidate: true })
-                setConfiguringSpace(null)
-              }}
-            />
+                type={type}
+                onOpenChange={(next) => {
+                  if (!next) setConfiguringSpace(null)
+                }}
+                onConfirm={(tableTypes) => {
+                  if (configuringSpace === null) return
+                  const spaces = form
+                    .getValues('spaces')
+                    .map((item) => ({ ...item }))
+                  const current = spaces[configuringSpace]
+                  if (!current) return
+                  if (!tableTypes.length) {
+                    delete current.tableTypes
+                  } else {
+                    current.tableTypes = tableTypes
+                    current.tables = tableTypes.reduce(
+                      (sum, item) => sum + item.count,
+                      0,
+                    )
+                  }
+                  form.setValue('spaces', spaces, { shouldValidate: true })
+                  setConfiguringSpace(null)
+                }}
+              />
             </>
           ) : step === 'capacity' ? (
             <CapacityStep form={form} />
@@ -224,27 +245,38 @@ export function ServiceConfigDrawer({
             <>
               <QueueStep
                 form={form}
-                {...(type === 'reception'
-                  ? {}
-                  : { onConfigure: () => setConfiguringQueue(true) })}
+                onConfigure={() => setConfiguringQueue(true)}
               />
-              {type !== 'reception' && (
-                <QueueConfigDrawer
-                  open={configuringQueue}
-                  type={type}
-                  spaces={form.getValues('spaces')}
-                  averageMinutes={form.getValues('averageMinutes')}
-                  capacity={form.getValues('capacity')}
-                  queueBySeat={form.getValues('queueBySeat')}
-                  onOpenChange={(next) => {
-                    if (!next) setConfiguringQueue(false)
-                  }}
-                  onConfirm={(rows) => {
-                    if (rows) form.setValue('queueBySeat', rows)
-                    setConfiguringQueue(false)
-                  }}
-                />
-              )}
+              <QueueConfigDrawer
+                open={configuringQueue}
+                type={type}
+                options={{
+                  adjustments: form.getValues('adjustments'),
+                  estimationMode: form.getValues('estimationMode'),
+                  resourceStateKnown: form.getValues('resourceStateKnown'),
+                  stations: form.getValues('stations'),
+                }}
+                spaces={form.getValues('spaces')}
+                averageMinutes={form.getValues('averageMinutes')}
+                capacity={form.getValues('capacity')}
+                queueBySeat={form.getValues('queueBySeat')}
+                onOpenChange={(next) => {
+                  if (!next) setConfiguringQueue(false)
+                }}
+                onConfirm={(spaces, options) => {
+                  form.setValue('spaces', spaces)
+                  if (options) {
+                    form.setValue('adjustments', options.adjustments)
+                    form.setValue('estimationMode', options.estimationMode)
+                    form.setValue(
+                      'resourceStateKnown',
+                      options.resourceStateKnown,
+                    )
+                    form.setValue('stations', options.stations)
+                  }
+                  setConfiguringQueue(false)
+                }}
+              />
             </>
           ) : step === 'preference' ? (
             <PreferenceStep form={form} />
@@ -259,7 +291,11 @@ export function ServiceConfigDrawer({
             disabled={saving}
             onClick={() => void forward()}
           >
-            {saving ? 'Guardando…' : step === 'summary' ? 'Confirmar' : 'Siguiente'}
+            {saving
+              ? 'Guardando…'
+              : step === 'summary'
+              ? 'Confirmar'
+              : 'Siguiente'}
           </Button>
         </DrawerFooter>
       </DrawerContent>

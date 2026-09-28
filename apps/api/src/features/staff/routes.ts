@@ -1,3 +1,4 @@
+import { normalizeConfig, readProjection } from '../queue/projection'
 import { hash } from '../queue/crypto'
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -296,17 +297,30 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
     .bind(c.req.param('id'))
     .all<{ id: string; config: string }>()
   return c.json(
-    rows.results.map((row) => ({ ...row, config: JSON.parse(row.config) })),
+    rows.results.map((row) => ({
+      ...row,
+      config: normalizeConfig(serviceSchema.parse(JSON.parse(row.config))),
+    })),
   )
 })
 staffRoutes.get('/queues/:id/entries', async (c) => {
   await queueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    `SELECT id,code,party_size AS partySize,status,sequence,version,called_at AS calledAt FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called') THEN sequence ELSE -sequence END LIMIT 500`,
+    `SELECT id,code,party_size AS partySize,status,sequence,version,called_at AS calledAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id AND a.released_at IS NULL) AS resourceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
     .all()
-  return c.json(rows.results)
+  return c.json(
+    await Promise.all(
+      rows.results.map(async (row) => ({
+        ...row,
+        ...(row.status === 'waiting'
+          ? await readProjection(c.env, String(row.id))
+          : {}),
+      })),
+    ),
+  )
 })
 function coordinator(env: CloudflareBindings, id: string) {
   return (
@@ -365,6 +379,17 @@ staffRoutes.post('/venues/:id/queues', async (c) => {
   )
   const parsed = serviceSchema.safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_settings' }, 400)
+  if (
+    parsed.data.resourceStateKnown ||
+    parsed.data.estimationMode === 'active' ||
+    parsed.data.adjustments?.length
+  )
+    await venueAccess(
+      c.env,
+      c.get('actor').id,
+      c.req.param('id'),
+      'queue.operate',
+    )
   const key = uuid(c.req.header('Idempotency-Key'))
   const fingerprint = await hash(
     JSON.stringify({ venueId: c.req.param('id'), service: parsed.data }),
@@ -380,7 +405,7 @@ staffRoutes.post('/venues/:id/queues', async (c) => {
     return c.json(JSON.parse(previous.result))
   }
   const id = crypto.randomUUID(),
-    service = parsed.data
+    service = normalizeConfig(parsed.data)
   try {
     await c.env.DB.batch([
       c.env.DB.prepare(

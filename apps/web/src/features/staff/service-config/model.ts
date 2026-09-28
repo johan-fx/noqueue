@@ -60,10 +60,13 @@ export function seatSizes(spaces: ServiceInput['spaces']) {
 // Drop overrides for sizes the spaces no longer list.
 export function pruneQueueBySeat(input: ServiceInput): ServiceInput {
   const allowed = new Set(seatSizes(input.spaces))
-  const queueBySeat = input.queueBySeat?.filter((item) => allowed.has(item.seats))
+  const queueBySeat = input.queueBySeat?.filter((item) =>
+    allowed.has(item.seats),
+  )
   if (!queueBySeat?.length) {
-    const { queueBySeat: _drop, ...rest } = input
-    return rest
+    const next = { ...input }
+    delete next.queueBySeat
+    return next
   }
   return { ...input, queueBySeat }
 }

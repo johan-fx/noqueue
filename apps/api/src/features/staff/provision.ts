@@ -1,3 +1,4 @@
+import { normalizeConfig } from '../queue/projection'
 import type { ProvisionInput } from '@noqueue/contracts/staff'
 import { HTTPException } from 'hono/http-exception'
 import { audit } from '../../auth/access'
@@ -12,6 +13,17 @@ export async function provision(
   key: string,
   input: ProvisionInput,
 ) {
+  if (
+    input.services.some(
+      (service) =>
+        service.resourceStateKnown ||
+        service.estimationMode === 'active' ||
+        service.adjustments?.length,
+    )
+  )
+    throw new HTTPException(400, {
+      message: 'operational_initialization_required',
+    })
   const fingerprint = await hmac(
     await hash(env.BETTER_AUTH_SECRET),
     JSON.stringify(input),
@@ -74,7 +86,7 @@ export async function provision(
           service.capacity,
           service.averageMinutes,
           service.name,
-          JSON.stringify(service),
+          JSON.stringify(normalizeConfig(service)),
         ),
       ),
       ...membershipStatements(env, userId, organizationId, venueId, 'owner'),

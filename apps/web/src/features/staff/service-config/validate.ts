@@ -38,7 +38,9 @@ export function issuesFor(values: ServiceInput, step: StepId): FieldIssue[] {
   if (
     step === 'capacity' &&
     values.type !== 'reception' &&
-    values.spaces.some((space) => space.name.trim().length < 2 || space.tables < 1)
+    values.spaces.some(
+      (space) => space.name.trim().length < 2 || space.tables < 1,
+    )
   )
     current.push({
       path: 'spaces',
@@ -51,6 +53,16 @@ function pathsFor(values: ServiceInput, step: StepId) {
   if (step === 'general') return ['name', 'schedules', 'cutoffMinutes']
   if (step === 'capacity')
     return values.type === 'reception' ? ['receptionServices'] : ['spaces']
-  if (step === 'queue') return ['capacity', 'averageMinutes', 'graceMinutes']
+  if (step === 'queue')
+    return [
+      'capacity',
+      'averageMinutes',
+      'graceMinutes',
+      'spaces',
+      'stations',
+      'adjustments',
+      'estimationMode',
+      'resourceStateKnown',
+    ]
   return []
 }

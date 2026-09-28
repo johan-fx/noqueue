@@ -1,175 +1,202 @@
 import { useState } from 'react'
+import { useForm, useWatch } from 'react-hook-form'
+import type { ServiceInput } from '@noqueue/contracts/staff'
+import { Input } from '@/components/ui/input'
+import { Field, FieldLabel } from '@/components/ui/field'
 import {
   Accordion,
-  AccordionContent,
   AccordionItem,
   AccordionTrigger,
+  AccordionContent,
 } from '@/components/ui/accordion'
-import { Input } from '@/components/ui/input'
-import { Field, FieldError, FieldLabel } from '@/components/ui/field'
-import { seatLabel, type QueueBySeat } from './model'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { QueueOperations } from './QueueOperations'
+import { emptyService } from './model'
+import { issuesFor } from './validate'
 
-function copy(type: 'restaurant' | 'pool') {
-  const seats = seatLabel(type)
-  const titled = type === 'pool' ? 'Plazas' : 'Mesas'
-  return {
-    row: (size: number) => `${titled} de ${size}`,
-    time:
-      type === 'restaurant'
-        ? 'Tiempo medio del cliente en mesa'
-        : 'Tiempo medio del cliente',
-    max: `Nº máximo de ${seats} en la cola`,
-    empty:
-      type === 'pool'
-        ? 'Define los tipos de plaza en Capacidad para ajustarlos aquí.'
-        : 'Define los tipos de mesa en Capacidad para ajustarlos aquí.',
-  }
-}
+export type QueueOptions = Pick<
+  ServiceInput,
+  'adjustments' | 'estimationMode' | 'resourceStateKnown' | 'stations'
+>
 
-function inRange(value: string, max: number) {
-  const parsed = Number(value)
-  return Number.isInteger(parsed) && parsed >= 1 && parsed <= max
-}
-
-// Local draft. The parent form only changes when this form is submitted.
+/** The nested drawer owns a complete draft; only confirmation updates the wizard. */
 export function QueueConfigForm({
-  type,
-  sizes,
+  spaces,
   averageMinutes,
-  capacity,
   saved,
+  type = 'restaurant',
+  options,
   onConfirm,
 }: {
-  type: 'restaurant' | 'pool'
-  sizes: number[]
+  spaces: ServiceInput['spaces']
   averageMinutes: number
-  capacity: number
-  saved?: QueueBySeat[]
-  onConfirm: (rows: QueueBySeat[] | null) => void
+  saved: ServiceInput['queueBySeat']
+  type?: ServiceInput['type']
+  options?: QueueOptions | undefined
+  onConfirm: (
+    spaces: ServiceInput['spaces'],
+    options?: QueueOptions | undefined,
+  ) => void
 }) {
-  const text = copy(type)
-  const savedBySize = new Map(saved?.map((item) => [item.seats, item]))
-  const [draft, setDraft] = useState<
-    Record<number, { averageMinutes: string; capacity: string }>
-  >(() =>
-    Object.fromEntries(
-      sizes.map((seats) => {
-        const row = savedBySize.get(seats)
-        return [
-          seats,
-          {
-            averageMinutes: String(row?.averageMinutes ?? averageMinutes),
-            capacity: String(row?.capacity ?? capacity),
-          },
-        ]
-      }),
-    ),
+  const form = useForm<ServiceInput>({
+    defaultValues: {
+      ...emptyService,
+      ...options,
+      type,
+      averageMinutes,
+      spaces: spaces.map((space) => ({
+        ...space,
+        tableTypes: space.tableTypes?.map((group) => ({
+          ...group,
+          averageMinutes:
+            group.averageMinutes ??
+            saved?.find((row) => row.seats === group.seats)?.averageMinutes ??
+            averageMinutes,
+        })),
+      })),
+    },
+  })
+  const [selected, setSelected] = useState(
+    spaces[0]?.id ?? spaces[0]?.name ?? '',
   )
-  const [invalid, setInvalid] = useState(false)
-
+  const [error, setError] = useState('')
+  const draft = useWatch({ control: form.control, name: 'spaces' })
+  const operations = (
+    <Accordion>
+      <AccordionItem value="operations" className="border-t pt-2">
+        <AccordionTrigger className="text-muted-foreground">
+          Opciones de operación
+        </AccordionTrigger>
+        <AccordionContent className="pt-4">
+          <QueueOperations form={form} spaceId={selected} />
+        </AccordionContent>
+      </AccordionItem>
+    </Accordion>
+  )
   return (
     <form
       id="queue-config"
-      className="space-y-8"
+      className="space-y-6"
       onSubmit={(event) => {
         event.preventDefault()
-        // Nothing to store until the spaces define table sizes.
-        if (!sizes.length) {
-          onConfirm(null)
-          return
-        }
-        const rows = sizes.map((seats) => ({
-          seats,
-          averageMinutes: draft[seats]?.averageMinutes ?? '',
-          capacity: draft[seats]?.capacity ?? '',
-        }))
-        if (
-          rows.some(
-            (row) =>
-              !inRange(row.averageMinutes, 1440) || !inRange(row.capacity, 10000),
-          )
-        ) {
-          setInvalid(true)
-          return
-        }
-        onConfirm(
-          rows.map((row) => ({
-            seats: row.seats,
-            averageMinutes: Number(row.averageMinutes),
-            capacity: Number(row.capacity),
-          })),
+        const values = form.getValues()
+        const issue = issuesFor(values, 'queue').find((item) =>
+          [
+            'spaces',
+            'adjustments',
+            'stations',
+            'estimationMode',
+            'resourceStateKnown',
+          ].includes(item.path),
         )
+        if (issue) {
+          setError(
+            'Revisa los tiempos, el motivo y la caducidad de los ajustes antes de confirmar.',
+          )
+          return
+        }
+        setError('')
+        onConfirm(values.spaces, {
+          adjustments: values.adjustments,
+          stations: values.stations,
+          estimationMode: values.estimationMode,
+          resourceStateKnown: values.resourceStateKnown,
+        })
       }}
     >
-      {!sizes.length ? (
-        <p className="text-gray-500">{text.empty}</p>
-      ) : (
-        <Accordion defaultValue={sizes[0] == null ? [] : [sizes[0]]}>
-          {sizes.map((seats) => {
-            const row = draft[seats]
-            return (
-            <AccordionItem key={seats} value={seats}>
-              <AccordionTrigger className="py-4 text-lg font-medium text-gray-700 hover:no-underline">
-                {text.row(seats)}
-              </AccordionTrigger>
-              {row && (
-                <AccordionContent className="mt-1 mb-4 space-y-4 rounded-lg border border-[#cdcdcd] px-8 py-5">
-                  <Field>
-                    <FieldLabel htmlFor={`minutes-${seats}`}>{text.time}</FieldLabel>
-                    <div className="relative">
-                      <Input
-                        id={`minutes-${seats}`}
-                        type="number"
-                        min={1}
-                        max={1440}
-                        className="pr-20"
-                        value={row.averageMinutes}
-                        aria-invalid={invalid && !inRange(row.averageMinutes, 1440)}
-                        onChange={(event) => {
-                          const averageMinutes = event.target.value
-                          setDraft((current) => ({
-                            ...current,
-                            [seats]: {
-                              averageMinutes,
-                              capacity: current[seats]?.capacity ?? '',
-                            },
-                          }))
-                        }}
-                      />
-                      <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-gray-500">
-                        minutos
-                      </span>
-                    </div>
-                  </Field>
-                  <Field>
-                    <FieldLabel htmlFor={`capacity-${seats}`}>{text.max}</FieldLabel>
-                    <Input
-                      id={`capacity-${seats}`}
-                      type="number"
-                      min={1}
-                      max={10000}
-                      value={row.capacity}
-                      aria-invalid={invalid && !inRange(row.capacity, 10000)}
-                      onChange={(event) => {
-                        const capacity = event.target.value
-                        setDraft((current) => ({
-                          ...current,
-                          [seats]: {
-                            averageMinutes: current[seats]?.averageMinutes ?? '',
-                            capacity,
-                          },
-                        }))
-                      }}
-                    />
-                  </Field>
-                </AccordionContent>
-              )}
-            </AccordionItem>
-          )
-        })}
-        </Accordion>
+      {error && (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
       )}
-      {invalid && <FieldError>Revisa los tiempos y el máximo de cada tipo.</FieldError>}
+      {type !== 'reception' ? (
+        <Tabs
+          value={selected}
+          onValueChange={(value) => setSelected(String(value))}
+          className="min-w-0 gap-6"
+        >
+          <div className="min-w-0 overflow-x-auto py-1">
+            <TabsList
+              aria-label="Espacios"
+              className="w-full min-w-max group-data-horizontal/tabs:h-12"
+            >
+              {draft.map((item) => (
+                <TabsTrigger
+                  key={item.id ?? item.name}
+                  value={item.id ?? item.name}
+                >
+                  {item.name}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
+          {draft.map((space, index) => (
+            <TabsContent
+              key={space.id ?? space.name}
+              value={space.id ?? space.name}
+              className="space-y-6"
+            >
+              {!space?.tableTypes?.length && (
+                <p className="text-sm text-muted-foreground">
+                  Sin tipos definidos. Configúralos en el paso de capacidad;
+                  mientras tanto, la estimación será provisional.
+                </p>
+              )}
+              <Accordion key={selected} className="gap-4">
+                {space?.tableTypes?.map((group, groupIndex) => (
+                  <AccordionItem
+                    key={group.seats}
+                    value={String(group.seats)}
+                    className="border-0"
+                  >
+                    <AccordionTrigger className="hover:no-underline **:data-[slot=accordion-trigger-icon]:size-6">
+                      <span className="text-lg font-medium">
+                        {type === 'restaurant' ? 'Mesas' : 'Grupos'} de{' '}
+                        {group.seats}
+                      </span>
+                    </AccordionTrigger>
+                    <AccordionContent className="mt-3 space-y-4 rounded-lg border px-8 py-4">
+                      <Field>
+                        <FieldLabel
+                          htmlFor={`group-time-${index}-${group.seats}`}
+                        >
+                          Tiempo medio{' '}
+                          {type === 'restaurant'
+                            ? 'del cliente en mesa'
+                            : 'de ocupación'}{' '}
+                          (min)
+                        </FieldLabel>
+                        <Input
+                          id={`group-time-${index}-${group.seats}`}
+                          aria-label={`${space.name} · ${group.seats} plazas (min)`}
+                          type="number"
+                          required
+                          min={1}
+                          max={1440}
+                          value={group.averageMinutes}
+                          onChange={(event) =>
+                            form.setValue(
+                              `spaces.${index}.tableTypes.${groupIndex}.averageMinutes`,
+                              Number(event.target.value),
+                            )
+                          }
+                        />
+                      </Field>
+                      <p className="text-xs text-muted-foreground">
+                        Duración desde la llegada hasta liberar el recurso. Se
+                        ajusta con las ocupaciones registradas.
+                      </p>
+                    </AccordionContent>
+                  </AccordionItem>
+                ))}
+              </Accordion>
+            </TabsContent>
+          ))}
+          {operations}
+        </Tabs>
+      ) : (
+        operations
+      )}
     </form>
   )
 }

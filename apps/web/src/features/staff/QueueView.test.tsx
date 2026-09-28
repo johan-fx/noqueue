@@ -103,7 +103,10 @@ it('separates active, completed and cancelled histories using accessible tabs', 
   ).toBeVisible()
   expect(within(completedPanel).getAllByRole('listitem')).toHaveLength(2)
   expect(
-    screen.queryByRole('button', { name: /Acciones del turno/ }),
+    screen.getByRole('button', { name: 'Acciones del turno T2' }),
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Acciones del turno T3' }),
   ).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('tab', { name: 'Cancelados' }))
   const cancelledPanel = screen.getByRole('tabpanel')
@@ -129,4 +132,22 @@ it('keeps the viewer read-only', () => {
   expect(
     screen.queryByRole('button', { name: /Acciones del turno/ }),
   ).not.toBeInTheDocument()
+})
+it('offers an explicit release after arrival', () => {
+  render(
+    <QueueView
+      queue={queue}
+      entries={[{ ...entries[2]!, resourceId: 'reception:100:0' }]}
+      tab="completed"
+      onTabChange={() => {}}
+      canOperate
+      busy={false}
+      lastSync=""
+      error=""
+      onRefresh={() => {}}
+      onAction={vi.fn()}
+    />,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T2' }))
+  expect(screen.getByRole('button', { name: 'Liberar recurso' })).toBeVisible()
 })

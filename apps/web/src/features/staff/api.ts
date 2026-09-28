@@ -12,6 +12,22 @@ const messages: Record<string, string> = {
   version_conflict:
     'Otra persona ha modificado la cola. Actualiza antes de continuar.',
   invalid_transition: 'El turno ya ha cambiado de estado.',
+  no_free_compatible_resource:
+    'No hay un recurso compatible libre. Confirma las liberaciones y actualiza.',
+  oldest_compatible_required:
+    'Corresponde llamar al turno compatible más antiguo. Para una excepción, indica el motivo.',
+  occupancy_not_empty:
+    'Resuelve las llamadas y libera los turnos en servicio antes de confirmar que el servicio está vacío.',
+  untracked_occupancy:
+    'Hay turnos en servicio sin recurso registrado. Finalízalos antes de activar el motor.',
+  occupied_resource_configuration:
+    'No se puede quitar o cambiar un recurso ocupado. Libéralo primero.',
+  drain_resources_before_deactivation:
+    'Libera todos los recursos antes de desactivar el motor.',
+  invalid_adjustment:
+    'Revisa el grupo y la caducidad del ajuste: debe estar entre ahora y las próximas 24 horas.',
+  operational_initialization_required:
+    'Inicializa los recursos desde la cuenta del establecimiento después de crear el servicio.',
   arrival_grace_active: 'Todavía no ha terminado el tiempo de llegada.',
   rate_limited: 'Demasiados intentos. Espera un minuto.',
   username_unavailable:

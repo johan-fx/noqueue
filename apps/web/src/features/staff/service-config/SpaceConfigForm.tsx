@@ -48,7 +48,11 @@ export function SpaceConfigForm({
   )
   const selected = sizes
     .filter((seats) => counts[seats] != null)
-    .map((seats) => ({ seats, count: counts[seats]! }))
+    .map((seats) => ({
+      ...saved.find((item) => item.seats === seats),
+      seats,
+      count: counts[seats]!,
+    }))
   const total = selected.reduce((sum, item) => sum + item.count, 0)
 
   function toggle(seats: number) {

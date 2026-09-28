@@ -1,3 +1,4 @@
+import { recalculateQueue } from './features/queue/projection'
 import { HTTPException } from 'hono/http-exception'
 import type { QueueCommand } from '@noqueue/contracts/staff'
 import { runQueueCommand, configureQueue } from './features/staff/commands'
@@ -6,7 +7,7 @@ import type { JoinQueue } from '@noqueue/contracts/queue'
 import { app } from './app'
 import { confirmationExperimentEnabled } from './features/queue/confirmation'
 import { changeExperiment } from './features/queue/experiment'
-import { joinQueue } from './features/queue/entries'
+import { joinQueue, readEntrySnapshot } from './features/queue/entries'
 import {
   dispatchNotification,
   dispatchNotificationSerialized,
@@ -49,6 +50,18 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       this.staffResult(() => configureQueue(this.env, actor, queueId, input)),
     )
   }
+  read(queueId: string, token: string) {
+    return this.serialize(async () => {
+      await recalculateQueue(this.env, queueId)
+      return readEntrySnapshot(this.env, token)
+    })
+  }
+  refresh(queueId: string) {
+    return this.serialize(async () => {
+      await recalculateQueue(this.env, queueId)
+      return { ok: true }
+    })
+  }
   experiment(action: 'seed' | 'advance', key: string) {
     return this.serialize(() => changeExperiment(this.env, action, key))
   }
@@ -86,6 +99,16 @@ export default {
     }
   },
   async scheduled(_controller, env) {
+    const queues = await env.DB.prepare('SELECT id FROM queue').all<{
+      id: string
+    }>()
+    for (const queue of queues.results)
+      await (env.APP_ENV === 'local'
+        ? env.QUEUE_COORDINATOR
+        : env.QUEUE_COORDINATOR.jurisdiction('eu')
+      )
+        .getByName(queue.id)
+        .refresh(queue.id)
     await reconcile(env)
     await env.DB.batch([
       env.DB.prepare(

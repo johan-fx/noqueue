@@ -8,7 +8,8 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
   const preference =
     values.assignmentPreference === 'fastest' || !values.assignmentPreference
       ? 'Menor tiempo posible'
-      : values.assignmentPreference
+      : values.spaces.find((space) => space.id === values.assignmentPreference)
+          ?.name ?? values.assignmentPreference
   return (
     <section className="space-y-3 rounded-lg bg-muted p-4">
       <h3 className="font-semibold">{values.name || 'Sin nombre'}</h3>
@@ -23,6 +24,18 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
         Nº máximo de {values.type === 'reception' ? 'personas' : seats} en cola:{' '}
         {values.capacity}
       </p>
+      {values.spaces.flatMap((space) =>
+        (space.tableTypes ?? []).map((group) => (
+          <p key={`${space.id ?? space.name}-${group.seats}`}>
+            {space.name} · {group.seats} plazas:{' '}
+            {group.averageMinutes ??
+              values.queueBySeat?.find((row) => row.seats === group.seats)
+                ?.averageMinutes ??
+              values.averageMinutes}{' '}
+            min
+          </p>
+        )),
+      )}
       {values.queueBySeat?.map((item) => (
         <p key={item.seats}>
           {values.type === 'pool' ? 'Plazas' : 'Mesas'} de {item.seats}:{' '}

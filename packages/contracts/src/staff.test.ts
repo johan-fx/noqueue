@@ -147,3 +147,45 @@ describe('staff contracts', () => {
     ).toBe(false)
   })
 })
+
+it('preserves stable group identity, per-space means and safe rollout settings', () => {
+  const parsed = serviceSchema.parse({
+    ...service,
+    estimationMode: 'active',
+    resourceStateKnown: true,
+    spaces: [
+      {
+        id: 'terrace',
+        name: 'Terrace',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 70 }],
+      },
+    ],
+  })
+  expect(parsed.spaces[0]).toMatchObject({
+    id: 'terrace',
+    tableTypes: [{ averageMinutes: 70 }],
+  })
+  expect(parsed).toMatchObject({
+    estimationMode: 'active',
+    resourceStateKnown: true,
+  })
+})
+it('accepts bounded availability blocks while retaining legacy duration adjustment shape', () => {
+  const base = {
+    spaceId: 'room',
+    seats: 4,
+    reason: 'Cleaning',
+    expiresAt: Date.now() + 60000,
+  }
+  expect(
+    serviceSchema.parse({
+      ...service,
+      adjustments: [{ ...base, kind: 'availability' }],
+    }).adjustments?.[0],
+  ).toMatchObject({ kind: 'availability' })
+  expect(
+    serviceSchema.parse({ ...service, adjustments: [{ ...base, minutes: 45 }] })
+      .adjustments?.[0],
+  ).toMatchObject({ minutes: 45 })
+})

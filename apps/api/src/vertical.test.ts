@@ -138,6 +138,8 @@ describe('queue vertical in workerd', () => {
       code: entry.code,
       position: 1,
       etaMinutes: 0,
+      predictedAt: null,
+      estimateQuality: 'unknown',
       status: 'waiting',
       notification: 'disabled',
     })

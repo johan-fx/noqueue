@@ -130,8 +130,8 @@ export function DemoQueue() {
               ? 'Guardando…'
               : 'Saving…'
             : es
-              ? 'Apuntarme a la cola'
-              : 'Join queue'}
+            ? 'Apuntarme a la cola'
+            : 'Join queue'}
         </Button>
         {error && <p role="alert">{error}</p>}
       </form>
@@ -180,14 +180,37 @@ export function DemoEntry() {
               ? es
                 ? 'Es tu turno. Acude al servicio.'
                 : 'Your turn. Please arrive at the service.'
+              : entry.status === 'completed'
+              ? es
+                ? 'En servicio'
+                : 'In service'
+              : entry.status === 'served'
+              ? es
+                ? 'Servicio finalizado'
+                : 'Service finished'
               : entry.status}
           </p>
           <p>
             {es ? 'Posición' : 'Position'}: {entry.position}
           </p>
           <p>
-            {es ? 'Espera aproximada' : 'Estimated wait'}: {entry.etaMinutes}{' '}
-            min
+            {entry.estimateQuality === 'unknown' ? (
+              es ? (
+                'Espera pendiente de datos'
+              ) : (
+                'Wait estimate not yet available'
+              )
+            ) : (
+              <>
+                {es ? 'Espera aproximada' : 'Estimated wait'}:{' '}
+                {entry.etaMinutes} min
+                {entry.estimateQuality === 'provisional'
+                  ? es
+                    ? ' · Provisional'
+                    : ' · Provisional'
+                  : ''}
+              </>
+            )}
           </p>
           <p>WhatsApp: {entry.notification}</p>
           <p>

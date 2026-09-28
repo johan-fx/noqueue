@@ -33,7 +33,7 @@ const views = [
 const statusLabels: Record<string, string> = {
   waiting: 'En espera',
   called: 'Llamado',
-  completed: 'Completado',
+  completed: 'En servicio',
   served: 'Completado',
   cancelled: 'Cancelado',
   no_show: 'No presentado',
@@ -120,8 +120,10 @@ export function QueueView({
                     entry.status === 'waiting'
                       ? ['call', 'skip', 'cancel']
                       : entry.status === 'called'
-                        ? ['complete', 'no_show', 'cancel']
-                        : []
+                      ? ['complete', 'no_show', 'cancel']
+                      : entry.status === 'completed'
+                      ? ['release']
+                      : []
                   return (
                     <li
                       key={entry.id}
@@ -133,7 +135,7 @@ export function QueueView({
                             aria-label={'Posición ' + (index + 1)}
                             className="w-6 shrink-0 text-center text-2xl font-medium tabular-nums"
                           >
-                            {index + 1}
+                            {entry.position ?? index + 1}
                           </span>
                         )}
                         <div className="min-w-0 flex-1">
@@ -142,6 +144,18 @@ export function QueueView({
                               ? '1 persona'
                               : entry.partySize + ' personas'}
                           </p>
+                          {entry.status === 'waiting' &&
+                            entry.estimateQuality && (
+                              <p className="text-sm text-muted-foreground">
+                                {entry.estimateQuality === 'unknown'
+                                  ? 'Espera pendiente de datos'
+                                  : `${entry.etaMinutes} min · ${
+                                      entry.estimateQuality === 'provisional'
+                                        ? 'Provisional'
+                                        : 'Estimación'
+                                    }`}
+                              </p>
+                            )}
                           <p className="break-words text-sm">
                             <span className="text-muted-foreground">
                               Turno:{' '}
@@ -156,8 +170,8 @@ export function QueueView({
                               (completed
                                 ? 'text-green-600 dark:text-green-400'
                                 : active
-                                  ? 'text-muted-foreground'
-                                  : 'text-destructive')
+                                ? 'text-muted-foreground'
+                                : 'text-destructive')
                             }
                           >
                             {completed ? (
@@ -235,8 +249,8 @@ export function QueueView({
                   {view.value === 'active'
                     ? 'No hay turnos en espera.'
                     : view.value === 'completed'
-                      ? 'Todavía no hay turnos completados.'
-                      : 'No hay turnos cancelados ni ausentes.'}
+                    ? 'Todavía no hay turnos completados.'
+                    : 'No hay turnos cancelados ni ausentes.'}
                 </p>
               )}
             </TabsContent>

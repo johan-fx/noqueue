@@ -37,6 +37,8 @@ export const entrySchema = z.object({
   code: z.string(),
   position: z.number().int().nonnegative(),
   etaMinutes: z.number().int().nonnegative(),
+  predictedAt: z.number().nullable().optional(),
+  estimateQuality: z.enum(['estimated', 'provisional', 'unknown']).optional(),
   status: z.enum([
     'waiting',
     'called',

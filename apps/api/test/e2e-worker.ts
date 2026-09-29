@@ -207,3 +207,14 @@ export default {
   },
   scheduled: worker.scheduled,
 }
+
+// Explicit test-only legacy admissions fixture; never confirms unknown occupancy.
+app.post('/experiments/local/staff/legacy-open', async (c) => {
+  const { venueId } = z
+    .object({ venueId: z.uuid() })
+    .parse(await c.req.json())
+  await c.env.DB.prepare('UPDATE queue SET open=1 WHERE venue_id=?')
+    .bind(venueId)
+    .run()
+  return c.json({ ok: true })
+})

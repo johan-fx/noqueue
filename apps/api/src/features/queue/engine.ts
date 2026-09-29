@@ -85,7 +85,8 @@ export function projectQueue(
           progress.lastCallAt <= now &&
           progress.lastCallAt + progress.cadenceMinutes * 60000 > now
         const predictedAt = cadenceValid
-          ? progress.lastCallAt + (index + 1) * progress.cadenceMinutes * 60000
+          ? progress.lastCallAt +
+            (index + 1) * progress.cadenceMinutes * 60000
           : null
         return {
           id: party.id,
@@ -110,7 +111,14 @@ export function projectQueue(
         position: index + 1,
         etaMinutes: Math.ceil((predictedAt - now) / 60000),
         predictedAt,
-        quality: slot.known ? ('estimated' as const) : ('provisional' as const),
+        quality:
+          slot.known &&
+          !(
+            predictedAt > now &&
+            eligible.some((r) => !r.known && r.availableAt === null)
+          )
+            ? ('estimated' as const)
+            : ('provisional' as const),
         resourceId: slot.id,
         callable,
       }

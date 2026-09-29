@@ -123,7 +123,9 @@ it('separates active, completed and cancelled histories using accessible tabs', 
 it('expands permitted turn actions without making historical cards actionable', () => {
   const action = vi.fn()
   render(<Harness action={action} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Acciones del turno T0' }),
+  )
   fireEvent.click(screen.getByRole('button', { name: 'Llamar' }))
   expect(action).toHaveBeenCalledWith(entries[0], 'call')
 })
@@ -148,6 +150,34 @@ it('offers an explicit release after arrival', () => {
       onAction={vi.fn()}
     />,
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T2' }))
-  expect(screen.getByRole('button', { name: 'Liberar recurso' })).toBeVisible()
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Acciones del turno T2' }),
+  )
+  expect(
+    screen.getByRole('button', { name: 'Liberar recurso' }),
+  ).toBeVisible()
+})
+it('disables explicit calls while managed inventory needs a fresh survey', () => {
+  render(
+    <QueueView
+      queue={{
+        ...queue,
+        readiness: {
+          state: 'pending',
+          reasons: ['inventory_refresh_required'],
+        },
+      }}
+      entries={[entries[0]!]}
+      tab="active"
+      onTabChange={vi.fn()}
+      canOperate
+      busy={false}
+      lastSync=""
+      error=""
+      onRefresh={vi.fn()}
+      onAction={vi.fn()}
+    />,
+  )
+  fireEvent.click(screen.getByRole('button', { name: /Acciones/ }))
+  expect(screen.getByRole('button', { name: 'Llamar' })).toBeDisabled()
 })

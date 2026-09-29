@@ -86,6 +86,7 @@ export const serviceSchema = z
     twentyFourHours: z.boolean(),
     schedules: z.array(scheduleSchema).max(28),
     spaces: z.array(spaceSchema).max(30),
+    intelligencePolicy: z.enum(['automatic', 'disabled']).optional(),
     estimationMode: z.enum(['shadow', 'active']).optional(),
     resourceStateKnown: z.boolean().optional(),
     stations: z.number().int().min(1).max(1000).optional(),
@@ -214,7 +215,14 @@ export const inviteSchema = z.object({
 export const queueCommandSchema = z.object({
   entryId: z.string().uuid(),
   version: z.number().int().min(0),
-  action: z.enum(['call', 'complete', 'release', 'cancel', 'no_show', 'skip']),
+  action: z.enum([
+    'call',
+    'complete',
+    'release',
+    'cancel',
+    'no_show',
+    'skip',
+  ]),
   overrideReason: z.string().trim().min(3).max(300).optional(),
 })
 export type QueueCommand = z.infer<typeof queueCommandSchema>
@@ -242,6 +250,9 @@ export type QueueSummary = {
   open: number
   version: number
   config: ServiceInput
+  inventoryConfirmed?: boolean
+  outsideSchedule?: boolean
+  readiness?: QueueReadiness
 }
 export type StaffEntry = {
   id: string
@@ -257,4 +268,80 @@ export type StaffEntry = {
   estimateQuality?: 'estimated' | 'provisional' | 'unknown'
   resourceId?: string | null
   callable?: boolean
+}
+
+const occupancyAnswerSchema = z.object({
+  spaceId: z.string().min(1).max(100),
+  seats: z.number().int().min(1).max(100),
+  occupied: z.number().int().min(0).max(1000),
+})
+export const queueLifecycleSchema = z
+  .discriminatedUnion('action', [
+    z.object({
+      action: z.literal('open'),
+      contextToken: z.string().min(1).max(200),
+      groups: z.array(occupancyAnswerSchema).max(600),
+    }),
+    z.object({
+      action: z.literal('confirm_inventory'),
+      contextToken: z.string().min(1).max(200),
+      groups: z.array(occupancyAnswerSchema).max(600),
+    }),
+    z.object({
+      action: z.literal('disable_intelligence'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('enable_intelligence'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('close'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('occupancy'),
+      contextToken: z.string().min(1).max(200),
+      group: occupancyAnswerSchema,
+      reason: z.string().trim().min(3).max(300),
+    }),
+  ])
+  .superRefine((input, ctx) => {
+    if (
+      (input.action === 'open' || input.action === 'confirm_inventory') &&
+      new Set(input.groups.map((g) => JSON.stringify([g.spaceId, g.seats])))
+        .size !== input.groups.length
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['groups'],
+        message: 'Duplicate group answer',
+      })
+  })
+export type QueueLifecycleCommand = z.infer<typeof queueLifecycleSchema>
+export type QueueReadiness = {
+  state: 'active' | 'pending' | 'disabled'
+  reasons: (
+    | 'configuration_missing'
+    | 'inventory_required'
+    | 'inventory_refresh_required'
+    | 'legacy_occupancy'
+  )[]
+}
+export type QueueOpeningContext = {
+  open: boolean
+  version: number
+  contextToken: string
+  pendingCount: number
+  untrackedCount: number
+  inventoryConfirmed?: boolean
+  readiness: QueueReadiness
+  groups: {
+    spaceId: string
+    spaceName: string
+    seats: number
+    count: number
+    allocated: number
+    occupied: number
+  }[]
 }

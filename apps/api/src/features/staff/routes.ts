@@ -1,3 +1,6 @@
+import { serviceAcceptsEntries } from './availability'
+import { readiness, inventoryConfirmed } from '../queue/opening-state'
+import { queueLifecycleSchema } from '@noqueue/contracts/staff'
 import { normalizeConfig, readProjection } from '../queue/projection'
 import { hash } from '../queue/crypto'
 import { Hono, type Context } from 'hono'
@@ -291,16 +294,39 @@ staffRoutes.patch('/venues/:id/members/:userId', async (c) => {
 })
 staffRoutes.get('/venues/:id/queues', async (c) => {
   await venueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  const venue = await c.env.DB.prepare(
+    'SELECT timezone FROM venue WHERE id=?',
+  )
+    .bind(c.req.param('id'))
+    .first<{ timezone: string }>()
+  const queueIds = await c.env.DB.prepare(
+    'SELECT id FROM queue WHERE venue_id=?',
+  )
+    .bind(c.req.param('id'))
+    .all<{ id: string }>()
+  await Promise.all(
+    queueIds.results.map((row) => coordinator(c.env, row.id).refresh(row.id)),
+  )
   const rows = await c.env.DB.prepare(
     'SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config FROM queue WHERE venue_id=?',
   )
     .bind(c.req.param('id'))
     .all<{ id: string; config: string }>()
   return c.json(
-    rows.results.map((row) => ({
-      ...row,
-      config: normalizeConfig(serviceSchema.parse(JSON.parse(row.config))),
-    })),
+    await Promise.all(
+      rows.results.map(async (row) => {
+        const config = normalizeConfig(
+          serviceSchema.parse(JSON.parse(row.config)),
+        )
+        return {
+          ...row,
+          config,
+          outsideSchedule: !serviceAcceptsEntries(config, venue!.timezone),
+          inventoryConfirmed: await inventoryConfirmed(c.env, row.id, config),
+          readiness: await readiness(c.env, row.id, config),
+        }
+      }),
+    ),
   )
 })
 staffRoutes.get('/queues/:id/entries', async (c) => {
@@ -346,6 +372,36 @@ staffRoutes.post('/queues/:id/commands', async (c) => {
   )
   return c.json(result.body, result.status as 200)
 })
+staffRoutes.get('/queues/:id/opening-context', async (c) => {
+  await queueAccess(
+    c.env,
+    c.get('actor').id,
+    c.req.param('id'),
+    'queue.operate',
+  )
+  return c.json(
+    await coordinator(c.env, c.req.param('id')).openingContext(
+      c.req.param('id'),
+    ),
+  )
+})
+staffRoutes.post('/queues/:id/lifecycle', async (c) => {
+  await queueAccess(
+    c.env,
+    c.get('actor').id,
+    c.req.param('id'),
+    'queue.operate',
+  )
+  const input = queueLifecycleSchema.safeParse(await c.req.json())
+  if (!input.success) return c.json({ error: 'invalid_inventory' }, 400)
+  const result = await coordinator(c.env, c.req.param('id')).lifecycle(
+    c.get('actor').id,
+    c.req.param('id'),
+    uuid(c.req.header('Idempotency-Key')),
+    input.data,
+  )
+  return c.json(result.body, result.status as 200)
+})
 staffRoutes.patch('/queues/:id', async (c) => {
   await queueAccess(
     c.env,
@@ -380,10 +436,14 @@ staffRoutes.post('/venues/:id/queues', async (c) => {
   const parsed = serviceSchema.safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_settings' }, 400)
   if (
+    parsed.data.intelligencePolicy === 'disabled' ||
     parsed.data.resourceStateKnown ||
-    parsed.data.estimationMode === 'active' ||
-    parsed.data.adjustments?.length
+    parsed.data.estimationMode === 'active'
   )
+    throw new HTTPException(400, {
+      message: 'operational_initialization_required',
+    })
+  if (parsed.data.adjustments?.length)
     await venueAccess(
       c.env,
       c.get('actor').id,

@@ -1,3 +1,4 @@
+import { readinessMessages } from './queue-readiness'
 import { useState } from 'react'
 import { Check, ChevronDown, Clock, X } from 'lucide-react'
 import type {
@@ -5,7 +6,12 @@ import type {
   QueueSummary,
   StaffEntry,
 } from '@noqueue/contracts/staff'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import {
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+} from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 
@@ -65,6 +71,11 @@ export function QueueView({
   const [expanded, setExpanded] = useState<string | null>(null)
   return (
     <div className="space-y-6">
+      {queue.readiness?.reasons.includes('inventory_refresh_required') && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {readinessMessages.inventory_refresh_required}
+        </p>
+      )}
       <Tabs
         value={tab}
         onValueChange={(value) => {
@@ -187,7 +198,10 @@ export function QueueView({
                                 variant="secondary"
                                 title="Tiempo desde la llamada"
                               >
-                                <Clock aria-hidden="true" className="size-3" />
+                                <Clock
+                                  aria-hidden="true"
+                                  className="size-3"
+                                />
                                 {Math.max(
                                   0,
                                   Math.floor(
@@ -232,7 +246,13 @@ export function QueueView({
                               <Button
                                 key={action}
                                 variant="outline"
-                                disabled={busy}
+                                disabled={
+                                  busy ||
+                                  (action === 'call' &&
+                                    queue.readiness?.reasons.includes(
+                                      'inventory_refresh_required',
+                                    ))
+                                }
                                 onClick={() => onAction(entry, action)}
                               >
                                 {queueActionLabels[action]}
@@ -265,7 +285,12 @@ export function QueueView({
       <div className="space-y-2 border-t pt-4 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p>Última lectura: {lastSync || 'cargando…'} · Cada 5 s</p>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={onRefresh}>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={onRefresh}
+          >
             Actualizar
           </Button>
         </div>

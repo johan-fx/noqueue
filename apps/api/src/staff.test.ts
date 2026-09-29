@@ -1,5 +1,6 @@
 import { env } from 'cloudflare:workers'
 import {
+  vi,
   beforeAll,
   afterAll,
   afterEach,
@@ -12,7 +13,10 @@ import { setupNetwork } from '@msw/cloudflare'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
 import { createAuth } from './auth/server'
-import { provisionSchema, type ProvisionInput } from '@noqueue/contracts/staff'
+import {
+  provisionSchema,
+  type ProvisionInput,
+} from '@noqueue/contracts/staff'
 import { provision } from './features/staff/provision'
 const network = setupNetwork(),
   mails = new Map<string, string>()
@@ -578,7 +582,8 @@ describe('manual username authentication and scoped provisioning', () => {
       ).status,
     ).toBe(200)
     expect(
-      (await request(`/staff/venues/${t.venueId}/queues`, other.cookie)).status,
+      (await request(`/staff/venues/${t.venueId}/queues`, other.cookie))
+        .status,
     ).toBe(404)
     expect(
       (
@@ -628,15 +633,7 @@ describe('service lifecycle and public access', () => {
         )
       ).status,
     ).toBe(409)
-    expect(
-      (
-        await request(`/staff/queues/${result.id}`, t.owner.cookie, 'PATCH', {
-          ...service,
-          version: 0,
-          open: true,
-        })
-      ).status,
-    ).toBe(200)
+    await configureAndOpen(t, result.id, service)
     const joinPath = `/public/services/${result.id}/entries`
     const joined = await request(
       joinPath,
@@ -730,7 +727,10 @@ describe('platform establishment navigation', () => {
     expect(new Set(seen).size).toBe(105)
     expect(
       await (
-        await request('/staff/commercial/organizations?page=6', t.sales.cookie)
+        await request(
+          '/staff/commercial/organizations?page=6',
+          t.sales.cookie,
+        )
       ).json(),
     ).toEqual({ items: [], page: 6, hasMore: false })
     for (const page of ['0', '-1', '1.5', 'abc', '9007199254740991'])
@@ -770,7 +770,8 @@ describe('platform establishment navigation', () => {
     expect((await request(path, other.cookie)).status).toBe(404)
     expect((await request(path, t.owner.cookie)).status).toBe(403)
     expect(
-      (await request('/staff/commercial/venues/missing', admin.cookie)).status,
+      (await request('/staff/commercial/venues/missing', admin.cookie))
+        .status,
     ).toBe(404)
     expect((await request(path)).status).toBe(401)
     for (const cookie of [admin.cookie, t.sales.cookie])
@@ -803,15 +804,7 @@ it('reserves capacity at call, retains it at arrival and frees it only at releas
       },
     ],
   }
-  expect(
-    (
-      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
-        ...config,
-        version: 0,
-        open: true,
-      })
-    ).status,
-  ).toBe(200)
+  await configureAndOpen(t, t.queueId, config)
   const ids: string[] = []
   for (let i = 1; i <= 2; i++) {
     const id = crypto.randomUUID()
@@ -863,15 +856,7 @@ it('audits explicit order overrides and preserves cancellation, no-show and skip
       },
     ],
   }
-  expect(
-    (
-      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
-        ...config,
-        version: 0,
-        open: true,
-      })
-    ).status,
-  ).toBe(200)
+  await configureAndOpen(t, t.queueId, config)
   const ids: string[] = []
   for (let i = 1; i <= 3; i++) {
     const id = crypto.randomUUID()
@@ -953,6 +938,25 @@ it('requires operational authority for initialization and refuses an unsafe empt
         open: true,
       })
     ).status,
+  ).toBe(409)
+  expect(
+    (
+      await request(
+        `/staff/queues/${t.queueId}/opening-context`,
+        t.sales.cookie,
+      )
+    ).status,
+  ).toBe(404)
+  expect(
+    (
+      await request(
+        `/staff/queues/${t.queueId}/lifecycle`,
+        t.sales.cookie,
+        'POST',
+        { action: 'close', contextToken: 'x' },
+        crypto.randomUUID(),
+      )
+    ).status,
   ).toBe(404)
   const id = crypto.randomUUID()
   await env.DB.prepare(
@@ -1024,15 +1028,6 @@ it('does not activate enforcement over untracked shadow occupancy', async () => 
       },
     ],
   }
-  expect(
-    (
-      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
-        ...config,
-        version: 0,
-        open: true,
-      })
-    ).status,
-  ).toBe(200)
   for (let i = 1; i <= 2; i++) {
     const id = crypto.randomUUID()
     await env.DB.prepare(
@@ -1052,17 +1047,57 @@ it('does not activate enforcement over untracked shadow occupancy', async () => 
       ).status,
     ).toBe(200)
   }
+  await configureAndOpen(t, t.queueId, config)
   expect(
     (
       await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
         ...config,
         estimationMode: 'active',
-        version: 1,
+        version: 2,
         open: true,
       })
     ).status,
   ).toBe(409)
 })
+
+async function configureAndOpen(
+  t: Awaited<ReturnType<typeof tenant>>,
+  queueId: string,
+  config: Record<string, unknown>,
+) {
+  const result = await request(
+    `/staff/queues/${queueId}`,
+    t.owner.cookie,
+    'PATCH',
+    {
+      ...config,
+      estimationMode: 'shadow',
+      resourceStateKnown: false,
+      version: 0,
+      open: false,
+    },
+  )
+  expect(result.status, await result.clone().text()).toBe(200)
+  const context = (await (
+    await request(`/staff/queues/${queueId}/opening-context`, t.owner.cookie)
+  ).json()) as import('@noqueue/contracts/staff').QueueOpeningContext
+  const opened = await request(
+    `/staff/queues/${queueId}/lifecycle`,
+    t.owner.cookie,
+    'POST',
+    {
+      action: 'open',
+      contextToken: context.contextToken,
+      groups: context.groups.map((g) => ({
+        spaceId: g.spaceId,
+        seats: g.seats,
+        occupied: 0,
+      })),
+    },
+    crypto.randomUUID(),
+  )
+  expect(opened.status, await opened.clone().text()).toBe(200)
+}
 
 async function resourceFixture(
   spaces: unknown[],
@@ -1076,15 +1111,7 @@ async function resourceFixture(
     spaces,
     ...extra,
   }
-  expect(
-    (
-      await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
-        ...config,
-        version: 0,
-        open: true,
-      })
-    ).status,
-  ).toBe(200)
+  await configureAndOpen(t, t.queueId, config)
   const add = async (sequence: number, size: number, status = 'waiting') => {
     const id = crypto.randomUUID()
     await env.DB.prepare(
@@ -1137,7 +1164,12 @@ it('calls a fallback party without overriding a preferred-space-only older party
   await env.DB.prepare(
     "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,'terrace:2:0','terrace',2,?,?)",
   )
-    .bind(occupied, t.queueId, Date.now() - 10 * 60000, Date.now() - 10 * 60000)
+    .bind(
+      occupied,
+      t.queueId,
+      Date.now() - 10 * 60000,
+      Date.now() - 10 * 60000,
+    )
     .run()
   await t.add(2, 2)
   const fallback = await t.add(3, 4)
@@ -1205,7 +1237,10 @@ it('blocks a free group until adjustment expiry without blocking another space',
   ).toBeLessThan(until)
   expect((await t.command(id, 'call')).status).toBe(409)
   const after = await recalculateQueue(env, t.queueId, until + 1)
-  expect(after.projections[0]).toMatchObject({ etaMinutes: 0, callable: true })
+  expect(after.projections[0]).toMatchObject({
+    etaMinutes: 0,
+    callable: true,
+  })
   expect(
     (
       await env.DB.prepare(
@@ -1257,4 +1292,122 @@ it('expires an availability block on read and then permits a real call without a
   expect((await t.command(second, 'call')).status).toBe(409)
   expect((await t.command(id, 'release', 2)).status).toBe(200)
   expect((await t.command(second, 'call')).status).toBe(200)
+})
+
+it('reports server admission schedule separately from the manual queue switch', async () => {
+  const t = await tenant(),
+    availability = await import('./features/staff/availability'),
+    original = availability.serviceAcceptsEntries
+  const config = {
+    ...input().services[0]!,
+    twentyFourHours: false,
+    cutoffMinutes: 15,
+    schedules: [{ day: 1, from: '12:00', to: '15:00' }],
+  }
+  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+    .bind(JSON.stringify(config), t.queueId)
+    .run()
+  for (const [at, outside] of [
+    ['2026-09-21T10:00:00Z', false],
+    ['2026-09-21T12:45:00Z', true],
+    ['2026-09-22T10:00:00Z', true],
+  ] as const) {
+    const spy = vi
+      .spyOn(availability, 'serviceAcceptsEntries')
+      .mockImplementation((cfg, tz) => original(cfg, tz, new Date(at)))
+    try {
+      for (const enabled of [0, 1]) {
+        await env.DB.prepare('UPDATE queue SET open=? WHERE id=?')
+          .bind(enabled, t.queueId)
+          .run()
+        const result = await request(
+          `/staff/venues/${t.venueId}/queues`,
+          t.owner.cookie,
+        )
+        expect(result.status).toBe(200)
+        const rows = (await result.json()) as {
+          open: number
+          outsideSchedule: boolean
+        }[]
+        expect(rows[0]).toMatchObject({
+          open: enabled,
+          outsideSchedule: outside,
+        })
+        expect(spy).toHaveBeenCalledWith(
+          expect.objectContaining({ cutoffMinutes: 15 }),
+          'Europe/Madrid',
+        )
+      }
+    } finally {
+      spy.mockRestore()
+    }
+  }
+})
+it('does not allow configuration-only creation to establish a manual operational opt-out', async () => {
+  const t = await tenant(),
+    service = { ...input().services[0]!, intelligencePolicy: 'disabled' }
+  expect(
+    (
+      await request(
+        `/staff/venues/${t.venueId}/queues`,
+        t.sales.cookie,
+        'POST',
+        service,
+        crypto.randomUUID(),
+      )
+    ).status,
+  ).toBe(400)
+  await expect(
+    provision(env, t.sales.id, crypto.randomUUID(), {
+      ...input(),
+      services: [{ ...input().services[0]!, intelligencePolicy: 'disabled' }],
+    }),
+  ).rejects.toThrow('operational_initialization_required')
+})
+it('recalculates an already-confirmed formerly gated queue on the normal staff summary read', async () => {
+  const t = await tenant()
+  await configureAndOpen(t, t.queueId, {
+    ...input().services[0]!,
+    spaces: [
+      {
+        id: 'room',
+        name: 'Room',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1 }],
+      },
+    ],
+  })
+  const stored = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+    .bind(t.queueId)
+    .first<{ config: string }>()
+  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+    .bind(
+      JSON.stringify({
+        ...JSON.parse(stored!.config),
+        estimationMode: 'shadow',
+      }),
+      t.queueId,
+    )
+    .run()
+  const inventory = await env.DB.prepare(
+    'SELECT * FROM queue_opening WHERE queue_id=?',
+  )
+    .bind(t.queueId)
+    .first()
+  const result = await request(
+    `/staff/venues/${t.venueId}/queues`,
+    t.owner.cookie,
+  )
+  expect(result.status).toBe(200)
+  const rows = (await result.json()) as {
+    config: { estimationMode: string }
+    readiness: { state: string }
+  }[]
+  expect(rows[0]?.readiness.state).toBe('active')
+  expect(rows[0]?.config.estimationMode).toBe('active')
+  expect(
+    await env.DB.prepare('SELECT * FROM queue_opening WHERE queue_id=?')
+      .bind(t.queueId)
+      .first(),
+  ).toEqual(inventory)
 })

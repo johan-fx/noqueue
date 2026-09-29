@@ -42,7 +42,8 @@ describe('compatible parallel queue projection', () => {
       projectQueue([party('a', 1)], resources, now, 'salon')[0]?.resourceId,
     ).toBe('salon')
     expect(
-      projectQueue([party('b', 1, 4)], resources, now, 'salon')[0]?.resourceId,
+      projectQueue([party('b', 1, 4)], resources, now, 'salon')[0]
+        ?.resourceId,
     ).toBe('terrace')
   })
   it('never treats unknown or overdue occupied resources as free', () => {
@@ -55,13 +56,15 @@ describe('compatible parallel queue projection', () => {
     ).toMatchObject({ quality: 'unknown', predictedAt: null })
   })
   it('uses bounded observations and expiring adjustment without changing order', () => {
-    expect(groupMinutes(30, [], { minutes: 50, expiresAt: now + 1 }, now)).toBe(
-      50,
-    )
-    expect(groupMinutes(30, [], { minutes: 50, expiresAt: now }, now)).toBe(30)
-    expect(groupMinutes(30, [60, 60, 60, 60], undefined, now)).toBeGreaterThan(
+    expect(
+      groupMinutes(30, [], { minutes: 50, expiresAt: now + 1 }, now),
+    ).toBe(50)
+    expect(groupMinutes(30, [], { minutes: 50, expiresAt: now }, now)).toBe(
       30,
     )
+    expect(
+      groupMinutes(30, [60, 60, 60, 60], undefined, now),
+    ).toBeGreaterThan(30)
   })
 })
 it('retains the configured default until three valid completed durations exist', () => {
@@ -70,7 +73,13 @@ it('retains the configured default until three valid completed durations exist',
 })
 it('anchors provisional cadence to actual progress and expires stale forecasts', () => {
   const progress = { lastCallAt: now, cadenceMinutes: 5 }
-  const first = projectQueue([party('a', 1)], [], now, 'fastest', progress)[0]!
+  const first = projectQueue(
+    [party('a', 1)],
+    [],
+    now,
+    'fastest',
+    progress,
+  )[0]!
   const later = projectQueue(
     [party('a', 1)],
     [],
@@ -89,7 +98,13 @@ it('anchors provisional cadence to actual progress and expires stale forecasts',
     callable: false,
   })
   expect(
-    projectQueue([party('a', 1)], [], now + 6 * 60000, 'fastest', progress)[0],
+    projectQueue(
+      [party('a', 1)],
+      [],
+      now + 6 * 60000,
+      'fastest',
+      progress,
+    )[0],
   ).toMatchObject({ quality: 'unknown', predictedAt: null, callable: false })
   expect(
     projectQueue(
@@ -100,4 +115,35 @@ it('anchors provisional cadence to actual progress and expires stale forecasts',
       progress,
     )[0],
   ).toMatchObject({ quality: 'unknown', predictedAt: null, callable: false })
+})
+
+it('marks forecasts affected by unknown occupied compatible resources provisional, without changing unrelated spaces', () => {
+  const now = 100000
+  const resources = [
+    {
+      id: 'terrace:4:0',
+      spaceId: 'terrace',
+      seats: 4,
+      averageMinutes: 40,
+      availableAt: null,
+      known: false,
+      callable: false,
+    },
+    {
+      id: 'salon:4:0',
+      spaceId: 'salon',
+      seats: 4,
+      averageMinutes: 20,
+      availableAt: now + 1200000,
+      known: true,
+      callable: false,
+    },
+  ]
+  const parties = [{ id: 'one', sequence: 1, partySize: 4 }]
+  expect(projectQueue(parties, resources, now)[0]?.quality).toBe(
+    'provisional',
+  )
+  expect(projectQueue(parties, resources, now, 'salon')[0]?.quality).toBe(
+    'estimated',
+  )
 })

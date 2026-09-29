@@ -16,6 +16,7 @@ export async function provision(
   if (
     input.services.some(
       (service) =>
+        service.intelligencePolicy === 'disabled' ||
         service.resourceStateKnown ||
         service.estimationMode === 'active' ||
         service.adjustments?.length,

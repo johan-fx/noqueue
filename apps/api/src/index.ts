@@ -1,3 +1,5 @@
+import { openingContext, runLifecycleCommand } from './features/staff/opening'
+import type { QueueLifecycleCommand } from '@noqueue/contracts/staff'
 import { recalculateQueue } from './features/queue/projection'
 import { HTTPException } from 'hono/http-exception'
 import type { QueueCommand } from '@noqueue/contracts/staff'
@@ -48,6 +50,21 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   staffConfigure(actor: string, queueId: string, input: unknown) {
     return this.serialize(() =>
       this.staffResult(() => configureQueue(this.env, actor, queueId, input)),
+    )
+  }
+  openingContext(queueId: string) {
+    return this.serialize(() => openingContext(this.env, queueId))
+  }
+  lifecycle(
+    actor: string,
+    queueId: string,
+    key: string,
+    input: QueueLifecycleCommand,
+  ) {
+    return this.serialize(() =>
+      this.staffResult(() =>
+        runLifecycleCommand(this.env, actor, queueId, key, input),
+      ),
     )
   }
   read(queueId: string, token: string) {

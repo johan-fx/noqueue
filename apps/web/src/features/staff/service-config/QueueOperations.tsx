@@ -146,7 +146,9 @@ export function QueueOperations({
                         type="datetime-local"
                         value={new Date(
                           adjustment.expiresAt -
-                            new Date(adjustment.expiresAt).getTimezoneOffset() *
+                            new Date(
+                              adjustment.expiresAt,
+                            ).getTimezoneOffset() *
                               60000,
                         )
                           .toISOString()
@@ -200,31 +202,6 @@ export function QueueOperations({
         La capacidad de la cola limita las admisiones, no los recursos en
         servicio.
       </p>
-      <Field>
-        <FieldLabel htmlFor="estimationMode">Motor de estimación</FieldLabel>
-        <select
-          id="estimationMode"
-          className="rounded border p-2"
-          {...form.register('estimationMode')}
-        >
-          <option value="shadow">Comparación sin activar</option>
-          <option value="active">Activo</option>
-        </select>
-      </Field>
-      <Field>
-        <FieldLabel htmlFor="resourceStateKnown">
-          <input
-            id="resourceStateKnown"
-            type="checkbox"
-            {...form.register('resourceStateKnown')}
-          />{' '}
-          Confirmo que todos los recursos están vacíos al inicializar
-        </FieldLabel>
-        <p className="text-sm text-muted-foreground">
-          No elimina reservas ni ocupaciones existentes. Requiere permisos de
-          operación.
-        </p>
-      </Field>
     </div>
   )
 }

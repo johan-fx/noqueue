@@ -1,3 +1,4 @@
+import { activateIfReady, inventorySafety } from './opening-state'
 import { serviceSchema, type ServiceInput } from '@noqueue/contracts/staff'
 import { groupMinutes, projectQueue, type Resource } from './engine'
 
@@ -77,6 +78,13 @@ export async function loadQueueState(
       .bind(queueId)
       .all<Allocation>()
   ).results
+  const holds = (
+    await env.DB.prepare(
+      'SELECT resource_id,space_id,seats FROM queue_external_occupancy WHERE queue_id=?',
+    )
+      .bind(queueId)
+      .all<{ resource_id: string; space_id: string; seats: number }>()
+  ).results
   const parties = (
     await env.DB.prepare(
       "SELECT id,sequence,party_size AS partySize FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence",
@@ -153,10 +161,13 @@ export async function loadQueueState(
         const occupied = allocations.find(
           (a) => a.resource_id === id && a.released_at === null,
         )
+        const external = holds.some((h) => h.resource_id === id)
         const expected = occupied?.arrived_at
           ? occupied.arrived_at + averageMinutes * 60000
           : null
-        const availableAt = occupied
+        const availableAt = external
+          ? null
+          : occupied
           ? expected !== null && expected > now
             ? Math.max(expected, blockedUntil)
             : null
@@ -168,10 +179,16 @@ export async function loadQueueState(
           spaceId: space.id!,
           seats: type.seats,
           averageMinutes,
-          known: !!config?.resourceStateKnown && !!space.tableTypes?.length,
+          known:
+            !external &&
+            !!config?.resourceStateKnown &&
+            !!space.tableTypes?.length,
           availableAt,
           callable:
-            !!config?.resourceStateKnown && !occupied && blockedUntil <= now,
+            !!config?.resourceStateKnown &&
+            !occupied &&
+            !external &&
+            blockedUntil <= now,
         })
       }
     }
@@ -199,7 +216,9 @@ export async function loadQueueState(
   )
   return {
     config,
+    inventorySafety: await inventorySafety(env, queueId, config),
     allocations,
+    holds,
     parties,
     resources,
     projections,
@@ -211,6 +230,7 @@ export async function recalculateQueue(
   queueId: string,
   now = Date.now(),
 ) {
+  await activateIfReady(env, queueId)
   const state = await loadQueueState(env, queueId, now)
   const statements: D1PreparedStatement[] = []
   for (const p of state.projections) {
@@ -272,7 +292,10 @@ export async function recalculateQueue(
   if (statements.length) await env.DB.batch(statements)
   return state
 }
-export async function readProjection(env: CloudflareBindings, entryId: string) {
+export async function readProjection(
+  env: CloudflareBindings,
+  entryId: string,
+) {
   const row = await env.DB.prepare(
     'SELECT position,eta_minutes AS etaMinutes,predicted_at AS predictedAt,quality AS estimateQuality,resource_id AS resourceId,callable FROM queue_projection WHERE entry_id=?',
   )

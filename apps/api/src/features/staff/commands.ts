@@ -1,3 +1,4 @@
+import { topology } from '../queue/opening-state'
 import { eligibleResources } from '../queue/engine'
 import {
   loadQueueState,
@@ -76,6 +77,8 @@ export async function runQueueCommand(
     (a) => a.entry_id === input.entryId && a.released_at === null,
   )
   if (input.action === 'call') {
+    if (state.inventorySafety.requiresSurvey)
+      throw new HTTPException(409, { message: 'inventory_refresh_required' })
     const party = state.parties.find((p) => p.id === input.entryId)!
     const compatible = eligibleResources(
       party,
@@ -94,7 +97,8 @@ export async function runQueueCommand(
       )
       .sort((a, b) => a.seats - b.seats || a.id.localeCompare(b.id))
     const resource = free[0]
-    if (!resource && active)
+    // Confirmed physical capacity is a safety invariant, independent of rollout/order enforcement.
+    if (!resource && (active || state.inventorySafety.managed))
       throw new HTTPException(409, { message: 'no_free_compatible_resource' })
     const oldest =
       resource &&
@@ -167,7 +171,8 @@ export async function runQueueCommand(
         predicted?.predicted_at == null
           ? null
           : (now - predicted.predicted_at) / 60000,
-        predicted?.legacy_eta_minutes ?? Math.max(0, position) * state.baseline,
+        predicted?.legacy_eta_minutes ??
+          Math.max(0, position) * state.baseline,
         predicted?.created_at ?? null,
         state.config?.estimationMode ?? 'shadow',
       ),
@@ -223,33 +228,40 @@ export async function configureQueue(
   if (!parsed.success)
     throw new HTTPException(400, { message: 'invalid_settings' })
   const { version, open, ...rawConfig } = parsed.data
-  const current = await env.DB.prepare('SELECT version FROM queue WHERE id=?')
+  const current = await env.DB.prepare(
+    'SELECT version,open FROM queue WHERE id=?',
+  )
     .bind(queueId)
-    .first<{ version: number }>()
+    .first<{ version: number; open: number }>()
   if (!current || current.version !== version)
     throw new HTTPException(409, { message: 'version_conflict' })
   const old = await loadQueueState(env, queueId)
   const config = normalizeConfig(rawConfig, old.config)
-  const topology = (value: typeof config | null) =>
-    JSON.stringify(
-      value?.type === 'reception'
-        ? [value.type, value.stations ?? 1]
-        : value?.spaces
-            .map((space) => [
-              space.id,
-              space.tables,
-              space.tableTypes?.map((group) => [group.seats, group.count]),
-            ])
-            .sort((a, b) => String(a[0]).localeCompare(String(b[0]))),
-    )
-  if (config.resourceStateKnown && topology(config) !== topology(old.config))
-    await queueAccess(env, actor, queueId, 'queue.operate')
   if (
+    rawConfig.intelligencePolicy !== undefined &&
+    rawConfig.intelligencePolicy !==
+      (old.config?.intelligencePolicy ?? 'automatic')
+  )
+    throw new HTTPException(409, { message: 'lifecycle_command_required' })
+  config.intelligencePolicy = old.config?.intelligencePolicy ?? 'automatic'
+  if (
+    open !== !!current.open ||
     (config.estimationMode ?? 'shadow') !==
       (old.config?.estimationMode ?? 'shadow') ||
-    !!config.resourceStateKnown !== !!old.config?.resourceStateKnown ||
+    !!config.resourceStateKnown !== !!old.config?.resourceStateKnown
+  )
+    throw new HTTPException(409, { message: 'lifecycle_command_required' })
+  const topologyChanged =
+    !!old.config && topology(config) !== topology(old.config)
+  if (
+    topologyChanged &&
+    current.open &&
+    old.config?.estimationMode === 'active'
+  )
+    throw new HTTPException(409, { message: 'close_before_topology_change' })
+  if (
     JSON.stringify(config.adjustments) !==
-      JSON.stringify(old.config?.adjustments)
+    JSON.stringify(old.config?.adjustments)
   )
     await queueAccess(env, actor, queueId, 'queue.operate')
   const adjustmentsChanged =
@@ -274,35 +286,10 @@ export async function configureQueue(
     )
   )
     throw new HTTPException(400, { message: 'invalid_adjustment' })
-  if (
-    config.estimationMode === 'active' &&
-    old.config?.estimationMode !== 'active'
-  ) {
-    const untracked = await env.DB.prepare(
-      "SELECT 1 FROM queue_entry e WHERE e.queue_id=? AND e.status IN ('called','completed') AND NOT EXISTS (SELECT 1 FROM queue_allocation a WHERE a.entry_id=e.id AND a.released_at IS NULL) LIMIT 1",
-    )
-      .bind(queueId)
-      .first()
-    if (untracked)
-      throw new HTTPException(409, { message: 'untracked_occupancy' })
-  }
-  if (config.resourceStateKnown && !old.config?.resourceStateKnown) {
-    const legacy = await env.DB.prepare(
-      "SELECT 1 FROM queue_entry WHERE queue_id=? AND status IN ('called','completed') LIMIT 1",
-    )
-      .bind(queueId)
-      .first()
-    if (legacy) throw new HTTPException(409, { message: 'occupancy_not_empty' })
-  }
-  if (
-    old.config?.estimationMode === 'active' &&
-    config.estimationMode !== 'active' &&
-    old.allocations.some((a) => a.released_at === null)
-  )
-    throw new HTTPException(409, {
-      message: 'drain_resources_before_deactivation',
-    })
-  for (const a of old.allocations.filter((a) => a.released_at === null)) {
+  for (const a of [
+    ...old.allocations.filter((a) => a.released_at === null),
+    ...old.holds,
+  ]) {
     const space = config.spaces.find((s) => s.id === a.space_id)
     const type = space?.tableTypes?.find((t) => t.seats === a.seats)
     const index = Number(a.resource_id.split(':').at(-1))
@@ -316,7 +303,32 @@ export async function configureQueue(
         message: 'occupied_resource_configuration',
       })
   }
+  if (topologyChanged) {
+    config.resourceStateKnown = false
+    config.estimationMode = 'shadow'
+  }
   await env.DB.batch([
+    ...(topologyChanged
+      ? [
+          env.DB.prepare(
+            'UPDATE queue_opening SET complete=0 WHERE queue_id=?',
+          ).bind(queueId),
+        ]
+      : []),
+    ...(topologyChanged && old.inventorySafety.managed
+      ? [
+          env.DB.prepare(
+            'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
+          ).bind(
+            crypto.randomUUID(),
+            queueId,
+            actor,
+            'inventory_invalidated',
+            JSON.stringify({ topology: topology(config) }),
+            Date.now(),
+          ),
+        ]
+      : []),
     ...(adjustmentsChanged
       ? [
           env.DB.prepare(

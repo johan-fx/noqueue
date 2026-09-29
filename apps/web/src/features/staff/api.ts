@@ -6,6 +6,19 @@ export class ApiError extends Error {
   }
 }
 const messages: Record<string, string> = {
+  inventory_refresh_required:
+    'La distribución ha cambiado. Confirma de nuevo la ocupación antes de llamar más turnos. Las llegadas y liberaciones siguen disponibles.',
+  inventory_already_confirmed:
+    'La ocupación ya está confirmada. Usa Actualizar ocupación para corregirla con un motivo.',
+  configuration_missing:
+    'Configura los tipos de mesa o grupos de plazas antes de confirmar la ocupación.',
+  incomplete_inventory: 'Confirma la ocupación de todos los grupos.',
+  invalid_inventory:
+    'Revisa los recuentos: no pueden superar los recursos disponibles.',
+  lifecycle_command_required:
+    'Usa el control de apertura o cierre para cambiar el estado de la cola.',
+  close_before_topology_change:
+    'Cierra la cola antes de cambiar la distribución de recursos.',
   unauthorized: 'Tu sesión ha caducado. Vuelve a entrar.',
   forbidden: 'No tienes permiso para esta acción.',
   not_found: 'No se ha encontrado el recurso.',

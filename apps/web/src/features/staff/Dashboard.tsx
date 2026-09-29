@@ -1,3 +1,5 @@
+import { QueueLifecycleSheet } from './QueueLifecycleSheet'
+import { readinessNotice, occupancyAction } from './queue-readiness'
 import { useEffect, useState, useRef } from 'react'
 import type {
   Capability,
@@ -17,8 +19,15 @@ import {
   CardDescription,
   CardFooter,
 } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -36,8 +45,16 @@ import {
   DrawerTitle,
   DrawerDescription,
   DrawerFooter,
+  DrawerClose,
 } from '@/components/ui/drawer'
-import { Plus, MoveRight, UsersIcon } from 'lucide-react'
+import {
+  Plus,
+  MoveRight,
+  UsersIcon,
+  Info,
+  ChevronLeft,
+  Ellipsis,
+} from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, errorMessage } from './api'
 import { Members } from './Members'
@@ -50,7 +67,9 @@ type DashboardProps =
 
 export function Dashboard(props: DashboardProps) {
   const { venue } = props
-  const creationRequest = useRef<{ payload: string; key: string } | null>(null)
+  const creationRequest = useRef<{ payload: string; key: string } | null>(
+    null,
+  )
   const [drawer, setDrawer] = useState<
     'create' | 'edit' | 'members' | 'queue' | null
   >(null)
@@ -58,6 +77,7 @@ export function Dashboard(props: DashboardProps) {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const savingRef = useRef(false)
+  const menuTrigger = useRef<HTMLButtonElement | null>(null)
   const drawerTrigger = useRef<HTMLButtonElement | null>(null)
   function openDrawer(
     mode: 'create' | 'edit' | 'members' | 'queue',
@@ -71,7 +91,7 @@ export function Dashboard(props: DashboardProps) {
     setDrawer(mode)
   }
   function closeDrawer() {
-    if (!savingRef.current && !busy) setDrawer(null)
+    if (!savingRef.current && !busy && !lifecycle) setDrawer(null)
   }
   const [queues, setQueues] = useState<QueueSummary[]>([]),
     [selected, setSelected] = useState(''),
@@ -80,6 +100,18 @@ export function Dashboard(props: DashboardProps) {
     [tab, setTab] = useState('active'),
     [busy, setBusy] = useState(false),
     [lastSync, setLastSync] = useState('')
+  const [lifecycle, setLifecycle] = useState<{
+    queueId: string
+    insideDrawer?: boolean
+    action:
+      | 'open'
+      | 'close'
+      | 'occupancy'
+      | 'confirm_inventory'
+      | 'disable_intelligence'
+      | 'enable_intelligence'
+    trigger: HTMLElement | null
+  } | null>(null)
   const [overrideReason, setOverrideReason] = useState('')
   const [pending, setPending] = useState<{
     entry: StaffEntry
@@ -90,7 +122,8 @@ export function Dashboard(props: DashboardProps) {
     props.mode === 'commercial'
       ? ['queue.read', 'queue.configure', 'members.manage']
       : roleCapabilities[props.venue.role]
-  const queueLabel = props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
+  const queueLabel =
+    props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
   const queue = queues.find((q) => q.id === selected)
   useEffect(() => {
     let live = true
@@ -117,7 +150,11 @@ export function Dashboard(props: DashboardProps) {
     async function refresh() {
       try {
         const rows = await api<StaffEntry[]>(`/queues/${selected}/entries`)
+        const summaries = await api<QueueSummary[]>(
+          `/venues/${venue.id}/queues`,
+        )
         if (live) {
+          setQueues(summaries)
           setEntries(rows)
           setLastSync(new Date().toLocaleTimeString())
         }
@@ -131,7 +168,7 @@ export function Dashboard(props: DashboardProps) {
       live = false
       clearInterval(timer)
     }
-  }, [selected])
+  }, [selected, venue.id])
   async function refresh() {
     const [rows, qs] = await Promise.all([
       api<StaffEntry[]>(`/queues/${selected}/entries`),
@@ -184,25 +221,6 @@ export function Dashboard(props: DashboardProps) {
       setSaving(false)
     }
   }
-  async function toggleQueue(target: QueueSummary) {
-    if (savingRef.current) return
-    savingRef.current = true
-    setSaving(true)
-    setError('')
-    try {
-      await api(`/queues/${target.id}`, 'PATCH', {
-        ...target.config,
-        version: target.version,
-        open: !target.open,
-      })
-      setQueues(await api<QueueSummary[]>(`/venues/${venue.id}/queues`))
-    } catch (e) {
-      setError(errorMessage(e))
-    } finally {
-      savingRef.current = false
-      setSaving(false)
-    }
-  }
   async function command() {
     if (!pending) return
     setBusy(true)
@@ -234,8 +252,38 @@ export function Dashboard(props: DashboardProps) {
   const nextEntry = entries.find(
     (entry) =>
       entry.status === 'waiting' &&
-      (queue?.config.estimationMode !== 'active' || entry.callable === true),
+      !queue?.readiness?.reasons.includes('inventory_refresh_required') &&
+      ((queue?.config.estimationMode !== 'active' &&
+        !queue?.config.resourceStateKnown) ||
+        entry.callable === true),
   )
+  function openQueueOperation(
+    action: NonNullable<typeof lifecycle>['action'],
+  ) {
+    if (!queue || busy || saving || lifecycle) return
+    setLifecycle({
+      queueId: queue.id,
+      action,
+      trigger: menuTrigger.current,
+      insideDrawer: true,
+    })
+  }
+  const lifecycleQueue = queues.find((item) => item.id === lifecycle?.queueId)
+  const lifecycleSheet =
+    lifecycle && lifecycleQueue ? (
+      <QueueLifecycleSheet
+        queueId={lifecycleQueue.id}
+        name={lifecycleQueue.name}
+        type={lifecycleQueue.config.type}
+        action={lifecycle.action}
+        returnFocus={lifecycle.trigger}
+        onClose={() => setLifecycle(null)}
+        onSaved={async () => {
+          await refreshQueues()
+          if (lifecycle.insideDrawer) await refresh()
+        }}
+      />
+    ) : null
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -270,7 +318,9 @@ export function Dashboard(props: DashboardProps) {
             {permissions.includes('queue.configure') && (
               <CardAction>
                 <Button
-                  onClick={(event) => openDrawer('create', event.currentTarget)}
+                  onClick={(event) =>
+                    openDrawer('create', event.currentTarget)
+                  }
                 >
                   <Plus aria-hidden="true" />
                   Añadir servicio
@@ -281,7 +331,7 @@ export function Dashboard(props: DashboardProps) {
           <CardContent>
             {queues.length ? (
               <div className="flex flex-col pb-4">
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-4 sm:grid-cols-1 xl:grid-cols-2">
                   {queues.map((service) => (
                     <Card
                       key={service.id}
@@ -296,15 +346,22 @@ export function Dashboard(props: DashboardProps) {
                     >
                       <CardHeader>
                         <CardTitle className="flex w-full items-center justify-between gap-2">
-                          <span className="flex min-w-0 items-center gap-2">
+                          <span className="flex min-w-0 flex-wrap items-center gap-2">
                             {service.name}
                             <Badge
                               variant={service.open ? 'default' : 'secondary'}
                             >
-                              {service.open ? 'Abierto' : 'Cerrado'}
+                              {service.open
+                                ? 'Cola habilitada'
+                                : 'Cola deshabilitada'}
                             </Badge>
+                            {service.outsideSchedule && (
+                              <Badge variant="secondary">
+                                Fuera de horario
+                              </Badge>
+                            )}
                           </span>
-                          {permissions.includes('queue.configure') && (
+                          {permissions.includes('queue.operate') && (
                             <Label
                               htmlFor={`queue-open-${service.id}`}
                               className="shrink-0 font-normal"
@@ -316,7 +373,12 @@ export function Dashboard(props: DashboardProps) {
                                 checked={!!service.open}
                                 disabled={saving}
                                 onCheckedChange={() =>
-                                  void toggleQueue(service)
+                                  setLifecycle({
+                                    queueId: service.id,
+                                    action: service.open ? 'close' : 'open',
+                                    trigger:
+                                      document.activeElement as HTMLElement,
+                                  })
                                 }
                               />
                             </Label>
@@ -333,10 +395,72 @@ export function Dashboard(props: DashboardProps) {
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
+                        {(service.readiness?.state === 'pending' ||
+                          occupancyAction(service) ===
+                            'confirm_inventory') && (
+                          <Alert className="mb-3">
+                            <Info aria-hidden="true" />
+                            <AlertTitle>
+                              {readinessNotice(service).title}
+                            </AlertTitle>
+                            <AlertDescription>
+                              <ul>
+                                {readinessNotice(service).messages.map(
+                                  (message) => (
+                                    <li
+                                      key={message}
+                                      className="text-muted-foreground list-disc"
+                                    >
+                                      {message}
+                                    </li>
+                                  ),
+                                )}
+                              </ul>
+                              {permissions.includes('queue.operate') &&
+                                occupancyAction(service) ===
+                                  'confirm_inventory' && (
+                                  <Button
+                                    className="mt-2 w-full whitespace-normal sm:w-auto"
+                                    variant="outline"
+                                    disabled={saving || busy || !!lifecycle}
+                                    onClick={(event) =>
+                                      setLifecycle({
+                                        queueId: service.id,
+                                        action: 'confirm_inventory',
+                                        trigger: event.currentTarget,
+                                      })
+                                    }
+                                  >
+                                    Confirmar ocupación
+                                  </Button>
+                                )}
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        {service.readiness?.state === 'disabled' && (
+                          <p
+                            className="mb-3 text-sm font-medium"
+                            role="status"
+                          >
+                            Desactivada manualmente
+                          </p>
+                        )}
+                        {service.readiness?.state === 'active' && (
+                          <p
+                            className="mb-3 text-sm font-medium"
+                            role="status"
+                          >
+                            Gestión inteligente activa
+                          </p>
+                        )}
                         <dl className="grid grid-cols-2 gap-3 text-sm">
                           <div>
-                            <dt className="text-muted-foreground">Capacidad</dt>
-                            <dd className="font-medium">{service.capacity}</dd>
+                            <dt className="text-muted-foreground">
+                              Capacidad
+                            </dt>
+                            <dd className="font-medium">
+                              {service.capacity}
+                            </dd>
                           </div>
                           <div>
                             <dt className="text-muted-foreground">
@@ -389,7 +513,9 @@ export function Dashboard(props: DashboardProps) {
               </div>
             ) : (
               <p className="py-10 text-center text-muted-foreground">
-                {loading ? 'Cargando servicios…' : 'Todavía no hay servicios.'}
+                {loading
+                  ? 'Cargando servicios…'
+                  : 'Todavía no hay servicios.'}
               </p>
             )}
           </CardContent>
@@ -428,12 +554,79 @@ export function Dashboard(props: DashboardProps) {
           className="w-full sm:w-[48rem] sm:max-w-[calc(100vw-2rem)]"
         >
           <DrawerHeader className="border-b p-6">
-            <DrawerTitle className="text-xl">
-              {drawer === 'queue' ? queueLabel : 'Gestionar accesos'}
-            </DrawerTitle>
-            <DrawerDescription>
-              {drawer === 'queue' ? queue?.name : venue.name}
-            </DrawerDescription>
+            <div className="flex items-center gap-3">
+              {drawer === 'queue' && (
+                <DrawerClose
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Volver"
+                      disabled={saving || busy || !!lifecycle}
+                    />
+                  }
+                >
+                  <ChevronLeft aria-hidden="true" />
+                </DrawerClose>
+              )}
+              <div className="min-w-0 flex-1">
+                <DrawerTitle className="text-xl">
+                  {drawer === 'queue' ? queueLabel : 'Gestionar accesos'}
+                </DrawerTitle>
+                <DrawerDescription className="break-words">
+                  {drawer === 'queue' ? queue?.name : venue.name}
+                </DrawerDescription>
+              </div>
+              {drawer === 'queue' &&
+                queue &&
+                permissions.includes('queue.operate') && (
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          ref={menuTrigger}
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Opciones de la cola"
+                          disabled={saving || busy || !!lifecycle}
+                        />
+                      }
+                    >
+                      <Ellipsis aria-hidden="true" />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      className="w-64 max-w-[calc(100vw-2rem)]"
+                      finalFocus={lifecycle ? false : menuTrigger}
+                    >
+                      {occupancyAction(queue) && (
+                        <DropdownMenuItem
+                          onClick={() =>
+                            openQueueOperation(occupancyAction(queue)!)
+                          }
+                        >
+                          {occupancyAction(queue) === 'occupancy'
+                            ? 'Actualizar ocupación'
+                            : 'Confirmar ocupación'}
+                        </DropdownMenuItem>
+                      )}
+                      <DropdownMenuItem
+                        onClick={() =>
+                          openQueueOperation(
+                            queue.config.intelligencePolicy === 'disabled'
+                              ? 'enable_intelligence'
+                              : 'disable_intelligence',
+                          )
+                        }
+                      >
+                        {queue.config.intelligencePolicy === 'disabled'
+                          ? 'Volver a gestión automática'
+                          : 'Desactivar gestión inteligente'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+            </div>
           </DrawerHeader>
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-6">
             {drawerError && (
@@ -461,40 +654,50 @@ export function Dashboard(props: DashboardProps) {
                 }}
               />
             )}
-            {drawer === 'members' && permissions.includes('members.manage') && (
-              <Members venueId={venue.id} name={venue.name} compact />
-            )}
+            {drawer === 'members' &&
+              permissions.includes('members.manage') && (
+                <Members venueId={venue.id} name={venue.name} compact />
+              )}
           </div>
-          <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
-            {drawer === 'queue' &&
+          {(drawer === 'members' ||
+            (drawer === 'queue' &&
               tab === 'active' &&
-              permissions.includes('queue.operate') && (
+              permissions.includes('queue.operate'))) && (
+            <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
+              {drawer === 'queue' &&
+                tab === 'active' &&
+                permissions.includes('queue.operate') && (
+                  <Button
+                    className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
+                    disabled={busy || !nextEntry}
+                    onClick={() => {
+                      setOverrideReason('')
+                      if (nextEntry)
+                        setPending({
+                          entry: nextEntry,
+                          action: 'call',
+                          key: crypto.randomUUID(),
+                        })
+                    }}
+                  >
+                    Avanzar un turno <MoveRight aria-hidden="true" />
+                  </Button>
+                )}
+              {drawer === 'members' && (
                 <Button
-                  className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
-                  disabled={busy || !nextEntry}
-                  onClick={() => {
-                    setOverrideReason('')
-                    if (nextEntry)
-                      setPending({
-                        entry: nextEntry,
-                        action: 'call',
-                        key: crypto.randomUUID(),
-                      })
-                  }}
+                  variant="outline"
+                  disabled={saving || busy}
+                  onClick={closeDrawer}
                 >
-                  Avanzar un turno <MoveRight aria-hidden="true" />
+                  Cerrar
                 </Button>
               )}
-            <Button
-              variant="outline"
-              disabled={saving || busy}
-              onClick={closeDrawer}
-            >
-              Cerrar
-            </Button>
-          </DrawerFooter>
+            </DrawerFooter>
+          )}
+          {lifecycle?.insideDrawer && lifecycleSheet}
         </DrawerContent>
       </Drawer>
+      {!lifecycle?.insideDrawer && lifecycleSheet}
       <Dialog
         open={!!pending}
         onOpenChange={(open) => {

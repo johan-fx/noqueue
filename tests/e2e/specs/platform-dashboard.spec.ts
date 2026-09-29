@@ -1,5 +1,8 @@
 import { test, expect } from '@playwright/test'
 
+// Route-mocked identities must not be bypassed by the app's service worker.
+test.use({ serviceWorkers: 'block' })
+
 for (const width of [320, 390, 1280]) {
   test(`platform cards, read-only detail and return navigation at ${width}px`, async ({
     page,
@@ -105,7 +108,7 @@ for (const width of [320, 390, 1280]) {
     await page.getByRole('button', { name: 'Ver cola', exact: true }).click()
     const drawer = page.getByRole('dialog', { name: 'Ver cola', exact: true })
     await expect(drawer).toBeVisible()
-    await expect(drawer.getByText('A001', { exact: true })).toBeVisible()
+    await expect(drawer.getByText('Turno A001', { exact: true })).toBeVisible()
     await expect(
       drawer.getByRole('button', {
         name: /Llamar|Completar|Cancelar|Saltar|No presentado/,
@@ -115,7 +118,7 @@ for (const width of [320, 390, 1280]) {
       path: testInfo.outputPath(`detail-${width}.png`),
       fullPage: true,
     })
-    await drawer.getByRole('button', { name: 'Cerrar', exact: true }).click()
+    await drawer.getByRole('button', { name: 'Volver', exact: true }).click()
     await page
       .getByRole('link', { name: 'Volver a establecimientos' })
       .click()

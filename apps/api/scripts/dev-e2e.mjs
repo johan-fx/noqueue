@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rm } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, mkdtemp } from 'node:fs/promises'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -6,9 +6,10 @@ const root = fileURLToPath(new URL('../', import.meta.url))
 const port = process.env.NOQUEUE_E2E_PORT ?? '8787'
 if (!/^\d+$/.test(port) || Number(port) < 1024 || Number(port) > 65535)
   throw new Error('Invalid NOQUEUE_E2E_PORT')
-const directory = path.join(root, '.wrangler', 'e2e')
-await rm(directory, { recursive: true, force: true })
-await mkdir(directory, { recursive: true })
+const parent = path.join(root, '.wrangler', 'e2e-runs')
+await mkdir(parent, { recursive: true })
+const directory = await mkdtemp(path.join(parent, 'run-'))
+console.log('Isolated E2E state: ' + directory)
 const config = JSON.parse(
   await readFile(path.join(root, 'wrangler.jsonc'), 'utf8'),
 )

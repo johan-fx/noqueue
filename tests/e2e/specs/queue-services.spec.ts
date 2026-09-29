@@ -253,7 +253,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   })
   await cancel.getByRole('button', { name: 'No cancelar' }).click()
   await expect(
-    maria.getByRole('button', { name: 'Cancelar turno', exact: true }),
+    maria.getByRole('button', { name: /Acciones del turno/ }),
   ).toBeFocused()
   // Calling uses the binding preferred space; confirmation is only available once called.
   await swipe(page, maria, 'right')

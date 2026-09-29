@@ -30,3 +30,6 @@ apps/mobile/android/app/build/
 # Local Workers runtime state and smoke locks
 apps/api/.wrangler/
 apps/api/dist/
+
+# Immutable per-run queue verification artifacts
+queue-reports/

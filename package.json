@@ -15,7 +15,9 @@
     "test:e2e": "turbo run test:e2e",
     "mobile:sync": "turbo run sync --filter=@noqueue/mobile",
     "mobile:ios": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:ios",
-    "mobile:android": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:android"
+    "mobile:android": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:android",
+    "test:queue": "node scripts/queue-verification/run.mjs",
+    "test:queue:extended": "node scripts/queue-verification/run.mjs --extended"
   },
   "devDependencies": {
     "turbo": "2.10.12",

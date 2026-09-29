@@ -26,5 +26,14 @@ export default defineConfig({
       },
     }),
   ],
-  test: { setupFiles: ['./test/setup.ts'] },
+  test: {
+    setupFiles: ['./test/setup.ts'],
+    env: {
+      QUEUE_PROPERTY_RUNS: process.env.QUEUE_PROPERTY_RUNS ?? '200',
+      QUEUE_SEQUENCE_RUNS: process.env.QUEUE_SEQUENCE_RUNS ?? '20',
+      QUEUE_SEQUENCE_LENGTH: process.env.QUEUE_SEQUENCE_LENGTH ?? '25',
+      QUEUE_SEED: process.env.QUEUE_SEED ?? '20260929',
+      QUEUE_PATH: process.env.QUEUE_PATH ?? '',
+    },
+  },
 })

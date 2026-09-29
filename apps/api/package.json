@@ -28,6 +28,7 @@
     "@msw/cloudflare": "^0.0.1",
     "@types/node": "^22.20.2",
     "drizzle-kit": "0.31.10",
+    "fast-check": "^4.10.2",
     "msw": "^2.15.0",
     "typescript": "catalog:",
     "vitest": "4.1.11",

@@ -23,10 +23,17 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check-types
       - run: pnpm lint
-      - run: pnpm test
+      - run: pnpm --filter '!@noqueue/api' --filter '!@noqueue/root' -r --if-present test
       - run: pnpm build
       - run: pnpm --filter @noqueue/e2e exec playwright install --with-deps chromium firefox webkit
-      - run: pnpm test:e2e
+      - run: node scripts/queue-verification/run.mjs --all
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: queue-verification
+          path: queue-reports/
+          retention-days: 14
+          if-no-files-found: warn
 
   android:
     runs-on: ubuntu-latest

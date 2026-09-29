@@ -19,6 +19,7 @@ export async function runQueueCommand(
   queueId: string,
   key: string,
   input: QueueCommand,
+  now = Date.now(),
 ) {
   const access = await queueAccess(env, actor, queueId, 'queue.operate')
   queueCommandSchema.parse(input)
@@ -31,7 +32,7 @@ export async function runQueueCommand(
   if (previous) {
     if (previous.request_hash !== fingerprint)
       throw new HTTPException(409, { message: 'idempotency_conflict' })
-    await recalculateQueue(env, queueId)
+    await recalculateQueue(env, queueId, now)
     return JSON.parse(previous.result) as { ok: true }
   }
   const entry = await env.DB.prepare(
@@ -58,7 +59,7 @@ export async function runQueueCommand(
       .first<{ config: string }>()
     const grace = (JSON.parse(q!.config) as { graceMinutes: number })
       .graceMinutes
-    if (!entry.called_at || Date.now() < entry.called_at + grace * 60000)
+    if (!entry.called_at || now < entry.called_at + grace * 60000)
       throw new HTTPException(409, { message: 'arrival_grace_active' })
   }
   const status = {
@@ -69,7 +70,6 @@ export async function runQueueCommand(
     no_show: 'no_show',
     skip: 'waiting',
   }[input.action]
-  const now = Date.now()
   const state = await recalculateQueue(env, queueId, now)
   const extra: D1PreparedStatement[] = []
   const active = state.config?.estimationMode === 'active'
@@ -189,7 +189,7 @@ export async function runQueueCommand(
       `UPDATE queue_entry SET status=?,version=version+1,called_at=?,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
     ).bind(
       status,
-      input.action === 'call' ? Date.now() : entry.called_at,
+      input.action === 'call' ? now : entry.called_at,
       input.action,
       queueId,
       input.entryId,
@@ -202,7 +202,7 @@ export async function runQueueCommand(
       crypto.randomUUID(),
       input.entryId,
       status === 'waiting' ? 'skipped' : status,
-      Date.now(),
+      now,
     ),
     audit(
       env,
@@ -219,7 +219,7 @@ export async function runQueueCommand(
       JSON.stringify({ ok: true }),
     ),
   ])
-  await recalculateQueue(env, queueId)
+  await recalculateQueue(env, queueId, now)
   return { ok: true }
 }
 export async function configureQueue(

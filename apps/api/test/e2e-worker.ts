@@ -210,11 +210,68 @@ export default {
 
 // Explicit test-only legacy admissions fixture; never confirms unknown occupancy.
 app.post('/experiments/local/staff/legacy-open', async (c) => {
-  const { venueId } = z
-    .object({ venueId: z.uuid() })
-    .parse(await c.req.json())
+  const { venueId } = z.object({ venueId: z.uuid() }).parse(await c.req.json())
   await c.env.DB.prepare('UPDATE queue SET open=1 WHERE venue_id=?')
     .bind(venueId)
     .run()
   return c.json({ ok: true })
+})
+
+// Synthetic historical inputs only; bounded, loopback + pilot guarded above.
+// No caller-supplied SQL, current time, projections or calculated means.
+app.post('/experiments/local/staff/queue-history', async (c) => {
+  const parsed = z
+    .object({
+      queueId: z.uuid(),
+      spaceId: z.string().min(1).max(100),
+      seats: z.number().int().min(1).max(100),
+      durations: z.array(z.number().int().min(1).max(1440)).min(1).max(31),
+    })
+    .strict()
+    .safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: 'invalid_fixture' }, 400)
+  const { queueId, spaceId, seats, durations } = parsed.data
+  const { loadQueueState, recalculateQueue } =
+    await import('../src/features/queue/projection')
+  const row = await c.env.DB.prepare('SELECT id FROM queue WHERE id=?')
+    .bind(queueId)
+    .first()
+  if (!row) return c.json({ error: 'not_found' }, 404)
+  const state = await loadQueueState(c.env, queueId)
+  const resource = state.resources.find(
+    (r) => r.spaceId === spaceId && r.seats === seats,
+  )
+  if (!resource) return c.json({ error: 'invalid_group' }, 400)
+  let time =
+    Date.now() -
+    durations.reduce((total, value) => total + (value + 1) * 60000, 0)
+  const statements: D1PreparedStatement[] = []
+  for (const duration of durations) {
+    const id = crypto.randomUUID(),
+      arrived = time,
+      released = time + duration * 60000
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,?,'en',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?),'served')",
+      ).bind(id, queueId, id, id, id, id, Math.min(seats, 4), arrived, queueId),
+    )
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at,released_at,outcome) VALUES (?,?,?,?,?,?,?,?,'served')",
+      ).bind(
+        id,
+        queueId,
+        resource.id,
+        spaceId,
+        seats,
+        arrived,
+        arrived,
+        released,
+      ),
+    )
+    time = released + 60000
+  }
+  await c.env.DB.batch(statements)
+  await recalculateQueue(c.env, queueId)
+  return c.json({ ok: true, inserted: durations.length })
 })

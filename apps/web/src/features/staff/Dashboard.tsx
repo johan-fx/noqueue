@@ -236,7 +236,13 @@ export function Dashboard(props: DashboardProps) {
   }
   function selectCommand(entry: StaffEntry, action: QueueCommand['action']) {
     if (!queue || commandLock.current) return
-    commandTrigger.current = document.activeElement as HTMLElement
+    const trigger = document.activeElement as HTMLElement
+    // Entry actions collapse their tray before opening confirmation. Return to
+    // the persistent disclosure, not an inert or unmounted action button.
+    commandTrigger.current =
+      trigger
+        .closest('li[data-entry-code]')
+        ?.querySelector<HTMLElement>('[aria-controls^="actions-"]') ?? trigger
     commandRequest.current = null
     setCommandError('')
     setCommandStale(false)

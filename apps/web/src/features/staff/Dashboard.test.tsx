@@ -900,3 +900,52 @@ it.each([false, true])(
     else expect(advance).toBeDisabled()
   },
 )
+
+it('returns cancelled entry confirmation focus to its persistent action trigger', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [service]
+      : path.endsWith('/entries')
+      ? [
+          {
+            id: 'focus-entry',
+            code: 'F1',
+            status: 'waiting',
+            displayName: 'Focus Guest',
+            partySize: 2,
+            sequence: 1,
+            version: 0,
+            calledAt: null,
+          },
+        ]
+      : []
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'owner',
+      }}
+    />
+  )
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Gestionar cola' })
+  )
+  const trigger = await screen.findByRole('button', {
+    name: 'Acciones del turno F1',
+  })
+  fireEvent.click(trigger)
+  const cancel = screen.getByRole('button', {
+    name: 'Cancelar turno',
+  })
+  cancel.focus()
+  fireEvent.click(cancel)
+  const dialog = await screen.findByRole('dialog', {
+    name: '¿Estás seguro de que quieres cancelar el turno?',
+  })
+  fireEvent.click(within(dialog).getByRole('button', { name: 'No cancelar' }))
+  await waitFor(() => expect(trigger).toHaveFocus())
+})

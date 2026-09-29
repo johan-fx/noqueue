@@ -1,4 +1,7 @@
 import { test, expect } from '@playwright/test'
+
+// This journey intercepts a failed save; service workers bypass page.route.
+test.use({ serviceWorkers: 'block' })
 const pilot = 'test-pilot-access-at-least-32-characters'
 test('sales provisioning, direct owner access and staff console use passwords and D1', async ({
   page,

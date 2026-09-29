@@ -10,9 +10,13 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { QueueSummary, StaffRole } from '@noqueue/contracts/staff'
 import { Dashboard } from './Dashboard'
-import { api } from './api'
+import { api, ApiError } from './api'
 
-vi.mock('./api', () => ({ api: vi.fn(), errorMessage: String }))
+vi.mock('./api', async (original) => ({
+  ...(await original<typeof import('./api')>()),
+  api: vi.fn(),
+  errorMessage: String,
+}))
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
@@ -721,5 +725,178 @@ it('omits queue footer in non-active tabs and keeps advance connected to the exi
   })
   await waitFor(() => expect(advance).toBeEnabled())
   fireEvent.click(advance)
-  expect(await screen.findByText(/Turno A1/)).toBeVisible()
+  expect(
+    within(await screen.findByRole('dialog', { name: 'Llamar' })).getByText(
+      'Turno A1',
+    ),
+  ).toBeVisible()
 })
+
+it('refreshes an entry after 409 and requires another confirmation using the fresh version and key', async () => {
+  const entry = {
+    id: 'one',
+    code: 'T1',
+    displayName: 'María',
+    partySize: 2,
+    status: 'called',
+    version: 0,
+    sequence: 1,
+    calledAt: Date.now(),
+  }
+  let failed = false
+  const commands: { body: unknown; key: unknown }[] = []
+  vi.mocked(api).mockImplementation(async (path, _method, body, key) => {
+    if (path.endsWith('/commands')) {
+      commands.push({ body, key })
+      if (!failed) {
+        failed = true
+        throw new ApiError(409, 'version_conflict')
+      }
+      return { ok: true }
+    }
+    return path.endsWith('/queues')
+      ? [service]
+      : [{ ...entry, version: failed ? 1 : 0 }]
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Gestionar cola' }),
+  )
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Acciones del turno T1' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar llegada' }))
+  const sheet = await screen.findByRole('dialog', {
+    name: 'Confirmar llegada',
+  })
+  expect(sheet).toHaveAttribute('data-side', 'bottom')
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() =>
+    expect(within(sheet).getByRole('alert')).toHaveTextContent(
+      'confirma de nuevo',
+    ),
+  )
+  expect(commands).toHaveLength(1)
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() => expect(commands).toHaveLength(2))
+  expect(commands[0]!.body).toMatchObject({ version: 0, action: 'complete' })
+  expect(commands[1]!.body).toMatchObject({ version: 1, action: 'complete' })
+  expect(commands[1]!.key).not.toBe(commands[0]!.key)
+})
+
+it.each([
+  [undefined, undefined],
+  [undefined, 'fastest'],
+  ['shadow', undefined],
+  ['shadow', 'fastest'],
+] as const)(
+  'advances past an uncallable strict preference in mode %s to fallback preference %s',
+  async (estimationMode, preferredSpaceId) => {
+    const strictEntry = {
+      id: 'strict',
+      code: 'STRICT',
+      partySize: 2,
+      status: 'waiting',
+      version: 0,
+      sequence: 1,
+      calledAt: null,
+      callable: false,
+      preferredSpaceId: 'terrace',
+    }
+    const eligibleEntry = {
+      ...strictEntry,
+      id: 'eligible',
+      code: 'ELIGIBLE',
+      sequence: 2,
+      preferredSpaceId,
+    }
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.endsWith('/queues')
+        ? [
+            {
+              ...service,
+              config: {
+                ...service.config,
+                estimationMode,
+                resourceStateKnown: false,
+              },
+            },
+          ]
+        : [strictEntry, eligibleEntry],
+    )
+    render(
+      <Dashboard
+        venue={{
+          id: 'hotel',
+          name: 'Hotel',
+          organizationId: 'org',
+          organizationName: 'Empresa',
+          role: 'queue_staff',
+        }}
+      />,
+    )
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Gestionar cola' }),
+    )
+    const advance = await screen.findByRole('button', {
+      name: 'Avanzar un turno',
+    })
+    await waitFor(() => expect(advance).toBeEnabled())
+    fireEvent.click(advance)
+    const sheet = await screen.findByRole('dialog', { name: 'Llamar' })
+    expect(within(sheet).getByText('Turno ELIGIBLE')).toBeVisible()
+    expect(within(sheet).queryByText('Turno STRICT')).not.toBeInTheDocument()
+  },
+)
+it.each([false, true])(
+  'requires callable=%s for a strict preference with unknown inventory',
+  async (callable) => {
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.endsWith('/queues')
+        ? [service]
+        : [
+            {
+              id: 'strict',
+              code: 'STRICT',
+              partySize: 2,
+              status: 'waiting',
+              version: 0,
+              sequence: 1,
+              calledAt: null,
+              callable,
+              preferredSpaceId: 'terrace',
+            },
+          ],
+    )
+    render(
+      <Dashboard
+        venue={{
+          id: 'hotel',
+          name: 'Hotel',
+          organizationId: 'org',
+          organizationName: 'Empresa',
+          role: 'queue_staff',
+        }}
+      />,
+    )
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Gestionar cola' }),
+    )
+    await screen.findByText('Turno:', { exact: true })
+    const advance = await screen.findByRole('button', {
+      name: 'Avanzar un turno',
+    })
+    if (callable) await waitFor(() => expect(advance).toBeEnabled())
+    else expect(advance).toBeDisabled()
+  },
+)

@@ -2,7 +2,32 @@ import { z } from 'zod'
 
 export const consentVersion = 'whatsapp-queue-updates-v1'
 export const phoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/)
-export const joinQueueSchema = z.strictObject({
+export const receptionServiceSchema = z.enum([
+  'check_in',
+  'check_out',
+  'other',
+])
+export const serviceJoinSchema = z.strictObject({
+  displayName: z.string().trim().min(1).max(100).optional(),
+  receptionService: receptionServiceSchema.optional(),
+  preferredSpaceId: z.string().trim().min(1).max(100).optional(),
+  partySize: z.number().int().min(1).max(20),
+  locale: z.enum(['es', 'en']),
+})
+export type ServiceJoin = z.infer<typeof serviceJoinSchema>
+export const publicServiceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  venueName: z.string(),
+  open: z.number(),
+  type: z.enum(['restaurant', 'reception', 'pool']),
+  receptionServices: z.array(receptionServiceSchema),
+  spaces: z.array(
+    z.object({ id: z.string(), name: z.string(), maxPartySize: z.number() }),
+  ),
+})
+export type PublicService = z.infer<typeof publicServiceSchema>
+export const joinQueueSchema = serviceJoinSchema.extend({
   partySize: z.number().int().min(1).max(20),
   locale: z.enum(['es', 'en']),
   whatsapp: z.discriminatedUnion('consent', [
@@ -14,6 +39,11 @@ export const joinQueueSchema = z.strictObject({
     }),
   ]),
 })
+export const manualJoinSchema = joinQueueSchema.extend({
+  displayName: z.string().trim().min(1).max(100),
+  whatsapp: joinQueueSchema.shape.whatsapp.default({ consent: false }),
+})
+export type ManualJoin = z.infer<typeof manualJoinSchema>
 export const confirmationJoinSchema = z.strictObject({
   partySize: z.number().int().min(1).max(20),
   locale: z.enum(['es', 'en']),

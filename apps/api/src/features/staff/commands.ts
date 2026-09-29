@@ -98,7 +98,12 @@ export async function runQueueCommand(
       .sort((a, b) => a.seats - b.seats || a.id.localeCompare(b.id))
     const resource = free[0]
     // Confirmed physical capacity is a safety invariant, independent of rollout/order enforcement.
-    if (!resource && (active || state.inventorySafety.managed))
+    if (
+      !resource &&
+      (active ||
+        state.inventorySafety.managed ||
+        (party.preferredSpaceId && party.preferredSpaceId !== 'fastest'))
+    )
       throw new HTTPException(409, { message: 'no_free_compatible_resource' })
     const oldest =
       resource &&
@@ -303,6 +308,26 @@ export async function configureQueue(
         message: 'occupied_resource_configuration',
       })
   }
+  const preferences = await env.DB.prepare(
+    "SELECT preferred_space_id,party_size FROM queue_entry WHERE queue_id=? AND status IN ('waiting','called','completed') AND preferred_space_id IS NOT NULL AND preferred_space_id!='fastest'",
+  )
+    .bind(queueId)
+    .all<{ preferred_space_id: string; party_size: number }>()
+  if (
+    preferences.results.some(
+      (entry) =>
+        config.type !== 'restaurant' ||
+        !config.spaces.some(
+          (space) =>
+            space.id === entry.preferred_space_id &&
+            (!space.tableTypes?.length ||
+              space.tableTypes.some(
+                (type) => type.seats >= entry.party_size,
+              )),
+        ),
+    )
+  )
+    throw new HTTPException(409, { message: 'preferred_space_in_use' })
   if (topologyChanged) {
     config.resourceStateKnown = false
     config.estimationMode = 'shadow'

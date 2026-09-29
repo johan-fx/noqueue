@@ -6,6 +6,18 @@ export class ApiError extends Error {
   }
 }
 const messages: Record<string, string> = {
+  whatsapp_consent_required:
+    'El cliente debe facilitar su teléfono y consentir los avisos de WhatsApp.',
+  whatsapp_unavailable:
+    'Los avisos de WhatsApp no están disponibles. Contacta con la administración.',
+  invalid_join: 'Revisa los datos del turno.',
+  invalid_reception_service:
+    'El tipo de gestión no está disponible en este servicio.',
+  invalid_space_preference:
+    'El espacio no existe o no tiene capacidad para este grupo.',
+  preferred_space_in_use:
+    'Hay turnos activos que han elegido ese espacio. Resuélvelos antes de cambiarlo.',
+  queue_unavailable: 'La cola está cerrada, completa o fuera de horario.',
   inventory_refresh_required:
     'La distribución ha cambiado. Confirma de nuevo la ocupación antes de llamar más turnos. Las llegadas y liberaciones siguen disponibles.',
   inventory_already_confirmed:

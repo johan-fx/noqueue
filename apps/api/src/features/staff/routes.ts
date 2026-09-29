@@ -2,7 +2,9 @@ import { serviceAcceptsEntries } from './availability'
 import { readiness, inventoryConfirmed } from '../queue/opening-state'
 import { queueLifecycleSchema } from '@noqueue/contracts/staff'
 import { normalizeConfig, readProjection } from '../queue/projection'
-import { hash } from '../queue/crypto'
+import { manualJoinSchema } from '@noqueue/contracts/queue'
+import { manualJoinRequiresWhatsapp } from '../queue/entries'
+import { hash, decryptDisplayName } from '../queue/crypto'
 import { Hono, type Context } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { HTTPException } from 'hono/http-exception'
@@ -321,6 +323,7 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
         return {
           ...row,
           config,
+          manualJoinWhatsappRequired: manualJoinRequiresWhatsapp(c.env),
           outsideSchedule: !serviceAcceptsEntries(config, venue!.timezone),
           inventoryConfirmed: await inventoryConfirmed(c.env, row.id, config),
           readiness: await readiness(c.env, row.id, config),
@@ -333,18 +336,66 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   await queueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    `SELECT id,code,party_size AS partySize,status,sequence,version,called_at AS calledAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id AND a.released_at IS NULL) AS resourceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
+    `SELECT id,code,party_size AS partySize,status,sequence,version,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS resourceId,(SELECT space_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
     .all()
+  const stored = await c.env.DB.prepare('SELECT config FROM queue WHERE id=?')
+    .bind(c.req.param('id'))
+    .first<{ config: string | null }>()
+  const parsedConfig = serviceSchema.safeParse(
+    stored?.config ? JSON.parse(stored.config) : null,
+  )
+  const config = parsedConfig.success
+    ? normalizeConfig(parsedConfig.data)
+    : null
+  const resourceSpaces = new Map<string, string>()
+  for (const space of config?.spaces ?? [])
+    for (const type of space.tableTypes?.length
+      ? space.tableTypes
+      : [{ seats: 100, count: space.tables }])
+      for (let index = 0; index < type.count; index++)
+        resourceSpaces.set(`${space.id}:${type.seats}:${index}`, space.id!)
   return c.json(
     await Promise.all(
-      rows.results.map(async (row) => ({
-        ...row,
-        ...(row.status === 'waiting'
-          ? await readProjection(c.env, String(row.id))
-          : {}),
-      })),
+      rows.results.map(async (row) => {
+        const { displayNameCipher, assignedSpaceId, ...entry } = row
+        const projection =
+          row.status === 'waiting'
+            ? await readProjection(c.env, String(row.id))
+            : null
+        const preferred =
+          row.preferredSpaceId && row.preferredSpaceId !== 'fastest'
+            ? String(row.preferredSpaceId)
+            : null
+        // Exact generated identity matching also supports space IDs containing colons.
+        const predicted = projection?.resourceId
+          ? resourceSpaces.get(projection.resourceId)
+          : null
+        const spaceId = assignedSpaceId ?? preferred ?? predicted
+        const space = config?.spaces.find((space) => space.id === spaceId)
+        return {
+          ...entry,
+          ...projection,
+          displayName: displayNameCipher
+            ? await decryptDisplayName(
+                c.env.PII_ENCRYPTION_KEY,
+                String(displayNameCipher),
+              )
+            : null,
+          space: space
+            ? {
+                id: space.id,
+                name: space.name,
+                source: assignedSpaceId
+                  ? 'assigned'
+                  : preferred
+                  ? 'preferred'
+                  : 'predicted',
+              }
+            : null,
+        }
+      }),
     ),
   )
 })
@@ -355,6 +406,23 @@ function coordinator(env: CloudflareBindings, id: string) {
       : env.QUEUE_COORDINATOR.jurisdiction('eu')
   ).getByName(id)
 }
+staffRoutes.post('/queues/:id/entries', async (c) => {
+  await queueAccess(
+    c.env,
+    c.get('actor').id,
+    c.req.param('id'),
+    'queue.operate',
+  )
+  const input = manualJoinSchema.safeParse(await c.req.json())
+  if (!input.success) return c.json({ error: 'invalid_join' }, 400)
+  const result = await coordinator(c.env, c.req.param('id')).staffJoin(
+    c.get('actor').id,
+    c.req.param('id'),
+    uuid(c.req.header('Idempotency-Key')),
+    input.data,
+  )
+  return c.json(result.body, result.status as 200)
+})
 staffRoutes.post('/queues/:id/commands', async (c) => {
   await queueAccess(
     c.env,

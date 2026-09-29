@@ -970,3 +970,358 @@ it.each(['viewer', 'queue_staff'] as const)(
     }
   },
 )
+
+it('persists encrypted service details, binds projection/calls, audits manual joins and replays retries', async () => {
+  const { joinQueue } = await import('../queue/entries')
+  const { decryptDisplayName } = await import('../queue/crypto')
+  const t = await setup({ ...config, assignmentPreference: 'salon' })
+  await open(t, 2)
+  const input = {
+    displayName: 'María López',
+    partySize: 4,
+    preferredSpaceId: 'terrace',
+    locale: 'es' as const,
+    whatsapp: { consent: false as const },
+  }
+  const key = crypto.randomUUID()
+  const first = await joinQueue(env, t.queue, key, input, false, t.actor)
+  expect(first.status).toBe(201)
+  const row = await env.DB.prepare(
+    'SELECT id,display_name_cipher,preferred_space_id FROM queue_entry WHERE queue_id=?',
+  )
+    .bind(t.queue)
+    .first<{
+      id: string
+      display_name_cipher: string
+      preferred_space_id: string
+    }>()
+  expect(row!.display_name_cipher).not.toContain('María')
+  expect(
+    await decryptDisplayName(
+      env.PII_ENCRYPTION_KEY,
+      row!.display_name_cipher,
+    ),
+  ).toBe('María López')
+  expect(row!.preferred_space_id).toBe('terrace')
+  expect((await loadQueueState(env, t.queue)).projections[0]).toMatchObject({
+    resourceId: null,
+    callable: false,
+  })
+  await expect(
+    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      entryId: row!.id,
+      version: 0,
+      action: 'call',
+    }),
+  ).rejects.toThrow('no_free_compatible_resource')
+  expect(
+    (await joinQueue(env, t.queue, key, input, false, t.actor)).body,
+  ).toEqual(first.body)
+  expect(
+    (await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM staff_audit WHERE target_id=? AND action='queue.join'",
+    )
+      .bind(row!.id)
+      .first<{ n: number }>())!.n,
+  ).toBe(1)
+  expect(
+    (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=?',
+    )
+      .bind(row!.id)
+      .first<{ n: number }>())!.n,
+  ).toBe(0)
+  const fastest = await joinQueue(env, t.queue, crypto.randomUUID(), {
+    ...input,
+    preferredSpaceId: 'fastest',
+  })
+  expect(fastest.status).toBe(201)
+  expect((await loadQueueState(env, t.queue)).projections[1]).toMatchObject({
+    resourceId: 'salon:4:0',
+    callable: true,
+  })
+})
+it('validates service details and protects active preferred spaces from removal or incompatible changes', async () => {
+  const { joinQueue } = await import('../queue/entries')
+  const t = await setup()
+  await open(t, 0)
+  const input = {
+    displayName: 'Test',
+    partySize: 4,
+    locale: 'es' as const,
+    whatsapp: { consent: false as const },
+  }
+  for (const details of [
+    { preferredSpaceId: 'missing' },
+    { preferredSpaceId: 'terrace', partySize: 8 },
+    { receptionService: 'check_in' as const },
+  ]) {
+    expect(
+      (
+        await joinQueue(env, t.queue, crypto.randomUUID(), {
+          ...input,
+          ...details,
+        })
+      ).status,
+    ).toBe(400)
+  }
+  await joinQueue(env, t.queue, crypto.randomUUID(), {
+    ...input,
+    preferredSpaceId: 'terrace',
+  })
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'close',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  const q = await env.DB.prepare(
+    'SELECT version,config FROM queue WHERE id=?',
+  )
+    .bind(t.queue)
+    .first<{ version: number; config: string }>()
+  const saved = JSON.parse(q!.config)
+  await expect(
+    configureQueue(env, t.actor, t.queue, {
+      ...saved,
+      version: q!.version,
+      open: false,
+      spaces: saved.spaces.filter((s: { id: string }) => s.id !== 'terrace'),
+    }),
+  ).rejects.toThrow('preferred_space_in_use')
+  const reception = await setup({
+    ...config,
+    type: 'reception',
+    spaces: [],
+    receptionServices: ['check_in'],
+  })
+  await open(reception, 0)
+  expect(
+    (
+      await joinQueue(env, reception.queue, crypto.randomUUID(), {
+        ...input,
+        receptionService: 'check_out',
+      })
+    ).status,
+  ).toBe(400)
+  expect(
+    (
+      await joinQueue(env, reception.queue, crypto.randomUUID(), {
+        ...input,
+        receptionService: 'check_in',
+      })
+    ).status,
+  ).toBe(201)
+  expect(
+    (await joinQueue(env, reception.queue, crypto.randomUUID(), input))
+      .status,
+  ).toBe(201)
+})
+
+it('replays a manual join after a post-commit projection failure without another entry or audit', async () => {
+  const { joinQueue } = await import('../queue/entries')
+  const projection = await import('../queue/projection')
+  const t = await setup()
+  await open(t, 0)
+  const key = crypto.randomUUID(),
+    input = {
+      displayName: 'Retry',
+      partySize: 2,
+      locale: 'es' as const,
+      whatsapp: { consent: false as const },
+    }
+  const fail = vi
+    .spyOn(projection, 'recalculateQueue')
+    .mockRejectedValueOnce(new Error('post_commit'))
+  try {
+    await expect(
+      joinQueue(env, t.queue, key, input, false, t.actor),
+    ).rejects.toThrow('post_commit')
+  } finally {
+    fail.mockRestore()
+  }
+  expect(
+    (await joinQueue(env, t.queue, key, input, false, t.actor)).status,
+  ).toBe(200)
+  expect(
+    (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM queue_entry WHERE queue_id=?',
+    )
+      .bind(t.queue)
+      .first<{ n: number }>())!.n,
+  ).toBe(1)
+  expect(
+    (await env.DB.prepare(
+      "SELECT COUNT(*) AS n FROM staff_audit WHERE venue_id=? AND action='queue.join'",
+    )
+      .bind(t.venueId)
+      .first<{ n: number }>())!.n,
+  ).toBe(1)
+})
+
+it('requires explicit WhatsApp for nonlocal manual joins and only permits the server-local exception', async () => {
+  const { joinQueue, manualJoinRequiresWhatsapp } = await import(
+    '../queue/entries'
+  )
+  const t = await setup()
+  await open(t)
+  const input = {
+    displayName: 'Manual',
+    partySize: 1,
+    locale: 'es' as const,
+    whatsapp: { consent: false as const },
+  }
+  for (const guarded of [
+    { ...env, APP_ENV: 'staging' as const },
+    { ...env, APP_ENV: 'sandbox' as const },
+    { ...env, PUBLIC_APP_ORIGIN: 'https://app.example.com' },
+  ]) {
+    expect(manualJoinRequiresWhatsapp(guarded)).toBe(true)
+    expect(
+      await joinQueue(
+        guarded,
+        t.queue,
+        crypto.randomUUID(),
+        input,
+        false,
+        t.actor,
+      ),
+    ).toMatchObject({
+      status: 400,
+      body: { error: 'whatsapp_consent_required' },
+    })
+  }
+  expect(manualJoinRequiresWhatsapp(env)).toBe(false)
+  expect(
+    (
+      await joinQueue(
+        env,
+        t.queue,
+        crypto.randomUUID(),
+        input,
+        false,
+        t.actor,
+      )
+    ).status,
+  ).toBe(201)
+  const consented = {
+    ...input,
+    whatsapp: {
+      consent: true as const,
+      phone: '+34600000000',
+      version: 'whatsapp-queue-updates-v1' as const,
+    },
+  }
+  expect(
+    await joinQueue(
+      { ...env, APP_ENV: 'staging', WHATSAPP_ENABLED: 'false' },
+      t.queue,
+      crypto.randomUUID(),
+      consented,
+      false,
+      t.actor,
+    ),
+  ).toMatchObject({ status: 503, body: { error: 'whatsapp_unavailable' } })
+  const send = vi.fn().mockResolvedValue(undefined)
+  expect(
+    (
+      await joinQueue(
+        {
+          ...env,
+          APP_ENV: 'staging',
+          NOTIFICATIONS: { send } as unknown as Queue,
+        },
+        t.queue,
+        crypto.randomUUID(),
+        consented,
+        false,
+        t.actor,
+      )
+    ).status,
+  ).toBe(201)
+  expect(send).toHaveBeenCalledOnce()
+})
+
+it('recovers committed manual joins after WhatsApp is disabled without sending again or admitting new joins', async () => {
+  const { joinQueue } = await import('../queue/entries')
+  const t = await setup()
+  await open(t)
+  const send = vi.fn().mockResolvedValue(undefined)
+  const enabled = {
+    ...env,
+    APP_ENV: 'staging' as const,
+    WHATSAPP_ENABLED: 'true' as const,
+    NOTIFICATIONS: { send } as unknown as Queue,
+  }
+  const disabled = { ...enabled, WHATSAPP_ENABLED: 'false' as const }
+  const key = crypto.randomUUID()
+  const input = {
+    displayName: 'Manual replay',
+    partySize: 1,
+    locale: 'es' as const,
+    whatsapp: {
+      consent: true as const,
+      phone: '+34600000000',
+      version: 'whatsapp-queue-updates-v1' as const,
+    },
+  }
+  const created = await joinQueue(
+    enabled,
+    t.queue,
+    key,
+    input,
+    false,
+    t.actor,
+  )
+  expect(created.status).toBe(201)
+  const replay = await joinQueue(
+    disabled,
+    t.queue,
+    key,
+    input,
+    false,
+    t.actor,
+  )
+  expect(replay.status).toBe(200)
+  const receipt = created.body as { code: string; recoveryToken: string }
+  expect(replay.body).toMatchObject({
+    code: receipt.code,
+    recoveryToken: receipt.recoveryToken,
+  })
+  expect(send).toHaveBeenCalledOnce()
+  expect(
+    await joinQueue(
+      disabled,
+      t.queue,
+      crypto.randomUUID(),
+      input,
+      false,
+      t.actor,
+    ),
+  ).toMatchObject({ status: 503, body: { error: 'whatsapp_unavailable' } })
+  expect(
+    await joinQueue(
+      disabled,
+      t.queue,
+      key,
+      { ...input, displayName: 'Changed' },
+      false,
+      t.actor,
+    ),
+  ).toMatchObject({ status: 409, body: { error: 'idempotency_conflict' } })
+  await expect(
+    joinQueue(disabled, t.queue, key, input, false, t.sales),
+  ).rejects.toMatchObject({ status: 404 })
+  expect(
+    (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM queue_entry WHERE queue_id=?',
+    )
+      .bind(t.queue)
+      .first<{ n: number }>())!.n,
+  ).toBe(1)
+  expect(
+    (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE e.queue_id=?',
+    )
+      .bind(t.queue)
+      .first<{ n: number }>())!.n,
+  ).toBe(1)
+})

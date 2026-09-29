@@ -1,6 +1,7 @@
 import { readinessMessages } from './queue-readiness'
-import { useState } from 'react'
-import { Check, ChevronDown, Clock, X } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Plus, Users, LogIn, LogOut, BadgeHelp } from 'lucide-react'
+import { QueueEntryCard } from './QueueEntryCard'
 import type {
   QueueCommand,
   QueueSummary,
@@ -13,9 +14,8 @@ import {
   TabsContent,
 } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 
-import { queueActionLabels } from './queue-labels'
+import { receptionLabels } from './queue-labels'
 const views = [
   {
     value: 'active',
@@ -36,15 +36,6 @@ const views = [
     statuses: ['cancelled', 'no_show', 'expired'],
   },
 ] as const
-const statusLabels: Record<string, string> = {
-  waiting: 'En espera',
-  called: 'Llamado',
-  completed: 'En servicio',
-  served: 'Completado',
-  cancelled: 'Cancelado',
-  no_show: 'No presentado',
-  expired: 'Caducado',
-}
 export function QueueView({
   queue,
   entries,
@@ -56,6 +47,7 @@ export function QueueView({
   error,
   onRefresh,
   onAction,
+  onAdd,
 }: {
   queue: QueueSummary
   entries: StaffEntry[]
@@ -66,9 +58,50 @@ export function QueueView({
   lastSync: string
   error: string
   onRefresh: () => void
+  onAdd?: (trigger: HTMLElement) => void
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [now, setNow] = useState(Date.now)
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000)
+    return () => clearInterval(timer)
+  }, [])
+  const [reveal, setReveal] = useState<{
+    queueId: string
+    id: string
+    direction: 'left' | 'right' | 'all'
+  } | null>(null)
+  const [selection, setSelection] = useState<{
+    queueId: string
+    value: string
+  } | null>(null)
+  const filter = selection?.queueId === queue.id ? selection.value : 'all'
+  const options =
+    queue.config.type === 'reception'
+      ? queue.config.receptionServices.map((type) => ({
+          value: type,
+          label: receptionLabels[type],
+        }))
+      : queue.config.type === 'restaurant'
+      ? [
+          ...new Set(
+            entries
+              .filter((entry) => ['waiting', 'called'].includes(entry.status))
+              .map((entry) => entry.partySize),
+          ),
+        ]
+          .sort((a, b) => a - b)
+          .map((size) => ({ value: String(size), label: `${size} personas` }))
+      : []
+  const activeFilter = options.some((option) => option.value === filter)
+    ? filter
+    : 'all'
+  const scope = `${queue.id}:${tab}:${activeFilter}`
+  const [previousScope, setPreviousScope] = useState(scope)
+  if (previousScope !== scope) {
+    setPreviousScope(scope)
+    setReveal(null)
+  }
   return (
     <div className="space-y-6">
       {queue.readiness?.reasons.includes('inventory_refresh_required') && (
@@ -80,7 +113,7 @@ export function QueueView({
         value={tab}
         onValueChange={(value) => {
           onTabChange(String(value))
-          setExpanded(null)
+          setReveal(null)
         }}
         className="gap-6"
       >
@@ -95,8 +128,16 @@ export function QueueView({
           ))}
         </TabsList>
         {views.map((view) => {
-          const rows = entries.filter((entry) =>
+          const allRows = entries.filter((entry) =>
             (view.statuses as readonly string[]).includes(entry.status),
+          )
+          const rows = allRows.filter(
+            (entry) =>
+              view.value !== 'active' ||
+              activeFilter === 'all' ||
+              (queue.config.type === 'reception'
+                ? entry.receptionService === activeFilter
+                : String(entry.partySize) === activeFilter),
           )
           return (
             <TabsContent
@@ -105,9 +146,22 @@ export function QueueView({
               className="space-y-6"
             >
               <div className="space-y-2">
-                <h3 className="text-3xl font-medium tracking-tight">
-                  {view.title}
-                </h3>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-3xl font-medium tracking-tight">
+                    {view.title}
+                  </h3>
+                  {view.value === 'active' && canOperate && onAdd && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={(event) => onAdd(event.currentTarget)}
+                    >
+                      <Plus aria-hidden="true" />
+                      Añadir
+                    </Button>
+                  )}
+                </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                   {view.value === 'active' && (
                     <span
@@ -123,146 +177,80 @@ export function QueueView({
                   </span>
                 </div>
               </div>
-              <ul aria-label={view.title} className="space-y-4">
-                {rows.map((entry, index) => {
-                  const active = view.value === 'active'
-                  const completed = view.value === 'completed'
-                  const actions: QueueCommand['action'][] =
-                    entry.status === 'waiting'
-                      ? ['call', 'skip', 'cancel']
-                      : entry.status === 'called'
-                      ? ['complete', 'no_show', 'cancel']
-                      : entry.status === 'completed'
-                      ? ['release']
-                      : []
-                  return (
-                    <li
-                      key={entry.id}
-                      className="rounded-lg border bg-background"
-                    >
-                      <div className="flex min-h-21 items-center gap-4 p-4">
-                        {active && (
-                          <span
-                            aria-label={'Posición ' + (index + 1)}
-                            className="w-6 shrink-0 text-center text-2xl font-medium tabular-nums"
-                          >
-                            {entry.position ?? index + 1}
-                          </span>
-                        )}
-                        <div className="min-w-0 flex-1">
-                          <p className="font-medium">
-                            {entry.partySize === 1
-                              ? '1 persona'
-                              : entry.partySize + ' personas'}
-                          </p>
-                          {entry.status === 'waiting' &&
-                            entry.estimateQuality && (
-                              <p className="text-sm text-muted-foreground">
-                                {entry.estimateQuality === 'unknown'
-                                  ? 'Espera pendiente de datos'
-                                  : `${entry.etaMinutes} min · ${
-                                      entry.estimateQuality === 'provisional'
-                                        ? 'Provisional'
-                                        : 'Estimación'
-                                    }`}
-                              </p>
-                            )}
-                          <p className="break-words text-sm">
-                            <span className="text-muted-foreground">
-                              Turno:{' '}
-                            </span>
-                            <span className="font-medium">{entry.code}</span>
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 flex-col items-end gap-2">
-                          <span
-                            className={
-                              'flex items-center gap-1 text-xs font-medium ' +
-                              (completed
-                                ? 'text-green-600 dark:text-green-400'
-                                : active
-                                ? 'text-muted-foreground'
-                                : 'text-destructive')
-                            }
-                          >
-                            {completed ? (
-                              <Check className="size-4" aria-hidden="true" />
-                            ) : !active ? (
-                              <X className="size-4" aria-hidden="true" />
-                            ) : null}
-                            {statusLabels[entry.status] ?? entry.status}
-                          </span>
-                          {entry.status === 'called' &&
-                            entry.calledAt != null && (
-                              <Badge
-                                variant="secondary"
-                                title="Tiempo desde la llamada"
-                              >
-                                <Clock
-                                  aria-hidden="true"
-                                  className="size-3"
-                                />
-                                {Math.max(
-                                  0,
-                                  Math.floor(
-                                    (Date.now() - entry.calledAt) / 60000,
-                                  ),
-                                )}{' '}
-                                min
-                              </Badge>
-                            )}
-                          {canOperate && actions.length > 0 && (
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              disabled={busy}
-                              aria-label={'Acciones del turno ' + entry.code}
-                              aria-expanded={expanded === entry.id}
-                              aria-controls={'actions-' + entry.id}
-                              onClick={() =>
-                                setExpanded(
-                                  expanded === entry.id ? null : entry.id,
-                                )
-                              }
-                            >
-                              <ChevronDown
-                                aria-hidden="true"
-                                className={
-                                  expanded === entry.id ? 'rotate-180' : ''
-                                }
-                              />
-                            </Button>
+              {view.value === 'active' && options.length > 0 && (
+                <div
+                  role="group"
+                  aria-label="Filtros de la cola"
+                  className="flex max-w-full gap-1 overflow-x-auto pb-1"
+                >
+                  {[{ value: 'all', label: 'Todos' }, ...options].map(
+                    (option) => {
+                      const Icon =
+                        queue.config.type === 'restaurant'
+                          ? Users
+                          : option.value === 'check_in'
+                          ? LogIn
+                          : option.value === 'check_out'
+                          ? LogOut
+                          : BadgeHelp
+                      return (
+                        <Button
+                          key={option.value}
+                          className="shrink-0 rounded-full"
+                          size="sm"
+                          variant={
+                            activeFilter === option.value
+                              ? 'default'
+                              : 'ghost'
+                          }
+                          aria-pressed={activeFilter === option.value}
+                          aria-label={`Filtrar ${option.label}`}
+                          onClick={() => {
+                            setSelection({
+                              queueId: queue.id,
+                              value: option.value,
+                            })
+                            setReveal(null)
+                          }}
+                        >
+                          {option.value !== 'all' && (
+                            <Icon className="size-4" aria-hidden="true" />
                           )}
-                        </div>
-                      </div>
-                      {canOperate &&
-                        actions.length > 0 &&
-                        expanded === entry.id && (
-                          <div
-                            id={'actions-' + entry.id}
-                            className="flex flex-wrap gap-2 border-t p-3"
-                          >
-                            {actions.map((action) => (
-                              <Button
-                                key={action}
-                                variant="outline"
-                                disabled={
-                                  busy ||
-                                  (action === 'call' &&
-                                    queue.readiness?.reasons.includes(
-                                      'inventory_refresh_required',
-                                    ))
-                                }
-                                onClick={() => onAction(entry, action)}
-                              >
-                                {queueActionLabels[action]}
-                              </Button>
-                            ))}
-                          </div>
-                        )}
-                    </li>
-                  )
-                })}
+                          {queue.config.type === 'restaurant' &&
+                          option.value !== 'all'
+                            ? option.value
+                            : option.label}
+                        </Button>
+                      )
+                    },
+                  )}
+                </div>
+              )}
+              <ul aria-label={view.title} className="space-y-2">
+                {rows.map((entry) => (
+                  <QueueEntryCard
+                    now={now}
+                    key={`${scope}:${entry.id}`}
+                    queue={queue}
+                    entry={entry}
+                    position={allRows.indexOf(entry) + 1}
+                    canOperate={canOperate}
+                    busy={busy}
+                    revealed={
+                      reveal?.queueId === queue.id && reveal.id === entry.id
+                        ? reveal.direction
+                        : null
+                    }
+                    onReveal={(direction) =>
+                      setReveal(
+                        direction
+                          ? { queueId: queue.id, id: entry.id, direction }
+                          : null,
+                      )
+                    }
+                    onAction={onAction}
+                  />
+                ))}
               </ul>
               {!rows.length && (
                 <p className="rounded-lg border border-dashed px-4 py-8 text-center text-muted-foreground">

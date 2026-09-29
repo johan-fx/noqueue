@@ -37,7 +37,15 @@ export const recoveryToken = (env: CloudflareBindings, id: string) =>
   hmac(env.RECOVERY_TOKEN_KEY, `entry-recovery:v1:${id}`)
 export const phoneHash = (env: CloudflareBindings, phone: string) =>
   hmac(env.PHONE_HASH_KEY, `demo-org:${phone}`)
-export async function encryptPhone(secret: string, phone: string) {
+export const encryptPhone = (secret: string, phone: string) =>
+  encryptValue(secret, phone, 'phone:v1')
+export const encryptDisplayName = (secret: string, name: string) =>
+  encryptValue(secret, name, 'display-name:v1')
+export const decryptDisplayName = (secret: string, cipher: string) =>
+  decryptValue(secret, cipher, 'display-name:v1')
+export const decryptPhone = (secret: string, cipher: string) =>
+  decryptValue(secret, cipher, 'phone:v1')
+async function encryptValue(secret: string, phone: string, domain: string) {
   const key = await crypto.subtle.importKey(
     'raw',
     secretBytes(secret),
@@ -47,13 +55,13 @@ export async function encryptPhone(secret: string, phone: string) {
   )
   const iv = crypto.getRandomValues(new Uint8Array(12))
   const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: encoder.encode('phone:v1') },
+    { name: 'AES-GCM', iv, additionalData: encoder.encode(domain) },
     key,
     encoder.encode(phone),
   )
   return `${hex(iv.buffer)}:${hex(encrypted)}`
 }
-export async function decryptPhone(secret: string, cipher: string) {
+async function decryptValue(secret: string, cipher: string, domain: string) {
   const [ivHex, dataHex] = cipher.split(':')
   if (
     !ivHex ||
@@ -76,7 +84,7 @@ export async function decryptPhone(secret: string, cipher: string) {
       {
         name: 'AES-GCM',
         iv: bytes(ivHex),
-        additionalData: encoder.encode('phone:v1'),
+        additionalData: encoder.encode(domain),
       },
       key,
       bytes(dataHex),

@@ -147,3 +147,32 @@ it('marks forecasts affected by unknown occupied compatible resources provisiona
     'estimated',
   )
 })
+it('keeps each explicit space binding without fallback and lets fastest override the global preference', () => {
+  const resources = [
+    resource('terrace', 4),
+    { ...resource('salon', 2), availableAt: now + 60000 },
+  ]
+  expect(
+    projectQueue(
+      [{ ...party('a', 1), preferredSpaceId: 'terrace' }],
+      resources,
+      now,
+      'salon',
+    )[0]?.resourceId,
+  ).toBe('terrace')
+  expect(
+    projectQueue(
+      [{ ...party('a', 1), preferredSpaceId: 'fastest' }],
+      resources,
+      now,
+      'salon',
+    )[0]?.resourceId,
+  ).toBe('terrace')
+  expect(
+    projectQueue(
+      [{ ...party('a', 1, 4), preferredSpaceId: 'salon' }],
+      resources,
+      now,
+    )[0],
+  ).toMatchObject({ resourceId: null, callable: false, quality: 'unknown' })
+})

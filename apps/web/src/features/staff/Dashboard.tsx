@@ -1,3 +1,5 @@
+import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
+import { entryActions, receptionLabels } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
 import { readinessNotice, occupancyAction } from './queue-readiness'
 import { useEffect, useState, useRef } from 'react'
@@ -31,13 +33,13 @@ import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from '@/components/ui/dialog'
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+  SheetFooter,
+} from '@/components/ui/sheet'
 import {
   Drawer,
   DrawerContent,
@@ -56,7 +58,7 @@ import {
   Ellipsis,
 } from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
-import { api, errorMessage } from './api'
+import { api, ApiError, errorMessage } from './api'
 import { Members } from './Members'
 import { QueueView } from './QueueView'
 import { queueActionLabels as actionLabels } from './queue-labels'
@@ -83,7 +85,7 @@ export function Dashboard(props: DashboardProps) {
     mode: 'create' | 'edit' | 'members' | 'queue',
     trigger: HTMLButtonElement,
   ) {
-    if (savingRef.current) return
+    if (savingRef.current || commandLock.current || pending || adding) return
     drawerTrigger.current = trigger
     creationRequest.current = null
     setDrawerError('')
@@ -91,7 +93,8 @@ export function Dashboard(props: DashboardProps) {
     setDrawer(mode)
   }
   function closeDrawer() {
-    if (!savingRef.current && !busy && !lifecycle) setDrawer(null)
+    if (!savingRef.current && !busy && !lifecycle && !pending && !adding)
+      setDrawer(null)
   }
   const [queues, setQueues] = useState<QueueSummary[]>([]),
     [selected, setSelected] = useState(''),
@@ -112,8 +115,18 @@ export function Dashboard(props: DashboardProps) {
       | 'enable_intelligence'
     trigger: HTMLElement | null
   } | null>(null)
+  const [adding, setAdding] = useState<{
+    queue: QueueSummary
+    trigger: HTMLElement
+  } | null>(null)
+  const commandLock = useRef(false)
+  const commandTrigger = useRef<HTMLElement | null>(null)
+  const commandRequest = useRef<{ body: string; key: string } | null>(null)
+  const [commandError, setCommandError] = useState('')
+  const [commandStale, setCommandStale] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [pending, setPending] = useState<{
+    queueId: string
     entry: StaffEntry
     action: QueueCommand['action']
     key: string
@@ -221,31 +234,79 @@ export function Dashboard(props: DashboardProps) {
       setSaving(false)
     }
   }
+  function selectCommand(entry: StaffEntry, action: QueueCommand['action']) {
+    if (!queue || commandLock.current) return
+    commandTrigger.current = document.activeElement as HTMLElement
+    commandRequest.current = null
+    setCommandError('')
+    setCommandStale(false)
+    setOverrideReason('')
+    setPending({ queueId: queue.id, entry, action, key: crypto.randomUUID() })
+  }
   async function command() {
-    if (!pending) return
+    if (!pending || commandLock.current || commandStale) return
+    commandLock.current = true
     setBusy(true)
-    setError('')
+    setCommandError('')
+    const snapshot = pending
+    const input = {
+      entryId: snapshot.entry.id,
+      version: snapshot.entry.version,
+      action: snapshot.action,
+      ...(snapshot.action === 'call' && overrideReason.trim()
+        ? { overrideReason: overrideReason.trim() }
+        : {}),
+    }
+    const body = JSON.stringify(input)
+    if (commandRequest.current?.body !== body)
+      commandRequest.current = {
+        body,
+        key: commandRequest.current ? crypto.randomUUID() : snapshot.key,
+      }
     try {
       await api(
-        `/queues/${selected}/commands`,
+        `/queues/${snapshot.queueId}/commands`,
         'POST',
-        {
-          entryId: pending.entry.id,
-          version: pending.entry.version,
-          action: pending.action,
-          ...(pending.action === 'call' && overrideReason.trim()
-            ? { overrideReason: overrideReason.trim() }
-            : {}),
-        },
-        pending.key,
+        input,
+        commandRequest.current.key,
       )
       setPending(null)
       setOverrideReason('')
-      await refresh()
+      await refresh().catch((error) =>
+        setError(`Acción guardada. ${errorMessage(error)}`),
+      )
     } catch (e) {
-      setError(errorMessage(e))
+      setCommandError(errorMessage(e))
+      if (e instanceof ApiError && e.status === 409) {
+        setCommandStale(true)
+        try {
+          const rows = await api<StaffEntry[]>(
+            `/queues/${snapshot.queueId}/entries`,
+          )
+          setEntries(rows)
+          const entry = rows.find((row) => row.id === snapshot.entry.id)
+          if (entry && entryActions(entry.status).includes(snapshot.action)) {
+            setPending({ ...snapshot, entry, key: crypto.randomUUID() })
+            commandRequest.current = null
+            setCommandStale(false)
+            setCommandError(
+              `${errorMessage(
+                e,
+              )} Datos actualizados; revisa el turno y confirma de nuevo.`,
+            )
+          } else
+            setCommandError(
+              'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.',
+            )
+        } catch {
+          setCommandError(
+            'No se pudo actualizar el turno. Cierra esta ventana y actualiza la lista antes de continuar.',
+          )
+        }
+      }
       await refresh().catch(() => undefined)
     } finally {
+      commandLock.current = false
       setBusy(false)
     }
   }
@@ -254,7 +315,8 @@ export function Dashboard(props: DashboardProps) {
       entry.status === 'waiting' &&
       !queue?.readiness?.reasons.includes('inventory_refresh_required') &&
       ((queue?.config.estimationMode !== 'active' &&
-        !queue?.config.resourceStateKnown) ||
+        !queue?.config.resourceStateKnown &&
+        (!entry.preferredSpaceId || entry.preferredSpaceId === 'fastest')) ||
         entry.callable === true),
   )
   function openQueueOperation(
@@ -648,10 +710,8 @@ export function Dashboard(props: DashboardProps) {
                 onRefresh={() =>
                   void refresh().catch((e) => setError(errorMessage(e)))
                 }
-                onAction={(entry, action) => {
-                  setOverrideReason('')
-                  setPending({ entry, action, key: crypto.randomUUID() })
-                }}
+                onAdd={(trigger) => setAdding({ queue, trigger })}
+                onAction={selectCommand}
               />
             )}
             {drawer === 'members' &&
@@ -671,13 +731,7 @@ export function Dashboard(props: DashboardProps) {
                     className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
                     disabled={busy || !nextEntry}
                     onClick={() => {
-                      setOverrideReason('')
-                      if (nextEntry)
-                        setPending({
-                          entry: nextEntry,
-                          action: 'call',
-                          key: crypto.randomUUID(),
-                        })
+                      if (nextEntry) selectCommand(nextEntry, 'call')
                     }}
                   >
                     Avanzar un turno <MoveRight aria-hidden="true" />
@@ -695,62 +749,132 @@ export function Dashboard(props: DashboardProps) {
             </DrawerFooter>
           )}
           {lifecycle?.insideDrawer && lifecycleSheet}
+          {adding && (
+            <AddQueueEntryDrawer
+              queue={adding.queue}
+              returnFocus={adding.trigger}
+              onClose={() => setAdding(null)}
+              onSaved={refresh}
+            />
+          )}
+          <Sheet
+            open={!!pending}
+            onOpenChange={(open) => {
+              if (!open && !busy) setPending(null)
+            }}
+          >
+            <SheetContent
+              side="bottom"
+              finalFocus={() =>
+                commandTrigger.current?.isConnected
+                  ? commandTrigger.current
+                  : menuTrigger.current
+              }
+              showCloseButton={!busy}
+              className="mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+            >
+              <SheetHeader className="px-0 pr-8">
+                <SheetTitle className="text-2xl">
+                  {pending?.action === 'cancel'
+                    ? '¿Estás seguro de que quieres cancelar el turno?'
+                    : pending
+                    ? actionLabels[pending.action]
+                    : ''}
+                </SheetTitle>
+                <SheetDescription>
+                  Se registrará esta acción con tu identidad.{' '}
+                  {pending?.action === 'skip'
+                    ? 'El turno se moverá al final de la cola.'
+                    : ''}
+                </SheetDescription>
+              </SheetHeader>
+              <div className="space-y-2 pb-12">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xl">
+                    {pending?.entry.displayName ||
+                      `Turno ${pending?.entry.code}`}
+                  </p>
+                  <p className="text-sm">
+                    <span className="text-muted-foreground">Turno: </span>
+                    {pending?.entry.code}
+                  </p>
+                </div>
+                {queue?.config.type === 'restaurant' && (
+                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                    <UsersIcon className="size-4" aria-hidden="true" />
+                    {pending?.entry.partySize} personas
+                    {pending?.entry.space
+                      ? ` · ${pending.entry.space.name}`
+                      : ''}
+                  </p>
+                )}
+                {queue?.config.type === 'reception' &&
+                  pending?.entry.receptionService && (
+                    <p className="text-xs text-muted-foreground">
+                      {receptionLabels[pending.entry.receptionService]}
+                    </p>
+                  )}
+              </div>
+              {commandError && (
+                <p role="alert" className="text-destructive">
+                  {commandError}
+                </p>
+              )}
+              {pending?.action === 'call' && (
+                <label className="space-y-2 text-sm">
+                  Motivo de excepción al orden (opcional)
+                  <input
+                    className="w-full rounded border p-2"
+                    value={overrideReason}
+                    minLength={3}
+                    maxLength={300}
+                    onChange={(event) =>
+                      setOverrideReason(event.target.value)
+                    }
+                  />
+                  <span className="text-muted-foreground">
+                    Solo para una llamada deliberada fuera de orden. Se
+                    auditará.
+                  </span>
+                </label>
+              )}
+              <SheetFooter className="gap-3 px-0">
+                <Button
+                  className={`h-12 w-full ${
+                    pending?.action === 'cancel'
+                      ? 'border-destructive text-destructive hover:text-destructive'
+                      : ''
+                  }`}
+                  variant={
+                    pending?.action === 'cancel' ? 'outline' : 'default'
+                  }
+                  disabled={busy || commandStale}
+                  onClick={() => void command()}
+                >
+                  {busy
+                    ? 'Guardando…'
+                    : pending?.action === 'cancel'
+                    ? 'Cancelar turno'
+                    : 'Confirmar'}
+                </Button>
+                <Button
+                  className="h-12 w-full"
+                  variant="outline"
+                  disabled={busy}
+                  onClick={() => setPending(null)}
+                >
+                  {pending?.action === 'cancel'
+                    ? 'No cancelar'
+                    : pending?.action === 'complete'
+                    ? 'No confirmar'
+                    : 'Volver'}
+                </Button>
+              </SheetFooter>
+            </SheetContent>
+          </Sheet>
         </DrawerContent>
       </Drawer>
       {!lifecycle?.insideDrawer && lifecycleSheet}
-      <Dialog
-        open={!!pending}
-        onOpenChange={(open) => {
-          if (!open && !busy) setPending(null)
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {pending ? actionLabels[pending.action] : ''}
-            </DialogTitle>
-            <DialogDescription>
-              Turno {pending?.entry.code}. Se registrará esta acción con tu
-              identidad.{' '}
-              {pending?.action === 'skip'
-                ? 'El turno se moverá al final de la cola.'
-                : ''}
-            </DialogDescription>
-          </DialogHeader>
-          {error && (
-            <p role="alert" className="text-destructive">
-              {error}
-            </p>
-          )}
-          {pending?.action === 'call' && (
-            <label className="space-y-2 text-sm">
-              Motivo de excepción al orden (opcional)
-              <input
-                className="w-full rounded border p-2"
-                value={overrideReason}
-                minLength={3}
-                maxLength={300}
-                onChange={(event) => setOverrideReason(event.target.value)}
-              />
-              <span className="text-muted-foreground">
-                Solo para una llamada deliberada fuera de orden. Se auditará.
-              </span>
-            </label>
-          )}
-          <DialogFooter>
-            <Button
-              variant="outline"
-              disabled={busy}
-              onClick={() => setPending(null)}
-            >
-              Volver
-            </Button>
-            <Button disabled={busy} onClick={() => void command()}>
-              {busy ? 'Guardando…' : 'Confirmar'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

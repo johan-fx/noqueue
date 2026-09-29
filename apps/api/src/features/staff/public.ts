@@ -1,3 +1,6 @@
+import { serviceJoinSchema } from '@noqueue/contracts/queue'
+import { serviceSchema } from '@noqueue/contracts/staff'
+import { normalizeConfig } from '../queue/projection'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
@@ -15,21 +18,32 @@ publicServices.use('*', async (c, next) => {
 })
 publicServices.get('/:id', async (c) => {
   const row = await c.env.DB.prepare(
-    `SELECT q.id,q.name,q.open,v.name AS venueName FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
+    `SELECT q.id,q.name,q.open,q.config,v.name AS venueName FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
   )
     .bind(c.req.param('id'))
     .first()
-  return row ? c.json(row) : c.json({ error: 'not_found' }, 404)
+  if (!row) return c.json({ error: 'not_found' }, 404)
+  const { config: rawConfig, ...summary } = row
+  const config = normalizeConfig(
+    serviceSchema.parse(JSON.parse(String(rawConfig))),
+  )
+  return c.json({
+    ...summary,
+    type: config.type,
+    receptionServices: config.receptionServices,
+    spaces: config.spaces.map((space) => ({
+      id: space.id!,
+      name: space.name,
+      maxPartySize: space.tableTypes?.length
+        ? Math.max(...space.tableTypes.map((type) => type.seats))
+        : 20,
+    })),
+  })
 })
 publicServices.post('/:id/entries', async (c) => {
   if (c.req.header('Origin') !== c.env.PUBLIC_APP_ORIGIN)
     return c.json({ error: 'origin_not_allowed' }, 403)
-  const parsed = z
-    .object({
-      partySize: z.number().int().min(1).max(20),
-      locale: z.enum(['es', 'en']),
-    })
-    .safeParse(await c.req.json())
+  const parsed = serviceJoinSchema.safeParse(await c.req.json())
   const key = z.uuid().safeParse(c.req.header('Idempotency-Key'))
   if (!parsed.success || !key.success)
     return c.json({ error: 'invalid_join' }, 400)
@@ -49,7 +63,8 @@ publicServices.post('/:id/entries', async (c) => {
   )
     .bind(`${ip}:${bucket}`)
     .first<{ count: number }>()
-  if (!limit || limit.count > 10) return c.json({ error: 'rate_limited' }, 429)
+  if (!limit || limit.count > 10)
+    return c.json({ error: 'rate_limited' }, 429)
   const namespace =
     c.env.APP_ENV === 'local'
       ? c.env.QUEUE_COORDINATOR

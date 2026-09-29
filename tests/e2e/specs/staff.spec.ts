@@ -357,6 +357,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .getAttribute('href')
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
+  await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
   await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await queueDrawer
@@ -807,6 +808,8 @@ test('space-specific durations and an availability delay survive browser save an
     .getAttribute('href')
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
+  await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
+  await guest.getByLabel('Espacio', { exact: true }).selectOption('terrace')
   await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await expect(

@@ -181,3 +181,137 @@ it('disables explicit calls while managed inventory needs a fresh survey', () =>
   fireEvent.click(screen.getByRole('button', { name: /Acciones/ }))
   expect(screen.getByRole('button', { name: 'Llamar' })).toBeDisabled()
 })
+
+it('numbers the whole active list including called turns, preserves ordinals when filtered and resets for another service', () => {
+  const rows = [
+    {
+      ...entries[1]!,
+      displayName: 'Daniel',
+      receptionService: 'check_out' as const,
+    },
+    {
+      ...entries[0]!,
+      displayName: 'María',
+      receptionService: 'check_in' as const,
+      position: 1,
+    },
+  ]
+  const props = {
+    entries: rows,
+    tab: 'active',
+    onTabChange: vi.fn(),
+    canOperate: true,
+    busy: false,
+    lastSync: '',
+    error: '',
+    onRefresh: vi.fn(),
+    onAction: vi.fn(),
+    onAdd: vi.fn(),
+  }
+  const { rerender } = render(
+    <QueueView
+      {...props}
+      queue={{
+        ...queue,
+        config: {
+          ...queue.config,
+          receptionServices: ['check_in', 'check_out'],
+        },
+      }}
+    />,
+  )
+  expect(screen.getByLabelText('Posición 1')).toHaveTextContent('1')
+  expect(screen.getByLabelText('Posición 2')).toHaveTextContent('2')
+  fireEvent.click(screen.getByRole('button', { name: 'Filtrar Check-in' }))
+  expect(screen.getByText('María')).toBeVisible()
+  expect(screen.queryByText('Daniel')).not.toBeInTheDocument()
+  expect(screen.getByLabelText('Posición 2')).toHaveTextContent('2')
+  rerender(
+    <QueueView
+      {...props}
+      queue={{
+        ...queue,
+        id: 'pool',
+        config: { ...queue.config, type: 'pool' },
+      }}
+    />,
+  )
+  expect(
+    screen.queryByRole('group', { name: 'Filtros de la cola' }),
+  ).not.toBeInTheDocument()
+  expect(screen.getByText('Daniel')).toBeVisible()
+})
+it('shows restaurant size filters and distinguishes predicted and preferred spaces', () => {
+  render(
+    <QueueView
+      queue={{ ...queue, config: { ...queue.config, type: 'restaurant' } }}
+      entries={[
+        {
+          ...entries[0]!,
+          displayName: 'María',
+          partySize: 4,
+          space: { id: 'a', name: 'Interior', source: 'predicted' },
+        },
+        {
+          ...entries[1]!,
+          partySize: 2,
+          space: { id: 'b', name: 'Terraza', source: 'preferred' },
+        },
+      ]}
+      tab="active"
+      onTabChange={vi.fn()}
+      canOperate={false}
+      busy={false}
+      lastSync=""
+      error=""
+      onRefresh={vi.fn()}
+      onAction={vi.fn()}
+    />,
+  )
+  expect(screen.getByText('Interior · Previsto')).toBeVisible()
+  expect(screen.getByText('Terraza · Preferido')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Filtrar 4 personas' }))
+  expect(screen.getAllByRole('listitem')).toHaveLength(1)
+  expect(
+    screen.queryByRole('button', { name: 'Añadir' }),
+  ).not.toBeInTheDocument()
+})
+
+it('closes row actions when externally changing views or queues', () => {
+  const props = {
+    entries,
+    onTabChange: vi.fn(),
+    canOperate: true,
+    busy: false,
+    lastSync: '',
+    error: '',
+    onRefresh: vi.fn(),
+    onAction: vi.fn(),
+  }
+  const { rerender } = render(
+    <QueueView {...props} queue={queue} tab="active" />,
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Acciones del turno T0' }),
+  )
+  expect(screen.getByRole('button', { name: 'Llamar' })).toBeVisible()
+  rerender(<QueueView {...props} queue={queue} tab="completed" />)
+  rerender(<QueueView {...props} queue={queue} tab="active" />)
+  expect(
+    screen.queryByRole('button', { name: 'Llamar' }),
+  ).not.toBeInTheDocument()
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Acciones del turno T0' }),
+  )
+  rerender(
+    <QueueView
+      {...props}
+      queue={{ ...queue, id: 'another' }}
+      tab="active"
+    />,
+  )
+  rerender(<QueueView {...props} queue={queue} tab="active" />)
+  expect(
+    screen.queryByRole('button', { name: 'Llamar' }),
+  ).not.toBeInTheDocument()
+})

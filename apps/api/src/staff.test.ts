@@ -1411,3 +1411,244 @@ it('recalculates an already-confirmed formerly gated queue on the normal staff s
       .first(),
   ).toEqual(inventory)
 })
+
+it('exposes safe service metadata and handles scoped manual/public detailed joins', async () => {
+  const t = await tenant(),
+    viewer = await member(t, 'viewer')
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
+    .bind(t.queueId)
+    .run()
+  const metadata = (await (
+    await request(`/public/services/${t.queueId}`)
+  ).json()) as { type: string; spaces: { id: string; name: string }[] }
+  expect(metadata).toMatchObject({
+    type: 'restaurant',
+    spaces: [{ name: 'Interior' }],
+  })
+  expect(metadata).not.toHaveProperty('config')
+  const payload = {
+    displayName: 'María López',
+    partySize: 2,
+    locale: 'es',
+    preferredSpaceId: metadata.spaces[0]!.id,
+  }
+  expect(
+    (
+      await request(
+        `/staff/queues/${t.queueId}/entries`,
+        viewer.cookie,
+        'POST',
+        payload,
+        crypto.randomUUID(),
+      )
+    ).status,
+  ).toBe(403)
+  expect(
+    (
+      await request(
+        `/staff/queues/${t.queueId}/entries`,
+        t.sales.cookie,
+        'POST',
+        payload,
+        crypto.randomUUID(),
+      )
+    ).status,
+  ).toBe(404)
+  const key = crypto.randomUUID()
+  const manual = await request(
+    `/staff/queues/${t.queueId}/entries`,
+    t.owner.cookie,
+    'POST',
+    payload,
+    key,
+  )
+  expect(manual.status, await manual.clone().text()).toBe(201)
+  const created = await manual.json()
+  expect(
+    await (
+      await request(
+        `/staff/queues/${t.queueId}/entries`,
+        t.owner.cookie,
+        'POST',
+        payload,
+        key,
+      )
+    ).json(),
+  ).toEqual(created)
+  expect(
+    (
+      await request(
+        `/staff/queues/${t.queueId}/entries`,
+        t.owner.cookie,
+        'POST',
+        { ...payload, displayName: 'Different' },
+        key,
+      )
+    ).status,
+  ).toBe(409)
+  const publicJoin = await request(
+    `/public/services/${t.queueId}/entries`,
+    '',
+    'POST',
+    { ...payload, displayName: 'Daniel' },
+    crypto.randomUUID(),
+  )
+  expect(publicJoin.status).toBe(201)
+  expect(
+    (
+      await request(
+        `/public/services/${t.queueId}/entries`,
+        '',
+        'POST',
+        { partySize: 2, locale: 'es' },
+        crypto.randomUUID(),
+      )
+    ).status,
+  ).toBe(201)
+  const entries = (await (
+    await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie)
+  ).json()) as Record<string, unknown>[]
+  expect(entries[0]).toMatchObject({
+    displayName: 'María López',
+    preferredSpaceId: metadata.spaces[0]!.id,
+    space: { name: 'Interior', source: 'preferred' },
+  })
+  expect(entries[2]).toMatchObject({
+    displayName: null,
+    receptionService: null,
+    preferredSpaceId: null,
+    space: null,
+  })
+  expect(JSON.stringify(entries)).not.toContain('displayNameCipher')
+  expect(
+    (await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM queue_entry WHERE queue_id=?',
+    )
+      .bind(t.queueId)
+      .first<{ n: number }>())!.n,
+  ).toBe(3)
+})
+
+it('maps colon-containing resource identities exactly, keeps historical assignments and reads null-config entries', async () => {
+  const t = await tenant()
+  const raw = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+    .bind(t.queueId)
+    .first<{ config: string }>()
+  const config = {
+    ...JSON.parse(raw!.config),
+    resourceStateKnown: true,
+    spaces: [
+      {
+        id: 'a',
+        name: 'Wrong prefix',
+        tables: 1,
+        tableTypes: [{ seats: 2, count: 1 }],
+      },
+      {
+        id: 'a:extra',
+        name: 'Exact match',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1 }],
+      },
+    ],
+  }
+  await env.DB.prepare('UPDATE queue SET open=1,config=? WHERE id=?')
+    .bind(JSON.stringify(config), t.queueId)
+    .run()
+  const r = await request(
+    `/public/services/${t.queueId}/entries`,
+    '',
+    'POST',
+    { partySize: 4, locale: 'es' },
+    crypto.randomUUID(),
+  )
+  expect(r.status).toBe(201)
+  let rows = (await (
+    await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie)
+  ).json()) as {
+    id: string
+    space: { name: string; source: string } | null
+  }[]
+  expect(rows[0]!.space).toEqual({
+    id: 'a:extra',
+    name: 'Exact match',
+    source: 'predicted',
+  })
+  await env.DB.batch([
+    env.DB.prepare("UPDATE queue_entry SET status='served' WHERE id=?").bind(
+      rows[0]!.id,
+    ),
+    env.DB.prepare(
+      "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at,released_at,outcome) VALUES (?,?,'a:extra:4:0','a:extra',4,1,2,3,'served')",
+    ).bind(rows[0]!.id, t.queueId),
+  ])
+  rows = (await (
+    await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie)
+  ).json()) as typeof rows
+  expect(rows[0]!.space).toEqual({
+    id: 'a:extra',
+    name: 'Exact match',
+    source: 'assigned',
+  })
+  await env.DB.prepare('UPDATE queue SET config=NULL WHERE id=?')
+    .bind(t.queueId)
+    .run()
+  expect(
+    (await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie))
+      .status,
+  ).toBe(200)
+})
+
+it('manual consent passes through the coordinator and durably queues encrypted contact exactly once', async () => {
+  const t = await tenant()
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
+    .bind(t.queueId)
+    .run()
+  const list = (await (
+    await request(`/staff/venues/${t.venueId}/queues`, t.owner.cookie)
+  ).json()) as Record<string, unknown>[]
+  expect(list[0]).toHaveProperty('manualJoinWhatsappRequired', false)
+  const payload = {
+    displayName: 'Consented Client',
+    partySize: 1,
+    locale: 'es',
+    whatsapp: {
+      consent: true,
+      phone: '+34600000000',
+      version: 'whatsapp-queue-updates-v1',
+    },
+  }
+  const key = crypto.randomUUID()
+  const create = () =>
+    request(
+      `/staff/queues/${t.queueId}/entries`,
+      t.owner.cookie,
+      'POST',
+      payload,
+      key,
+    )
+  expect((await create()).status).toBe(201)
+  expect((await create()).status).toBe(200)
+  const rows = await env.DB.prepare(
+    `SELECT e.id,p.phone_cipher,c.version,c.purpose,n.status FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN consent c ON c.entry_id=e.id JOIN notification_outbox n ON n.entry_id=e.id WHERE e.queue_id=?`,
+  )
+    .bind(t.queueId)
+    .all<{
+      id: string
+      phone_cipher: string
+      version: string
+      purpose: string
+      status: string
+    }>()
+  expect(rows.results).toHaveLength(1)
+  expect(rows.results[0]).toMatchObject({
+    version: 'whatsapp-queue-updates-v1',
+    purpose: 'queue_updates',
+    status: 'pending',
+  })
+  const { decryptPhone } = await import('./features/queue/crypto')
+  expect(rows.results[0]!.phone_cipher).not.toContain('600000000')
+  expect(
+    await decryptPhone(env.PII_ENCRYPTION_KEY, rows.results[0]!.phone_cipher),
+  ).toBe('+34600000000')
+})

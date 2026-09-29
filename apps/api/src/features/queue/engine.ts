@@ -8,7 +8,12 @@ export type Resource = {
   known: boolean
   callable?: boolean
 }
-export type Party = { id: string; sequence: number; partySize: number }
+export type Party = {
+  id: string
+  sequence: number
+  partySize: number
+  preferredSpaceId?: string | null
+}
 export type Projection = {
   id: string
   position: number
@@ -49,6 +54,11 @@ export function eligibleResources(
   const compatible = resources.filter(
     (resource) => resource.seats >= party.partySize,
   )
+  if (party.preferredSpaceId === 'fastest') return compatible
+  if (party.preferredSpaceId)
+    return compatible.filter(
+      (resource) => resource.spaceId === party.preferredSpaceId,
+    )
   const preferred = compatible.filter(
     (resource) => resource.spaceId === preference,
   )

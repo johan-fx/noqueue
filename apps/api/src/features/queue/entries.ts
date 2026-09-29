@@ -1,5 +1,10 @@
-import { recalculateQueue, readProjection } from './projection'
+import {
+  normalizeConfig,
+  recalculateQueue,
+  readProjection,
+} from './projection'
 import { serviceSchema } from '@noqueue/contracts/staff'
+import { queueAccess, audit } from '../../auth/access'
 import { serviceAcceptsEntries } from '../staff/availability'
 import {
   entrySchema,
@@ -7,7 +12,14 @@ import {
   type Entry,
 } from '@noqueue/contracts/queue'
 import { readConfirmation } from './confirmation'
-import { encryptPhone, hash, hmac, phoneHash, recoveryToken } from './crypto'
+import {
+  encryptPhone,
+  encryptDisplayName,
+  hash,
+  hmac,
+  phoneHash,
+  recoveryToken,
+} from './crypto'
 
 interface StoredEntry {
   id: string
@@ -72,13 +84,30 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
     ...(await readConfirmation(env, entry.id)),
   })
 }
+// Only a server-configured loopback development instance may admit offline manual turns.
+export function manualJoinRequiresWhatsapp(env: CloudflareBindings) {
+  if (env.APP_ENV !== 'local') return true
+  try {
+    return !['localhost', '127.0.0.1', '[::1]'].includes(
+      new URL(env.PUBLIC_APP_ORIGIN).hostname,
+    )
+  } catch {
+    return true
+  }
+}
 export async function joinQueue(
   env: CloudflareBindings,
   queueId: string,
   key: string,
   input: JoinQueue,
   experiment = false,
+  actor?: string,
 ) {
+  const access = actor
+    ? await queueAccess(env, actor, queueId, 'queue.operate')
+    : null
+  // Actor-scoped namespace prevents public keys colliding with manual entries.
+  if (actor) key = `staff:${actor}:${key}`
   const requestHash = await hmac(
     env.RECOVERY_TOKEN_KEY,
     `join-fingerprint:v1:${experiment ? 'confirmation:' : ''}${JSON.stringify(
@@ -101,6 +130,13 @@ export async function joinQueue(
         recoveryToken: await recoveryToken(env, existing.id),
       },
     }
+  }
+  // Admission guards apply to new turns, never to recovery of a committed request.
+  if (actor && manualJoinRequiresWhatsapp(env)) {
+    if (!input.whatsapp.consent)
+      return { status: 400, body: { error: 'whatsapp_consent_required' } }
+    if (env.WHATSAPP_ENABLED !== 'true')
+      return { status: 503, body: { error: 'whatsapp_unavailable' } }
   }
   if (
     experiment &&
@@ -155,7 +191,34 @@ export async function joinQueue(
     }>()
   if (!queue) return { status: 404, body: { error: 'queue_not_found' } }
   if (queue.config) {
-    const config = serviceSchema.parse(JSON.parse(queue.config))
+    const config = normalizeConfig(
+      serviceSchema.parse(JSON.parse(queue.config)),
+    )
+    if (
+      input.receptionService &&
+      (config.type !== 'reception' ||
+        !config.receptionServices.includes(input.receptionService))
+    )
+      return { status: 400, body: { error: 'invalid_reception_service' } }
+    if (input.preferredSpaceId) {
+      const spaces =
+        input.preferredSpaceId === 'fastest'
+          ? config.spaces
+          : config.spaces.filter(
+              (space) => space.id === input.preferredSpaceId,
+            )
+      if (
+        config.type !== 'restaurant' ||
+        !spaces.some(
+          (space) =>
+            !space.tableTypes?.length ||
+            space.tableTypes.some(
+              (type) => type.count > 0 && type.seats >= input.partySize,
+            ),
+        )
+      )
+        return { status: 400, body: { error: 'invalid_space_preference' } }
+    }
     if (
       queue.tenant_status !== 'active' ||
       !serviceAcceptsEntries(config, queue.timezone) ||
@@ -176,7 +239,7 @@ export async function joinQueue(
   ).join('')
   const statements = [
     env.DB.prepare(
-      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,display_name_cipher,reception_service,preferred_space_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       id,
       queueId,
@@ -188,6 +251,11 @@ export async function joinQueue(
       input.locale,
       now,
       queue.sequence,
+      input.displayName
+        ? await encryptDisplayName(env.PII_ENCRYPTION_KEY, input.displayName)
+        : null,
+      input.receptionService ?? null,
+      input.preferredSpaceId ?? null,
     ),
     env.DB.prepare('INSERT INTO queue_event VALUES (?,?,?,?)').bind(
       crypto.randomUUID(),
@@ -196,6 +264,17 @@ export async function joinQueue(
       now,
     ),
   ]
+  if (actor && access)
+    statements.push(
+      audit(
+        env,
+        actor,
+        access.organizationId,
+        access.venueId,
+        'queue.join',
+        id,
+      ),
+    )
   if (input.whatsapp.consent) {
     statements.push(
       env.DB.prepare('INSERT INTO queue_entry_contact VALUES (?,?,?)').bind(

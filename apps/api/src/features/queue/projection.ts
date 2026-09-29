@@ -87,10 +87,15 @@ export async function loadQueueState(
   ).results
   const parties = (
     await env.DB.prepare(
-      "SELECT id,sequence,party_size AS partySize FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence",
+      "SELECT id,sequence,party_size AS partySize,preferred_space_id AS preferredSpaceId FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence",
     )
       .bind(queueId)
-      .all<{ id: string; sequence: number; partySize: number }>()
+      .all<{
+        id: string
+        sequence: number
+        partySize: number
+        preferredSpaceId: string | null
+      }>()
   ).results
   const resources: Resource[] = []
   const spaces =

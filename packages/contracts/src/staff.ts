@@ -242,6 +242,7 @@ export type VenueSummary = {
   role: StaffRole
 }
 export type QueueSummary = {
+  manualJoinWhatsappRequired?: boolean
   id: string
   name: string
   venueId: string
@@ -255,6 +256,14 @@ export type QueueSummary = {
   readiness?: QueueReadiness
 }
 export type StaffEntry = {
+  displayName?: string | null
+  receptionService?: 'check_in' | 'check_out' | 'other' | null
+  preferredSpaceId?: string | null
+  space?: {
+    id: string
+    name: string
+    source: 'preferred' | 'predicted' | 'assigned'
+  } | null
   id: string
   code: string
   partySize: number

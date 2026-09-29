@@ -48,8 +48,29 @@ No hay compatibilidad con el prototipo OTP.
   actualización y acciones operativas; al cerrar, el foco vuelve al botón de la fila.
   La gestión usa tabs «Lista», «Completados» y «Cancelados», con tarjetas por turno.
   «Avanzar un turno» llama al primer turno en espera y pide confirmación; las acciones
-  individuales se despliegan en cada tarjeta según permisos. Se muestran códigos
-  y tamaños de grupo reales: el API aún no expone nombres de clientes ni ETA.
+  individuales se despliegan en cada tarjeta según permisos. Recepción filtra por
+  gestiones configuradas; restaurante por tamaños de grupo presentes; bar/piscina
+  no añade filtros. Las tarjetas muestran nombre (o código en turnos antiguos),
+  código y estimación cuando hay datos; el espacio indica Preferido, Previsto o Asignado.
+- «Añadir» abre un drawer derecho anidado para personal con `queue.operate`.
+  Pide nombre, teléfono y consentimiento explícito de WhatsApp (desactivado inicialmente).
+  En entornos reales exige consentimiento y canal habilitado; cifra el teléfono y reutiliza
+  consentimiento/outbox, sin omitir los controles de proveedor, plantilla o destinatario.
+  Solo `APP_ENV=local` con `PUBLIC_APP_ORIGIN` loopback permite turnos de prueba sin teléfono
+  ni avisos. No existe un bypass enviado por el cliente. Tras el alta muestra código y enlace recuperable.
+  Restaurante incluye comensales (inicialmente 1) y espacio; recepción solo su tipo de gestión;
+  bar/piscina no pide tamaño de grupo. Volver/Escape conserva la cola padre y restaura el foco.
+  El formulario público conserva su flujo de alta y los datos específicos del servicio. Los nombres
+  se cifran con AES-GCM y dominio independiente del teléfono; no van a auditoría ni URL.
+- Deslizar a la izquierda revela pasar/cancelar; a la derecha, confirmar llegada
+  solo después de llamar. El gesto nunca cambia el estado por sí solo. El menú de
+  cada tarjeta conserva todas las acciones para teclado y escritorio. Los sheets
+  piden confirmación; tras conflicto 409 actualizan el turno y requieren confirmar otra vez.
+- Elegir un espacio concreto es vinculante: no se asigna otro espacio aunque quede
+  libre. «El más rápido» permite cualquier espacio compatible, sin la preferencia global.
+  Los turnos antiguos sin elección conservan el comportamiento global anterior. No se
+  puede eliminar o volver incompatible un espacio elegido por turnos activos.
+
 - Owner/comercial autorizado: Accesos → nombre, username, contraseña y rol.
   Usernames únicos globalmente, normalizados a minúsculas e inmutables (3–30,
   letras ASCII, números, punto o guion bajo). Nunca se reutiliza una cuenta ajena.
@@ -62,6 +83,18 @@ No hay compatibilidad con el prototipo OTP.
 - Auditoría: GET `/api/v1/staff/venues/:id/audit`.
 - Suspensión: PATCH `/api/v1/staff/commercial/organizations/:id/status`,
   `{ "status": "suspended" }` o `active`. Bloquea operación y nuevas altas públicas.
+
+### Orden de actualización y reversión
+
+Aplicar la migración aditiva `0008_queue_service_details.sql` antes de publicar API
+y después frontend. Los campos nuevos son nullable y el alta pública acepta los
+payloads anteriores; no hace falta rellenar turnos históricos. No cambia la política
+vigente de retención y no incluye despliegue remoto.
+
+La interfaz puede revertirse independientemente, manteniendo la API aditiva. Revertir
+el motor/API después de aceptar preferencias explícitas requiere detener nuevas altas
+y resolver esos turnos primero: el motor antiguo no respeta la elección individual.
+Conservar las columnas cifradas durante la reversión; eliminarlas perdería datos.
 
 ## Ajustes y correo opcional
 

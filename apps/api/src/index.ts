@@ -86,6 +86,18 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     return this.serialize(() => dispatchNotificationSerialized(this.env, id))
   }
 
+  staffJoin(actor: string, queueId: string, key: string, input: JoinQueue) {
+    return this.serialize(async () => {
+      try {
+        return await joinQueue(this.env, queueId, key, input, false, actor)
+      } catch (error) {
+        if (error instanceof HTTPException)
+          return { status: error.status, body: { error: error.message } }
+        console.error('staff_join_failed')
+        return { status: 503, body: { error: 'temporarily_unavailable' } }
+      }
+    })
+  }
   join(queueId: string, key: string, input: JoinQueue, experiment = false) {
     if (experiment && !confirmationExperimentEnabled(this.env))
       return Promise.resolve({ status: 404, body: { error: 'not_found' } })

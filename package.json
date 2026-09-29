@@ -17,7 +17,8 @@
     "mobile:ios": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:ios",
     "mobile:android": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:android",
     "test:queue": "node scripts/queue-verification/run.mjs",
-    "test:queue:extended": "node scripts/queue-verification/run.mjs --extended"
+    "test:queue:extended": "node scripts/queue-verification/run.mjs --extended",
+    "demo:queue:order": "node scripts/queue-demo/run.mjs"
   },
   "devDependencies": {
     "turbo": "2.10.12",

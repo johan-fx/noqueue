@@ -3,6 +3,7 @@ import {
   serviceSchema,
   roleCapabilities,
   inviteSchema,
+  memberDetailsSchema,
   provisionSchema,
 } from './staff'
 const service = {
@@ -190,4 +191,22 @@ it('accepts bounded availability blocks while retaining legacy duration adjustme
     serviceSchema.parse({ ...service, adjustments: [{ ...base, minutes: 45 }] })
       .adjustments?.[0],
   ).toMatchObject({ minutes: 45 })
+})
+
+describe('member details', () => {
+  it('reuses invitation identity validation without requiring a password', () => {
+    expect(
+      memberDetailsSchema.parse({
+        name: ' Staff ',
+        username: ' New.Staff ',
+        role: 'viewer',
+      }),
+    ).toEqual({ name: 'Staff', username: 'new.staff', role: 'viewer' })
+    for (const input of [
+      { name: '', username: 'validuser', role: 'viewer' },
+      { name: 'Staff', username: 'a', role: 'viewer' },
+      { name: 'Staff', username: 'validuser', role: 'owner' },
+    ])
+      expect(memberDetailsSchema.safeParse(input).success).toBe(false)
+  })
 })

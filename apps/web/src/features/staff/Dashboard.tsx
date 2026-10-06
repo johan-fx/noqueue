@@ -60,7 +60,7 @@ import {
 } from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, ApiError, errorMessage } from './api'
-import { Members } from './Members'
+import { MembersDrawer } from './MembersDrawer'
 import { QueueView } from './QueueView'
 import { queueActionLabels as actionLabels } from './queue-labels'
 
@@ -607,8 +607,17 @@ export function Dashboard(props: DashboardProps) {
         onClose={closeDrawer}
         onSave={saveService}
       />
+      {permissions.includes('members.manage') && (
+        <MembersDrawer
+          open={drawer === 'members'}
+          venueId={venue.id}
+          name={venue.name}
+          finalFocus={drawerTrigger}
+          onClose={closeDrawer}
+        />
+      )}
       <Drawer
-        open={drawer === 'members' || drawer === 'queue'}
+        open={drawer === 'queue'}
         onOpenChange={(open) => {
           if (!open) closeDrawer()
         }}
@@ -717,39 +726,26 @@ export function Dashboard(props: DashboardProps) {
                 onAction={selectCommand}
               />
             )}
-            {drawer === 'members' && permissions.includes('members.manage') && (
-              <Members venueId={venue.id} name={venue.name} compact />
-            )}
           </div>
-          {(drawer === 'members' ||
-            (drawer === 'queue' &&
-              tab === 'active' &&
-              permissions.includes('queue.operate'))) && (
-            <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
-              {drawer === 'queue' &&
-                tab === 'active' &&
-                permissions.includes('queue.operate') && (
-                  <Button
-                    className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
-                    disabled={busy || !nextEntry}
-                    onClick={() => {
-                      if (nextEntry) selectCommand(nextEntry, 'call')
-                    }}
-                  >
-                    Avanzar un turno <MoveRight aria-hidden="true" />
-                  </Button>
-                )}
-              {drawer === 'members' && (
-                <Button
-                  variant="outline"
-                  disabled={saving || busy}
-                  onClick={closeDrawer}
-                >
-                  Cerrar
-                </Button>
-              )}
-            </DrawerFooter>
-          )}
+          {drawer === 'queue' &&
+            tab === 'active' &&
+            permissions.includes('queue.operate') && (
+              <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
+                {drawer === 'queue' &&
+                  tab === 'active' &&
+                  permissions.includes('queue.operate') && (
+                    <Button
+                      className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
+                      disabled={busy || !nextEntry}
+                      onClick={() => {
+                        if (nextEntry) selectCommand(nextEntry, 'call')
+                      }}
+                    >
+                      Avanzar un turno <MoveRight aria-hidden="true" />
+                    </Button>
+                  )}
+              </DrawerFooter>
+            )}
           {lifecycle?.insideDrawer && lifecycleSheet}
           {adding && (
             <AddQueueEntryDrawer

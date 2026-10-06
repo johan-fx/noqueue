@@ -69,6 +69,9 @@ const messages: Record<string, string> = {
   rate_limited: 'Demasiados intentos. Espera un minuto.',
   username_unavailable:
     'Ese usuario ya existe. Elige otro; no se modifica una cuenta existente.',
+  member_details_forbidden:
+    'No puedes editar esta cuenta. Contacta con NoQueue.',
+  invalid_member: 'Revisa los datos del usuario.',
   password_reset_forbidden:
     'No puedes restablecer esta cuenta. Contacta con NoQueue.',
   slug_unavailable: 'Ese identificador ya está en uso.',

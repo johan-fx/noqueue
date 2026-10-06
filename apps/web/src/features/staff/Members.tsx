@@ -1,8 +1,5 @@
-import { useEffect, useState } from 'react'
-import { Controller, useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import { inviteSchema } from '@noqueue/contracts/staff'
-import type { z } from 'zod'
+import type { StaffMember } from '@noqueue/contracts/staff'
+import type { RefObject } from 'react'
 import {
   Card,
   CardHeader,
@@ -10,8 +7,6 @@ import {
   CardContent,
   CardDescription,
 } from '@/components/ui/card'
-import { Field, FieldLabel, FieldError } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
@@ -22,200 +17,168 @@ import {
   TableBody,
   TableCell,
 } from '@/components/ui/table'
-import { PasswordReset } from './PasswordReset'
-import { Choice } from './ServiceForm'
-import { api, errorMessage } from './api'
-const labels = {
-  venue_manager: 'Responsable de zona',
-  queue_staff: 'Personal de cola',
-  viewer: 'Solo lectura',
-}
-type Member = {
-  id: string
-  name: string
-  username: string
-  role: string
-  active: number
-}
-type Data = { members: Member[] }
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuLabel,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/dropdown-menu'
+import ellipsis from '@/assets/member-actions/ellipsis.svg'
+import pencil from '@/assets/member-actions/pencil.svg'
+import key from '@/assets/member-actions/key.svg'
+import prohibit from '@/assets/member-actions/prohibit.svg'
+import type { MemberAction } from './MemberActionDrawer'
+import { memberRoleLabels } from './member-model'
 export function Members({
-  venueId,
   name,
-  compact = false,
+  members,
+  busy,
+  loading,
+  actionOpen,
+  onAction,
+  onToggle,
+  trigger,
 }: {
-  venueId: string
   name: string
-  compact?: boolean
+  members: StaffMember[]
+  busy: boolean
+  loading: boolean
+  actionOpen: boolean
+  onAction: (action: MemberAction, trigger: HTMLButtonElement) => void
+  onToggle: (member: StaffMember) => void
+  trigger: RefObject<HTMLElement | null>
 }) {
-  const [data, setData] = useState<Data>({ members: [] }),
-    [error, setError] = useState(''),
-    [notice, setNotice] = useState(''),
-    [busy, setBusy] = useState(false)
-  const form = useForm<z.infer<typeof inviteSchema>>({
-    resolver: zodResolver(inviteSchema),
-    defaultValues: {
-      name: '',
-      username: '',
-      password: '',
-      role: 'queue_staff',
-    },
-  })
-  const load = () => api<Data>(`/venues/${venueId}/members`).then(setData)
-  useEffect(() => {
-    void api<Data>(`/venues/${venueId}/members`)
-      .then(setData)
-      .catch((e) => setError(errorMessage(e)))
-  }, [venueId])
-  async function action(path: string, method: string, body?: unknown) {
-    setError('')
-    setNotice('')
-    setBusy(true)
-    try {
-      await api(path, method, body)
-      setNotice(
-        'Operación guardada. Entrega las credenciales por un canal seguro.',
-      )
-      form.reset()
-      await load()
-    } catch (e) {
-      setError(errorMessage(e))
-    } finally {
-      setBusy(false)
-    }
-  }
   return (
-    <Card>
-      <CardHeader>
+    <Card className="gap-6 rounded-[14px] py-4">
+      <CardHeader className="px-4">
         <CardTitle>Accesos · {name}</CardTitle>
         <CardDescription>
           El administrador no puede ser eliminado ni degradado desde esta
           pantalla. No se comparten contraseñas.
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-6">
-        {error && (
-          <p role="alert" className="text-destructive">
-            {error}
-          </p>
-        )}
-        {notice && <p role="status">{notice}</p>}
-        <form
-          onSubmit={form.handleSubmit(async (input) => {
-            await action(`/venues/${venueId}/members`, 'POST', input)
-          })}
-          className={
-            compact
-              ? 'grid items-end gap-4 sm:grid-cols-2'
-              : 'grid items-end gap-4 md:grid-cols-4'
-          }
+      <CardContent className="space-y-6 px-4">
+        <Button
+          disabled={busy || loading}
+          onClick={(event) => onAction({ kind: 'create' }, event.currentTarget)}
         >
-          <Field>
-            <FieldLabel htmlFor="invite-name">Nombre</FieldLabel>
-            <Input id="invite-name" {...form.register('name')} />
-            <FieldError errors={[form.formState.errors.name]} />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="invite-username">Usuario</FieldLabel>
-            <Input
-              id="invite-username"
-              autoComplete="off"
-              {...form.register('username')}
-            />
-            <FieldError errors={[form.formState.errors.username]} />
-          </Field>
-          <Field>
-            <FieldLabel htmlFor="initial-password">
-              Contraseña inicial (15 caracteres)
-            </FieldLabel>
-            <Input
-              id="initial-password"
-              type="password"
-              autoComplete="new-password"
-              {...form.register('password')}
-            />
-            <FieldError errors={[form.formState.errors.password]} />
-          </Field>
-          <Field>
-            <FieldLabel>Rol</FieldLabel>
-            <Controller
-              name="role"
-              control={form.control}
-              render={({ field }) => (
-                <Choice
-                  label="Rol invitado"
-                  items={labels}
-                  value={field.value}
-                  onChange={field.onChange}
-                />
-              )}
-            />
-          </Field>
-          <Button type="submit" disabled={form.formState.isSubmitting || busy}>
-            Crear acceso
-          </Button>
-        </form>
-        <Table>
+          Añadir usuario
+        </Button>
+        {loading && <p role="status">Cargando usuarios…</p>}
+        <Table className="table-fixed sm:table-auto">
           <TableHeader>
             <TableRow>
               <TableHead>Persona</TableHead>
-              <TableHead>Rol</TableHead>
-              <TableHead>Acceso</TableHead>
+              <TableHead className="w-[38%] sm:w-auto">Rol</TableHead>
+              <TableHead className="w-18 text-right sm:w-auto">
+                Acciones
+              </TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {data.members.map((member) => (
+            {members.map((member) => (
               <TableRow key={member.id}>
-                <TableCell>
+                <TableCell className="whitespace-normal [overflow-wrap:anywhere] sm:whitespace-nowrap sm:[overflow-wrap:normal]">
                   <p>{member.name}</p>
                   <p className="text-xs text-muted-foreground">
                     {member.username}
                   </p>
-                </TableCell>
-                <TableCell>
-                  {member.role === 'owner' ? (
-                    <Badge>Administrador</Badge>
-                  ) : (
-                    <Choice
-                      label={`Rol de ${member.name}`}
-                      items={labels}
-                      value={member.role}
-                      onChange={(role) => {
-                        if (!busy)
-                          void action(
-                            `/venues/${venueId}/members/${member.id}`,
-                            'PATCH',
-                            { role, active: !!member.active },
-                          )
-                      }}
-                    />
+                  {!member.active && (
+                    <p className="text-xs text-muted-foreground">
+                      Acceso revocado
+                    </p>
                   )}
                 </TableCell>
-                <TableCell>
-                  {member.role === 'owner' ? (
-                    'Activo'
-                  ) : (
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() =>
-                        void action(
-                          `/venues/${venueId}/members/${member.id}`,
-                          'PATCH',
-                          { role: member.role, active: !member.active },
-                        )
+                <TableCell className="whitespace-normal sm:whitespace-nowrap">
+                  <Badge
+                    className="h-auto min-h-5 max-w-full whitespace-normal [overflow-wrap:anywhere] sm:h-5 sm:max-w-none sm:whitespace-nowrap sm:[overflow-wrap:normal]"
+                    variant={member.role === 'owner' ? 'default' : 'secondary'}
+                  >
+                    {member.role === 'owner'
+                      ? 'Administrador'
+                      : memberRoleLabels[member.role]}
+                  </Badge>
+                </TableCell>
+                <TableCell className="text-right">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger
+                      render={
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          className="size-10"
+                          aria-label={`Acciones de ${member.name}`}
+                          disabled={busy || loading}
+                          onClick={(event) => {
+                            trigger.current = event.currentTarget
+                          }}
+                        />
                       }
                     >
-                      {member.active ? 'Revocar acceso' : 'Restaurar acceso'}
-                    </Button>
-                  )}
-                  <PasswordReset
-                    venueId={venueId}
-                    userId={member.id}
-                    name={member.name}
-                  />
+                      <img src={ellipsis} alt="" width={24} height={24} />
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent
+                      align="end"
+                      className="w-56 rounded-[10px] p-1"
+                      finalFocus={actionOpen ? false : undefined}
+                    >
+                      <DropdownMenuGroup>
+                        <DropdownMenuLabel>Acciones</DropdownMenuLabel>
+                        <DropdownMenuItem
+                          className="h-9"
+                          disabled={busy || !member.canEditDetails}
+                          onClick={() => {
+                            if (trigger.current)
+                              onAction(
+                                { kind: 'edit', member },
+                                trigger.current as HTMLButtonElement,
+                              )
+                          }}
+                        >
+                          <img src={pencil} alt="" width={16} height={16} />
+                          Editar usuario
+                        </DropdownMenuItem>
+                      </DropdownMenuGroup>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="h-9"
+                        disabled={busy}
+                        onClick={() => {
+                          if (trigger.current)
+                            onAction(
+                              { kind: 'password', member },
+                              trigger.current as HTMLButtonElement,
+                            )
+                        }}
+                      >
+                        <img src={key} alt="" width={16} height={16} />
+                        Restablecer contraseña
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        className="h-9"
+                        variant={member.active ? 'destructive' : 'default'}
+                        disabled={busy || member.role === 'owner'}
+                        onClick={() => onToggle(member)}
+                      >
+                        <img src={prohibit} alt="" width={16} height={16} />
+                        {member.active ? 'Revocar acceso' : 'Restaurar acceso'}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
                 </TableCell>
               </TableRow>
             ))}
+            {!loading && members.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={3} className="text-muted-foreground">
+                  No hay usuarios.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </CardContent>

@@ -2321,3 +2321,325 @@ it('restricts both geocoders and location saves to global commercial ownership o
       ).status,
     ).toBe(200)
 })
+
+describe('scoped staff identity details', () => {
+  it('edits identity and role atomically, preserves credentials/access and revokes renamed sessions', async () => {
+    const t = await tenant(),
+      staff = await member(t),
+      next = username()
+    const path = `/staff/venues/${t.venueId}/members/${staff.id}/details`
+    const before = await env.DB.prepare(
+      "SELECT password FROM account WHERE userId=? AND providerId='credential'",
+    )
+      .bind(staff.id)
+      .first()
+    const rows = await request(
+      `/staff/venues/${t.venueId}/members`,
+      t.owner.cookie,
+    )
+    expect(
+      (
+        (await rows.json()) as {
+          members: { id: string; canEditDetails: boolean }[]
+        }
+      ).members.find((m) => m.id === staff.id)?.canEditDetails,
+    ).toBe(true)
+    expect(
+      (
+        await request(path, t.owner.cookie, 'PATCH', {
+          name: 'Updated Staff',
+          username: next.toUpperCase(),
+          role: 'viewer',
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      await env.DB.prepare(
+        'SELECT name,username,displayUsername FROM user WHERE id=?',
+      )
+        .bind(staff.id)
+        .first(),
+    ).toEqual({ name: 'Updated Staff', username: next, displayUsername: next })
+    expect(
+      await env.DB.prepare(
+        'SELECT role,active FROM venue_membership WHERE user_id=? AND venue_id=?',
+      )
+        .bind(staff.id, t.venueId)
+        .first(),
+    ).toEqual({ role: 'viewer', active: 1 })
+    expect(
+      await env.DB.prepare(
+        "SELECT password FROM account WHERE userId=? AND providerId='credential'",
+      )
+        .bind(staff.id)
+        .first(),
+    ).toEqual(before)
+    expect((await request('/staff/me', staff.cookie)).status).toBe(401)
+    expect(
+      (
+        await request('/auth/sign-in/username', '', 'POST', {
+          username: staff.username,
+          password,
+        })
+      ).status,
+    ).not.toBe(200)
+    await login(next)
+    expect(
+      await env.DB.prepare(
+        "SELECT action FROM staff_audit WHERE target_id=? AND action='member.details_updated'",
+      )
+        .bind(staff.id)
+        .first(),
+    ).toBeTruthy()
+  })
+  it('rejects owner, self, global, shared identities and duplicate usernames without partial changes', async () => {
+    const t = await tenant(),
+      staff = await member(t),
+      other = await member(t),
+      outsider = await identity()
+    const path = `/staff/venues/${t.venueId}/members/${staff.id}/details`
+    const values = { name: 'Changed', username: other.username, role: 'viewer' }
+    expect((await request(path, t.owner.cookie, 'PATCH', values)).status).toBe(
+      409,
+    )
+    expect((await request(path, outsider.cookie, 'PATCH', values)).status).toBe(
+      404,
+    )
+    expect(
+      (
+        await request(
+          `/staff/venues/${t.venueId}/members/${t.owner.id}/details`,
+          t.owner.cookie,
+          'PATCH',
+          values,
+        )
+      ).status,
+    ).toBe(403)
+    await env.DB.prepare(
+      "UPDATE user SET role='commercial_operator' WHERE id=?",
+    )
+      .bind(staff.id)
+      .run()
+    expect(
+      (
+        await request(path, t.owner.cookie, 'PATCH', {
+          ...values,
+          username: username(),
+        })
+      ).status,
+    ).toBe(403)
+    await env.DB.prepare("UPDATE user SET role='user' WHERE id=?")
+      .bind(staff.id)
+      .run()
+    const second = await tenant()
+    await env.DB.prepare(
+      "INSERT INTO venue_membership(user_id,venue_id,role,active) VALUES (?,?,'viewer',0)",
+    )
+      .bind(staff.id, second.venueId)
+      .run()
+    expect(
+      (
+        await request(path, t.owner.cookie, 'PATCH', {
+          ...values,
+          username: username(),
+        })
+      ).status,
+    ).toBe(403)
+    expect(
+      await env.DB.prepare('SELECT name,username FROM user WHERE id=?')
+        .bind(staff.id)
+        .first(),
+    ).toEqual({ name: 'Staff', username: staff.username })
+  })
+})
+
+describe('member detail transactions', () => {
+  it('preserves revoked access and sessions for name/role-only edits and hides shared grants', async () => {
+    const t = await tenant(),
+      staff = await member(t)
+    await env.DB.prepare(
+      'UPDATE venue_membership SET active=0 WHERE user_id=? AND venue_id=?',
+    )
+      .bind(staff.id, t.venueId)
+      .run()
+    const before = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM session WHERE userId=?',
+    )
+      .bind(staff.id)
+      .first()
+    expect(
+      (
+        await request(
+          `/staff/venues/${t.venueId}/members/${staff.id}/details`,
+          t.owner.cookie,
+          'PATCH',
+          { name: 'Renamed', username: staff.username, role: 'viewer' },
+        )
+      ).status,
+    ).toBe(200)
+    expect(
+      await env.DB.prepare('SELECT COUNT(*) AS n FROM session WHERE userId=?')
+        .bind(staff.id)
+        .first(),
+    ).toEqual(before)
+    expect(
+      await env.DB.prepare(
+        'SELECT active FROM venue_membership WHERE user_id=? AND venue_id=?',
+      )
+        .bind(staff.id, t.venueId)
+        .first(),
+    ).toEqual({ active: 0 })
+    const second = await tenant()
+    await env.DB.prepare(
+      "INSERT INTO member(id,organizationId,userId,role,createdAt) VALUES (?,?,?,'member',?)",
+    )
+      .bind(
+        crypto.randomUUID(),
+        second.organizationId,
+        staff.id,
+        new Date().toISOString(),
+      )
+      .run()
+    const response = await request(
+      `/staff/venues/${t.venueId}/members`,
+      t.owner.cookie,
+    )
+    const data = (await response.json()) as {
+      members: { id: string; canEditDetails: boolean }[]
+    }
+    expect(data.members.find((m) => m.id === staff.id)?.canEditDetails).toBe(
+      false,
+    )
+    expect(data.members.find((m) => m.id === t.owner.id)?.canEditDetails).toBe(
+      false,
+    )
+    expect(
+      (
+        await request(
+          `/staff/venues/${t.venueId}/members/${staff.id}/details`,
+          t.owner.cookie,
+          'PATCH',
+          { name: 'Changed', username: username(), role: 'queue_staff' },
+        )
+      ).status,
+    ).toBe(403)
+  })
+  it('rolls back identity, session deletion and audit when a later write fails', async () => {
+    const t = await tenant(),
+      staff = await member(t)
+    const before = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM session WHERE userId=?',
+    )
+      .bind(staff.id)
+      .first()
+    await env.DB.prepare(
+      "CREATE TRIGGER reject_details_role BEFORE UPDATE OF role ON venue_membership BEGIN SELECT RAISE(ABORT,'fixture role failure'); END",
+    ).run()
+    try {
+      expect(
+        (
+          await request(
+            `/staff/venues/${t.venueId}/members/${staff.id}/details`,
+            t.owner.cookie,
+            'PATCH',
+            { name: 'Changed', username: username(), role: 'viewer' },
+          )
+        ).status,
+      ).toBe(503)
+      expect(
+        await env.DB.prepare('SELECT name,username FROM user WHERE id=?')
+          .bind(staff.id)
+          .first(),
+      ).toEqual({ name: 'Staff', username: staff.username })
+      expect(
+        await env.DB.prepare('SELECT COUNT(*) AS n FROM session WHERE userId=?')
+          .bind(staff.id)
+          .first(),
+      ).toEqual(before)
+      expect(
+        await env.DB.prepare(
+          "SELECT COUNT(*) AS n FROM staff_audit WHERE target_id=? AND action='member.details_updated'",
+        )
+          .bind(staff.id)
+          .first(),
+      ).toEqual({ n: 0 })
+      expect(
+        await env.DB.prepare(
+          'SELECT role FROM venue_membership WHERE user_id=? AND venue_id=?',
+        )
+          .bind(staff.id, t.venueId)
+          .first(),
+      ).toEqual({ role: 'queue_staff' })
+    } finally {
+      await env.DB.prepare('DROP TRIGGER reject_details_role').run()
+    }
+  })
+})
+
+it('revokes sessions when assigning the first username to eligible staff', async () => {
+  const t = await tenant(),
+    staff = await member(t),
+    next = username()
+  await env.DB.prepare(
+    'UPDATE user SET username=NULL,displayUsername=NULL WHERE id=?',
+  )
+    .bind(staff.id)
+    .run()
+  const listing = await request(
+    `/staff/venues/${t.venueId}/members`,
+    t.owner.cookie,
+  )
+  expect(
+    (
+      (await listing.json()) as { members: { id: string; username: string }[] }
+    ).members.find((m) => m.id === staff.id)?.username,
+  ).toBe('')
+  expect(
+    (
+      await request(
+        `/staff/venues/${t.venueId}/members/${staff.id}/details`,
+        t.owner.cookie,
+        'PATCH',
+        { name: 'Staff', username: next, role: 'queue_staff' },
+      )
+    ).status,
+  ).toBe(200)
+  expect(
+    await env.DB.prepare('SELECT COUNT(*) AS n FROM session WHERE userId=?')
+      .bind(staff.id)
+      .first(),
+  ).toEqual({ n: 0 })
+  await login(next)
+})
+
+it('rejects an exclusive venue grant whose organization membership belongs to another tenant', async () => {
+  const t = await tenant(),
+    staff = await member(t),
+    other = await tenant()
+  await env.DB.prepare(
+    'UPDATE venue_membership SET venue_id=? WHERE user_id=? AND venue_id=?',
+  )
+    .bind(other.venueId, staff.id, t.venueId)
+    .run()
+  const listing = await request(
+    `/staff/venues/${other.venueId}/members`,
+    other.owner.cookie,
+  )
+  expect(
+    (
+      (await listing.json()) as {
+        members: { id: string; canEditDetails: boolean }[]
+      }
+    ).members.find((m) => m.id === staff.id)?.canEditDetails,
+  ).toBe(false)
+  expect(
+    (
+      await request(
+        `/staff/venues/${other.venueId}/members/${staff.id}/details`,
+        other.owner.cookie,
+        'PATCH',
+        { name: 'Changed', username: username(), role: 'viewer' },
+      )
+    ).status,
+  ).toBe(403)
+})

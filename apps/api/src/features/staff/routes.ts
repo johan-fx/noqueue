@@ -22,9 +22,11 @@ import { z } from 'zod'
 import {
   inviteSchema,
   membershipUpdateSchema,
+  memberDetailsSchema,
   provisionSchema,
   queueCommandSchema,
   serviceSchema,
+  type StaffMember,
 } from '@noqueue/contracts/staff'
 import { createAuth } from '../../auth/server'
 import { isCommercial } from '../../auth/permissions'
@@ -254,14 +256,31 @@ async function canManage(c: Context<StaffEnv>, venueId: string) {
   }
   return venueAccess(c.env, actor.id, venueId, 'members.manage')
 }
+// Count all grants, including revoked ones: a shared identity is never venue-local.
+const editableMemberSql = `u.role='user' AND vm.role!='owner' AND u.id!=?
+  AND (SELECT COUNT(*) FROM member WHERE userId=u.id)=1
+  AND (SELECT COUNT(*) FROM venue_membership WHERE user_id=u.id)=1
+  AND EXISTS (SELECT 1 FROM member m JOIN venue v ON v.organization_id=m.organizationId WHERE m.userId=u.id AND v.id=vm.venue_id)`
 staffRoutes.get('/venues/:id/members', async (c) => {
   await canManage(c, c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    'SELECT u.id,u.name,u.email,u.username,vm.role,vm.active FROM venue_membership vm JOIN user u ON u.id=vm.user_id WHERE vm.venue_id=? ORDER BY u.name',
+    `SELECT u.id,u.name,u.email,COALESCE(u.username,'') AS username,vm.role,vm.active,
+      (${editableMemberSql}) AS canEditDetails
+      FROM venue_membership vm JOIN user u ON u.id=vm.user_id WHERE vm.venue_id=? ORDER BY u.name`,
   )
-    .bind(c.req.param('id'))
-    .all()
-  return c.json({ members: rows.results })
+    .bind(c.get('actor').id, c.req.param('id'))
+    .all<
+      Omit<StaffMember, 'canEditDetails'> & {
+        email: string
+        canEditDetails: number
+      }
+    >()
+  return c.json({
+    members: rows.results.map((row) => ({
+      ...row,
+      canEditDetails: !!row.canEditDetails,
+    })),
+  })
 })
 staffRoutes.post('/venues/:id/members', async (c) => {
   const access = await canManage(c, c.req.param('id'))
@@ -344,6 +363,70 @@ staffRoutes.post('/venues/:id/members/:userId/password', async (c) => {
       targetId,
     ),
   ])
+  return c.json({ ok: true })
+})
+staffRoutes.patch('/venues/:id/members/:userId/details', async (c) => {
+  const venueId = c.req.param('id'),
+    targetId = c.req.param('userId'),
+    actor = c.get('actor')
+  const access = await canManage(c, venueId)
+  const parsed = memberDetailsSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: 'invalid_member' }, 400)
+  const eligible = await c.env.DB.prepare(
+    `SELECT u.id FROM venue_membership vm JOIN user u ON u.id=vm.user_id WHERE ${editableMemberSql} AND vm.venue_id=? AND u.id=?`,
+  )
+    .bind(actor.id, venueId, targetId)
+    .first()
+  if (!eligible)
+    throw new HTTPException(403, { message: 'member_details_forbidden' })
+  const { name, username, role } = parsed.data
+  const auditId = crypto.randomUUID(),
+    now = new Date().toISOString()
+  // The audit row is the transaction-local eligibility gate. Every write depends
+  // on it; D1 rolls the entire batch back on a uniqueness or database failure.
+  // Recheck both target isolation and manager authority inside the transaction.
+  const actorAccess = isCommercial(actor.role)
+    ? `EXISTS (SELECT 1 FROM user manager JOIN venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE manager.id=? AND v.id=? AND manager.role IN ('commercial_operator','platform_admin') AND (t.created_by=manager.id OR manager.role='platform_admin') AND COALESCE(manager.banned,0)=0)`
+    : `EXISTS (SELECT 1 FROM venue_membership av JOIN venue v ON v.id=av.venue_id JOIN member am ON am.organizationId=v.organization_id AND am.userId=av.user_id JOIN user manager ON manager.id=av.user_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE av.user_id=? AND av.venue_id=? AND av.active=1 AND av.role='owner' AND t.status='active' AND COALESCE(manager.banned,0)=0)`
+  try {
+    const results = await c.env.DB.batch([
+      c.env.DB.prepare(
+        `INSERT INTO staff_audit SELECT ?,?,?,?,?,?,? FROM venue_membership vm JOIN user u ON u.id=vm.user_id WHERE ${editableMemberSql} AND vm.venue_id=? AND u.id=? AND ${actorAccess}`,
+      ).bind(
+        auditId,
+        actor.id,
+        access.organizationId,
+        venueId,
+        'member.details_updated',
+        targetId,
+        Date.now(),
+        actor.id,
+        venueId,
+        targetId,
+        actor.id,
+        venueId,
+      ),
+      c.env.DB.prepare(
+        'DELETE FROM session WHERE userId=? AND EXISTS (SELECT 1 FROM staff_audit WHERE id=?) AND EXISTS (SELECT 1 FROM user WHERE id=? AND username IS NOT ?)',
+      ).bind(targetId, auditId, targetId, username),
+      c.env.DB.prepare(
+        'UPDATE user SET name=?,username=?,displayUsername=?,updatedAt=? WHERE id=? AND EXISTS (SELECT 1 FROM staff_audit WHERE id=?)',
+      ).bind(name, username, username, now, targetId, auditId),
+      c.env.DB.prepare(
+        'UPDATE venue_membership SET role=? WHERE user_id=? AND venue_id=? AND EXISTS (SELECT 1 FROM staff_audit WHERE id=?)',
+      ).bind(role, targetId, venueId, auditId),
+    ])
+    if (!results[0]?.meta.changes)
+      throw new HTTPException(403, { message: 'member_details_forbidden' })
+  } catch (error) {
+    if (
+      await c.env.DB.prepare('SELECT id FROM user WHERE username=? AND id!=?')
+        .bind(username, targetId)
+        .first()
+    )
+      return c.json({ error: 'username_unavailable' }, 409)
+    throw error
+  }
   return c.json({ ok: true })
 })
 staffRoutes.patch('/venues/:id/members/:userId', async (c) => {

@@ -216,6 +216,16 @@ export const inviteSchema = z.object({
   password: passwordSchema,
   role: z.enum(['venue_manager', 'queue_staff', 'viewer']),
 })
+export const memberDetailsSchema = inviteSchema.omit({ password: true })
+export type MemberDetailsInput = z.infer<typeof memberDetailsSchema>
+export type StaffMember = {
+  id: string
+  name: string
+  username: string
+  role: StaffRole
+  active: number
+  canEditDetails: boolean
+}
 export const queueCommandSchema = z.object({
   entryId: z.string().uuid(),
   version: z.number().int().min(0),

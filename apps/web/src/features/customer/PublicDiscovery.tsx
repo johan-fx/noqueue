@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useLocation, useNavigate, useSearchParams } from 'react-router'
-import {
-  ArrowRight,
-  Clock,
-  MapPin,
-  QrCode,
-  Search,
-  ChevronDown,
-} from 'lucide-react'
+import { useLocation, useNavigate, useSearchParams } from 'react-router'
+import { ArrowRight, Clock, MapPin, QrCode, Search } from 'lucide-react'
 import {
   publicSearchResponseSchema,
   type PublicSearchInput,
@@ -15,6 +8,13 @@ import {
 } from '@noqueue/contracts/discovery'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { CustomerShell, useLocale } from './shared'
 import {
   discoveryScroll,
@@ -366,34 +366,44 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
                 />
               </div>
               <div className="-mt-2 flex gap-2 overflow-hidden">
-                <label className="relative flex h-9 shrink-0 items-center gap-2 rounded-lg border px-3 text-sm font-medium text-black shadow-xs">
-                  {sort === 'distance' ? (
-                    <MapPin className="size-4" aria-hidden="true" />
-                  ) : (
-                    <Clock className="size-4" aria-hidden="true" />
-                  )}
-                  <select
+                <Select
+                  items={[
+                    { value: 'wait', label: t.wait },
+                    { value: 'distance', label: t.nearest },
+                  ]}
+                  value={sort}
+                  onValueChange={(value) => {
+                    if (value !== 'wait' && value !== 'distance') return
+                    if (value === 'distance' && !coordinates) return
+                    setParams(
+                      (previous) => {
+                        previous.set('sort', value)
+                        previous.delete('page')
+                        return previous
+                      },
+                      { replace: true },
+                    )
+                  }}
+                >
+                  <SelectTrigger
                     aria-label={locale === 'es' ? 'Ordenar' : 'Sort'}
-                    className="appearance-none bg-transparent pr-6 outline-none"
-                    value={sort}
-                    onChange={(e) =>
-                      setParams(
-                        (previous) => {
-                          previous.set('sort', e.target.value)
-                          previous.delete('page')
-                          return previous
-                        },
-                        { replace: true },
-                      )
-                    }
+                    size="default"
+                    className="w-auto shrink-0 rounded-lg font-medium text-black"
                   >
-                    <option value="wait">{t.wait}</option>
-                    <option value="distance" disabled={!coordinates}>
+                    {sort === 'distance' ? (
+                      <MapPin className="size-4" aria-hidden="true" />
+                    ) : (
+                      <Clock className="size-4" aria-hidden="true" />
+                    )}
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent align="start" alignItemWithTrigger={false}>
+                    <SelectItem value="wait">{t.wait}</SelectItem>
+                    <SelectItem value="distance" disabled={!coordinates}>
                       {t.nearest}
-                    </option>
-                  </select>
-                  <ChevronDown className="pointer-events-none absolute right-3 size-4" />
-                </label>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 {filters}
               </div>
               {results}
@@ -491,12 +501,6 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
               )}
             </>
           )}
-          <Link
-            to="/login"
-            className="mt-auto text-center text-xs text-gray-500"
-          >
-            {locale === 'es' ? 'Acceso profesional' : 'Professional access'}
-          </Link>
         </div>
         {scan && <QrScanner locale={locale} onClose={closeScan} />}
       </CustomerShell>

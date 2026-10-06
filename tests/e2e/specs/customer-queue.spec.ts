@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import { setup, join } from '../helpers/queue-actions.js'
+import { selectCustomerLanguage } from '../helpers/customer-language.js'
 import type {
   Entry,
   PublicService,
@@ -130,7 +131,7 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
       .getByRole('link', { name: 'Seleccionar lista de espera' })
       .click()
     await expect(client).toHaveURL(new RegExp(`/v/${t.venueId}`))
-    await client.getByLabel('Idioma').selectOption('en')
+    await selectCustomerLanguage(client, 'en')
     await expect(
       client.getByRole('heading', { name: /Welcome to/ }),
     ).toBeVisible()

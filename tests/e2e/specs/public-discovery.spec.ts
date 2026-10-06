@@ -1,5 +1,6 @@
 import { test, expect, type APIRequestContext } from '@playwright/test'
 import { resolveFixtureLocation } from '../helpers/location.js'
+import { selectCustomerLanguage } from '../helpers/customer-language.js'
 test.use({ serviceWorkers: 'block' })
 const pilot = {
   'X-NoQueue-Pilot-Token': 'test-pilot-access-at-least-32-characters',
@@ -142,7 +143,77 @@ test('anonymous home, exact service discovery, location consent, filtered return
   expect(locationData.url).not.toContain('36.72016')
   await page.getByRole('button', { name: 'Ver más' }).click()
   await expect(page).toHaveURL(/\/search\?.*scope=nearby/)
-  await expect(page.getByLabel('Ordenar')).toHaveValue('distance')
+  const sorter = page.getByRole('combobox', { name: 'Ordenar' })
+  await expect(sorter).toHaveAttribute('data-slot', 'select-trigger')
+  await expect(sorter.locator('[data-slot="select-value"]')).toHaveText(
+    'Más cerca',
+  )
+  await sorter.focus()
+  await sorter.press('ArrowDown')
+  await expect(page.getByRole('option', { name: 'Más cerca' })).toBeVisible()
+  const popup = await page
+    .locator('[data-slot="select-content"][data-open]')
+    .boundingBox()
+  expect(popup).not.toBeNull()
+  expect(popup!.x).toBeGreaterThanOrEqual(0)
+  expect(popup!.x + popup!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({
+    path: info.outputPath('public-sort-390.png'),
+    animations: 'disabled',
+  })
+  await expect(page.getByRole('option', { name: 'Más cerca' })).toBeFocused()
+  await page.keyboard.press('Home')
+  await expect(page.getByRole('option', { name: 'Menos espera' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(sorter.locator('[data-slot="select-value"]')).toHaveText(
+    'Menos espera',
+  )
+  await expect(sorter).toBeFocused()
+  await expect(page).toHaveURL(/sort=wait/)
+  await sorter.press('ArrowDown')
+  await expect(page.getByRole('option', { name: 'Menos espera' })).toBeFocused()
+  await page.keyboard.press('End')
+  await expect(page.getByRole('option', { name: 'Más cerca' })).toBeFocused()
+  await page.keyboard.press('Enter')
+  await expect(sorter.locator('[data-slot="select-value"]')).toHaveText(
+    'Más cerca',
+  )
+  await expect(page).toHaveURL(/sort=distance/)
+  const language = page.getByRole('combobox', { name: 'Idioma' })
+  await expect(language).toHaveAttribute('data-slot', 'select-trigger')
+  await expect(language.locator('[data-slot="select-value"]')).toHaveText('ES')
+  const beforeLanguage = new URL(page.url())
+  await language.focus()
+  await language.press('ArrowDown')
+  await expect(
+    page.getByRole('option', { name: 'ES', exact: true }),
+  ).toBeFocused()
+  const languagePopup = await page
+    .locator('[data-slot="select-content"][data-open]')
+    .boundingBox()
+  expect(languagePopup).not.toBeNull()
+  expect(languagePopup!.x).toBeGreaterThanOrEqual(0)
+  expect(languagePopup!.x + languagePopup!.width).toBeLessThanOrEqual(390)
+  await page.screenshot({
+    path: info.outputPath('public-language-390.png'),
+    animations: 'disabled',
+  })
+  await page.keyboard.press('Escape')
+  await expect(language).toBeFocused()
+  await expect(page).toHaveURL(beforeLanguage.toString())
+  await selectCustomerLanguage(page, 'en')
+  const afterLanguage = new URL(page.url())
+  beforeLanguage.searchParams.set('lang', 'en')
+  expect(afterLanguage.toString()).toBe(beforeLanguage.toString())
+  await expect(
+    page
+      .getByRole('combobox', { name: 'Sort' })
+      .locator('[data-slot="select-value"]'),
+  ).toHaveText('Nearest')
+  await selectCustomerLanguage(page, 'es')
+  await expect(sorter.locator('[data-slot="select-value"]')).toHaveText(
+    'Más cerca',
+  )
   await page.getByLabel('Hotel, restaurante o local').fill(fixture.suffix)
   await expect(
     page
@@ -207,11 +278,16 @@ test('anonymous home, exact service discovery, location consent, filtered return
     ),
   ).toBe(true)
   await page.reload()
-  await expect(page.getByLabel('Ordenar')).toHaveValue('wait')
-  await expect(page.getByRole('option', { name: 'Más cerca' })).toHaveAttribute(
-    'disabled',
-    '',
+  await expect(sorter.locator('[data-slot="select-value"]')).toHaveText(
+    'Menos espera',
   )
+  await sorter.click()
+  await expect(page.getByRole('option', { name: 'Más cerca' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
+  await page.keyboard.press('Escape')
+  await expect(sorter).toBeFocused()
   await page.goto('/')
   await expect(
     page.getByRole('link', { name: /Restaurante Miramar Playa/ }),

@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router'
-import { ChevronLeft, ChevronDown } from 'lucide-react'
+import { ChevronLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 
 export type Locale = 'es' | 'en'
 export function useLocale() {
@@ -46,20 +53,31 @@ export function CustomerShell({
           </Link>
         ) : null}
         <p className="font-semibold">{title}</p>
-        <label className="relative flex h-11 items-center gap-2">
-          <span className="sr-only">
-            {locale === 'es' ? 'Idioma' : 'Language'}
-          </span>
-          <select
-            className="appearance-none bg-transparent py-2 pr-6"
-            value={locale}
-            onChange={(e) => setLocale(e.target.value as Locale)}
+        <Select
+          value={locale}
+          items={[
+            { value: 'es', label: 'ES' },
+            { value: 'en', label: 'EN' },
+          ]}
+          onValueChange={(value) => {
+            if (value === 'es' || value === 'en') setLocale(value)
+          }}
+        >
+          <SelectTrigger
+            aria-label={locale === 'es' ? 'Idioma' : 'Language'}
+            className="h-11 w-auto gap-2 rounded-none border-0 bg-transparent p-0 text-base font-normal shadow-none [&_svg]:size-5"
           >
-            <option value="es">ES</option>
-            <option value="en">EN</option>
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-0 size-5" />
-        </label>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent
+            align="end"
+            alignItemWithTrigger={false}
+            className="min-w-20"
+          >
+            <SelectItem value="es">ES</SelectItem>
+            <SelectItem value="en">EN</SelectItem>
+          </SelectContent>
+        </Select>
       </header>
       {children}
     </main>

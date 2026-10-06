@@ -74,8 +74,6 @@ it('searches per service, toggles one type off and renders ChevronLeft back', as
       .getByRole('link', { name: 'Volver' })
       .querySelector('.lucide-chevron-left'),
   ).toBeTruthy()
-  expect(screen.getByLabelText('Ordenar')).toHaveValue('wait')
-  expect(screen.getByRole('option', { name: 'Más cerca' })).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: 'Restaurantes' }))
   await waitFor(() =>
     expect(JSON.parse(fetcher.mock.lastCall![1].body).type).toBe('restaurant'),
@@ -117,5 +115,72 @@ it('keeps GPS only in memory and sends a three-service 5km discovery after conse
   })
   expect(localStorage.length).toBe(0)
   expect(window.location.search).not.toContain('36.7')
+  setDiscoveryCoordinates(undefined)
+})
+
+it('uses a labelled shadcn sort trigger with a localized initial value and unavailable nearest option', async () => {
+  setDiscoveryCoordinates(undefined)
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValue(Response.json({ items: [], page: 1, hasMore: false })),
+  )
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  render(
+    <MemoryRouter initialEntries={['/search?sort=distance']}>
+      <PublicDiscovery search />
+    </MemoryRouter>,
+  )
+  const trigger = screen.getByRole('combobox', { name: 'Ordenar' })
+  expect(trigger.tagName).toBe('BUTTON')
+  expect(trigger).toHaveAttribute('data-slot', 'select-trigger')
+  expect(trigger).toHaveTextContent('Menos espera')
+  fireEvent.click(trigger)
+  expect(
+    await screen.findByRole('option', { name: 'Más cerca' }),
+  ).toHaveAttribute('aria-disabled', 'true')
+  fireEvent.keyDown(trigger, { key: 'Escape' })
+  fireEvent.click(screen.getByRole('combobox', { name: 'Idioma' }))
+  const english = await screen.findByRole('option', { name: 'EN' })
+  fireEvent.pointerDown(english, { pointerType: 'mouse' })
+  fireEvent.click(english, { detail: 1 })
+  expect(screen.getByRole('combobox', { name: 'Sort' })).toHaveTextContent(
+    'Shortest wait',
+  )
+})
+
+it('changes sort before requesting page one without losing nearby scope, text or type', async () => {
+  setDiscoveryCoordinates({ latitude: 36.7, longitude: -4.4 })
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(Response.json({ items: [], page: 1, hasMore: false }))
+  vi.stubGlobal('fetch', fetcher)
+  vi.spyOn(window, 'scrollTo').mockImplementation(() => {})
+  render(
+    <MemoryRouter
+      initialEntries={[
+        '/search?scope=nearby&sort=distance&page=2&type=pool&text=hotel',
+      ]}
+    >
+      <PublicDiscovery search />
+    </MemoryRouter>,
+  )
+  const trigger = screen.getByRole('combobox', { name: 'Ordenar' })
+  expect(trigger).toHaveTextContent('Más cerca')
+  fireEvent.click(trigger)
+  const waitOption = await screen.findByRole('option', { name: 'Menos espera' })
+  fireEvent.pointerDown(waitOption, { pointerType: 'mouse' })
+  fireEvent.click(waitOption, { detail: 1 })
+  expect(trigger).toHaveTextContent('Menos espera')
+  await waitFor(() =>
+    expect(JSON.parse(fetcher.mock.lastCall![1].body)).toMatchObject({
+      scope: 'nearby',
+      sort: 'wait',
+      page: 1,
+      type: 'pool',
+      text: 'hotel',
+    }),
+  )
   setDiscoveryCoordinates(undefined)
 })

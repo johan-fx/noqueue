@@ -1,3 +1,13 @@
+import { directoryConfigStatement } from '../discovery/configuration'
+import {
+  locationResolveSchema,
+  venueLocationUpdateSchema,
+} from '@noqueue/contracts/discovery'
+import {
+  resolveLocation,
+  readVenueLocation,
+  updateVenueLocation,
+} from './location'
 import { serviceAcceptsEntries } from './availability'
 import { readiness, inventoryConfirmed } from '../queue/opening-state'
 import { queueLifecycleSchema } from '@noqueue/contracts/staff'
@@ -34,8 +44,21 @@ type StaffEnv = {
   }
 }
 export const staffRoutes = new Hono<StaffEnv>()
-staffRoutes.use('*', bodyLimit({ maxSize: 65536 }))
+staffRoutes.use('*', async (c, next) => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Referrer-Policy', 'no-referrer')
+  await next()
+})
+staffRoutes.use(
+  '*',
+  bodyLimit({
+    maxSize: 65536,
+    onError: (c) => c.json({ error: 'request_too_large' }, 413),
+  }),
+)
 staffRoutes.onError((error, c) => {
+  c.header('Cache-Control', 'no-store')
+  c.header('Referrer-Policy', 'no-referrer')
   if (error instanceof SyntaxError)
     return c.json({ error: 'invalid_json' }, 400)
   if (error instanceof HTTPException)
@@ -78,8 +101,13 @@ staffRoutes.use('*', async (c, next) => {
     )
       .bind(key)
       .first<{ count: number }>()
-    if (!rate || rate.count > 60)
+    if (!rate || rate.count > 60) {
+      c.header(
+        'Retry-After',
+        String(Math.ceil((60000 - (Date.now() % 60000)) / 1000)),
+      )
       throw new HTTPException(429, { message: 'rate_limited' })
+    }
   }
   await next()
 })
@@ -93,6 +121,53 @@ const uuid = (key: string | undefined) => {
     throw new HTTPException(400, { message: 'invalid_idempotency_key' })
   return result.data
 }
+async function geocode(
+  c: Context<StaffEnv>,
+  operation: 'search' | 'autocomplete',
+) {
+  const parsed = locationResolveSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: 'invalid_location' }, 400)
+  const actor = c.get('actor')
+  if (parsed.data.scope.kind === 'provision') commercial(actor.role)
+  else
+    await venueAccess(c.env, actor.id, parsed.data.scope.id, 'queue.configure')
+  const bucket = Math.floor(Date.now() / 60000)
+  const rate = await c.env.DB.prepare(
+    'INSERT INTO staff_rate VALUES (?,1) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',
+  )
+    .bind(`geocode:${actor.id}:${bucket}`)
+    .first<{ count: number }>()
+  if (!rate || rate.count > 30) {
+    c.header(
+      'Retry-After',
+      String(Math.ceil((60000 - (Date.now() % 60000)) / 1000)),
+    )
+    return c.json({ error: 'rate_limited' }, 429)
+  }
+  return c.json(await resolveLocation(c.env, actor.id, parsed.data, operation))
+}
+staffRoutes.post('/locations/resolve', (c) => geocode(c, 'search'))
+staffRoutes.post('/locations/autocomplete', (c) => geocode(c, 'autocomplete'))
+staffRoutes.get('/venues/:id/location', async (c) => {
+  await venueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  return c.json(await readVenueLocation(c.env, c.req.param('id')))
+})
+staffRoutes.patch('/venues/:id', async (c) => {
+  const actor = c.get('actor'),
+    venueId = c.req.param('id')
+  const access = await venueAccess(c.env, actor.id, venueId, 'queue.configure')
+  const parsed = venueLocationUpdateSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: 'invalid_location' }, 400)
+  return c.json(
+    await updateVenueLocation(
+      c.env,
+      actor.id,
+      access.organizationId,
+      venueId,
+      parsed.data,
+    ),
+  )
+})
 staffRoutes.get('/me', async (c) => {
   const user = c.get('actor')
   const venues = await c.env.DB.prepare(
@@ -296,9 +371,7 @@ staffRoutes.patch('/venues/:id/members/:userId', async (c) => {
 })
 staffRoutes.get('/venues/:id/queues', async (c) => {
   await venueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
-  const venue = await c.env.DB.prepare(
-    'SELECT timezone FROM venue WHERE id=?',
-  )
+  const venue = await c.env.DB.prepare('SELECT timezone FROM venue WHERE id=?')
     .bind(c.req.param('id'))
     .first<{ timezone: string }>()
   const queueIds = await c.env.DB.prepare(
@@ -546,6 +619,7 @@ staffRoutes.post('/venues/:id/queues', async (c) => {
         service.name,
         JSON.stringify(service),
       ),
+      directoryConfigStatement(c.env, id, JSON.stringify(service)),
       audit(
         c.env,
         c.get('actor').id,

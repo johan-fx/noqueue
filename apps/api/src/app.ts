@@ -1,3 +1,4 @@
+import { discoveryRoutes } from './features/discovery/routes'
 import { customerRoutes } from './features/queue/customer-routes'
 import { publicServices } from './features/staff/public'
 import { createAuth } from './auth/server'
@@ -82,6 +83,7 @@ app.all('/auth/*', async (c) => {
 })
 app.route('/staff', staffRoutes)
 app.route('/public/services', publicServices)
+app.route('/public', discoveryRoutes)
 app.route('/public', customerRoutes)
 
 // A local-only mailbox for manually following Better Auth verification links.

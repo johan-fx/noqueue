@@ -1,4 +1,6 @@
-import { useNavigate, useParams } from 'react-router'
+import { useEffect } from 'react'
+import { visitService } from './discovery-state'
+import { useLocation, useNavigate, useParams } from 'react-router'
 import {
   joinedEntrySchema,
   publicServiceSchema,
@@ -15,23 +17,40 @@ const parse = (value: unknown) => publicServiceSchema.parse(value)
 export function PublicQueue() {
   const { queueId } = useParams()
   const navigate = useNavigate()
+  const route = useLocation()
+  const returnTo =
+    typeof route.state?.discoveryReturn === 'string' &&
+    /^\/(?:search(?:\?|$)|\?(?:lang=))/.test(route.state.discoveryReturn)
+      ? (route.state.discoveryReturn as string)
+      : undefined
   const [locale, setLocale] = useLocale()
   const {
     data: service,
     error,
     refresh,
   } = usePublicResource(`/api/v1/public/services/${queueId}`, parse)
+  useEffect(() => {
+    if (service) visitService(service.id)
+  }, [service])
   if (service && service.type !== 'restaurant')
     return (
-      <div className="p-4">
-        <LegacyPublicQueue />
-      </div>
+      <CustomerShell
+        title={service.name}
+        back={returnTo ?? `/v/${service.venueId}?lang=${locale}`}
+        locale={locale}
+        setLocale={setLocale}
+      >
+        <div className="p-4">
+          <LegacyPublicQueue />
+        </div>
+      </CustomerShell>
     )
   return (
     <CustomerShell
       title={service?.name ?? (locale === 'es' ? 'Restaurante' : 'Restaurant')}
       back={
-        service?.venueId ? `/v/${service.venueId}?lang=${locale}` : undefined
+        returnTo ??
+        (service?.venueId ? `/v/${service.venueId}?lang=${locale}` : undefined)
       }
       locale={locale}
       setLocale={setLocale}

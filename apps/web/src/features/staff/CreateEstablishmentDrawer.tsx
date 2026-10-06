@@ -1,3 +1,4 @@
+import { LocationPicker } from './LocationPicker'
 import { useId, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -25,6 +26,8 @@ const clientSchema = provisionSchema.omit({ services: true })
 export type ClientInput = Omit<ProvisionInput, 'services'>
 
 const defaults: ClientInput = {
+  locationToken: '',
+  locationOperationId: crypto.randomUUID(),
   organizationName: '',
   slug: '',
   venueName: '',
@@ -69,7 +72,10 @@ export function CreateEstablishmentDrawer({
   saving?: boolean
   error?: string
   onOpenChange: (open: boolean) => void
-  onComplete: (client: ClientInput, service: ServiceInput) => void | Promise<void>
+  onComplete: (
+    client: ClientInput,
+    service: ServiceInput,
+  ) => void | Promise<void>
 }) {
   const [configOpen, setConfigOpen] = useState(false)
   const [resetKey, setResetKey] = useState(0)
@@ -90,7 +96,7 @@ export function CreateEstablishmentDrawer({
   function changeOpen(next: boolean) {
     if (saving) return
     if (next) {
-      form.reset(defaults)
+      form.reset({ ...defaults, locationOperationId: crypto.randomUUID() })
       setConfirmPassword('')
       setConfirmError('')
       setShowPassword(false)
@@ -151,6 +157,20 @@ export function CreateEstablishmentDrawer({
                 <FieldError errors={[form.formState.errors[name]]} />
               </Field>
             ))}
+            <LocationPicker
+              key={resetKey}
+              scope={{
+                kind: 'provision',
+                id: form.watch('locationOperationId'),
+              }}
+              disabled={saving}
+              onSelection={(token) =>
+                form.setValue('locationToken', token, {
+                  shouldValidate: form.formState.isSubmitted,
+                })
+              }
+            />
+            <FieldError errors={[form.formState.errors.locationToken]} />
             <PasswordField
               id={`${prefix}-ownerPassword`}
               label={passwordLabel}
@@ -201,7 +221,13 @@ export function CreateEstablishmentDrawer({
           open={configOpen}
           mode="create"
           saving={saving}
-          error={error}
+          error={
+            error ||
+            (!form.watch('locationToken')
+              ? 'La selección de dirección ha caducado. Vuelve al formulario y selecciona de nuevo.'
+              : '')
+          }
+          saveDisabled={!form.watch('locationToken')}
           resetKey={String(resetKey)}
           onClose={() => {
             if (!saving) setConfigOpen(false)

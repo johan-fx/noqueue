@@ -1,3 +1,4 @@
+import { directoryConfigStatement } from '../discovery/configuration'
 import {
   serviceSchema,
   type ServiceInput,
@@ -119,17 +120,16 @@ export async function activateIfReady(
     return
   const status = await readiness(env, queueId, parsed.data)
   if (status.reasons.length) return
+  const source = JSON.stringify({
+    ...parsed.data,
+    estimationMode: 'active',
+    resourceStateKnown: true,
+  })
   await env.DB.batch([
     env.DB.prepare(
       'UPDATE queue SET config=?,version=version+1 WHERE id=?',
-    ).bind(
-      JSON.stringify({
-        ...parsed.data,
-        estimationMode: 'active',
-        resourceStateKnown: true,
-      }),
-      queueId,
-    ),
+    ).bind(source, queueId),
+    directoryConfigStatement(env, queueId, source),
     env.DB.prepare(
       'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
     ).bind(

@@ -4,10 +4,14 @@ import { describe, expect, it } from 'vitest'
 import App from './App'
 
 describe('App', () => {
-  it('renders the web experience in a browser runtime', () => {
+  it('renders the web experience in a browser runtime', async () => {
     render(<App />)
 
-    expect(screen.getByText('No Queue · Web')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Join the queue' })).toBeInTheDocument()
+    expect(await screen.findByText('No Queue')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', {
+        name: '¿Dónde quieres unirte a la lista de espera?',
+      }),
+    ).toBeInTheDocument()
   })
 })

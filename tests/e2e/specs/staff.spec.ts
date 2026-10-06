@@ -1,3 +1,7 @@
+import {
+  resolveFixtureLocation,
+  confirmFixtureLocation,
+} from '../helpers/location.js'
 import { test, expect } from '@playwright/test'
 
 // This journey intercepts a failed save; service workers bypass page.route.
@@ -11,13 +15,10 @@ test('sales provisioning, direct owner access and staff console use passwords an
     sales = `sales_${suffix}`,
     owner = `owner_${suffix}`,
     password = 'e2e-only-password-12345'
-  const seed = await request.post(
-    '/api/v1/experiments/local/staff/identity',
-    {
-      headers: { 'X-NoQueue-Pilot-Token': pilot },
-      data: { username: sales, password },
-    },
-  )
+  const seed = await request.post('/api/v1/experiments/local/staff/identity', {
+    headers: { 'X-NoQueue-Pilot-Token': pilot },
+    data: { username: sales, password },
+  })
   expect(seed.ok(), await seed.text()).toBeTruthy()
   await page.goto('/login')
   await page.getByLabel('Usuario o email').fill(sales)
@@ -56,6 +57,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .getByLabel('Contraseña inicial (mínimo 15 caracteres)')
     .fill(password)
   await page.getByLabel('Confirmar contraseña').fill(password)
+  await confirmFixtureLocation(page)
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   const creationService = page.getByRole('dialog', {
     name: 'Configuración restaurante',
@@ -65,9 +67,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await creationService
     .getByRole('button', { name: 'Volver', exact: true })
     .click()
-  await expect(page.getByLabel('Usuario del administrador')).toHaveValue(
-    owner,
-  )
+  await expect(page.getByLabel('Usuario del administrador')).toHaveValue(owner)
   await page.getByRole('button', { name: 'Continuar', exact: true }).click()
   await creationService
     .getByLabel('Nombre del servicio')
@@ -112,12 +112,8 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(
     page.getByRole('link', { name: /Hotel Madrid E2E/ }),
   ).toBeVisible()
-  await expect(page.getByRole('status')).toContainText(
-    'Establecimiento creado',
-  )
-  await expect(page.getByRole('button', { name: /Acciones de/ })).toHaveCount(
-    0,
-  )
+  await expect(page.getByRole('status')).toContainText('Establecimiento creado')
+  await expect(page.getByRole('button', { name: /Acciones de/ })).toHaveCount(0)
   await expect(
     page.getByRole('navigation', { name: 'Paginación de establecimientos' }),
   ).toHaveCount(0)
@@ -142,9 +138,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   const accessDrawer = page.getByRole('dialog', { name: 'Gestionar accesos' })
   await expect(accessDrawer).toBeVisible()
   await expect(accessDrawer.getByText(owner, { exact: true })).toBeVisible()
-  await accessDrawer
-    .getByLabel('Nombre', { exact: true })
-    .fill('Personal E2E')
+  await accessDrawer.getByLabel('Nombre', { exact: true }).fill('Personal E2E')
   await accessDrawer
     .getByLabel('Usuario', { exact: true })
     .fill(`staff_${suffix}`)
@@ -198,9 +192,9 @@ test('sales provisioning, direct owner access and staff console use passwords an
     page.getByRole('button', { name: 'Accesos', exact: true }),
   ).toBeFocused()
   await page.getByRole('button', { name: 'Accesos', exact: true }).click()
-  await expect(
-    accessDrawer.getByLabel('Usuario', { exact: true }),
-  ).toHaveValue('')
+  await expect(accessDrawer.getByLabel('Usuario', { exact: true })).toHaveValue(
+    '',
+  )
   await expect(
     accessDrawer.getByText(`staff_${suffix}`, { exact: true }),
   ).toBeVisible()
@@ -245,9 +239,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await page.getByRole('button', { name: 'Accesos', exact: true }).click()
   const ownerAccess = page.getByRole('dialog', { name: 'Gestionar accesos' })
   await expect(ownerAccess.getByText(owner, { exact: true })).toBeVisible()
-  await ownerAccess
-    .getByRole('button', { name: 'Cerrar', exact: true })
-    .click()
+  await ownerAccess.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await expect(ownerAccess).toHaveCount(0)
 
   const addService = page.getByRole('button', {
@@ -260,9 +252,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     exact: true,
   })
   await newService.getByLabel('Nombre del servicio').fill('Borrador')
-  await newService
-    .getByRole('button', { name: 'Volver', exact: true })
-    .click()
+  await newService.getByRole('button', { name: 'Volver', exact: true }).click()
   await expect(newService).toHaveCount(0)
   await expect(services.getByRole('article')).toHaveCount(1)
   await addService.click()
@@ -271,9 +261,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .getByRole('button', { name: 'Siguiente', exact: true })
     .click()
   await expect(newService).toBeVisible()
-  await newService
-    .getByLabel('Nombre del servicio')
-    .fill('Segundo restaurante')
+  await newService.getByLabel('Nombre del servicio').fill('Segundo restaurante')
   for (let step = 0; step < 4; step++)
     await newService
       .getByRole('button', { name: 'Siguiente', exact: true })
@@ -289,9 +277,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   const restaurant = services.getByRole('article', {
     name: 'Servicio Restaurante E2E',
   })
-  await restaurant
-    .getByRole('button', { name: 'Configurar servicio' })
-    .click()
+  await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
   const configDrawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
@@ -311,9 +297,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(
     restaurant.getByRole('switch', { name: 'Abrir cola' }),
   ).toBeChecked()
-  await restaurant
-    .getByRole('button', { name: 'Configurar servicio' })
-    .click()
+  await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
   await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
     'Restaurante E2E',
   )
@@ -342,9 +326,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   })
   await page.getByRole('button', { name: 'Confirmar' }).click()
   await expect(configDrawer.getByRole('alert')).toBeVisible()
-  await expect(
-    configDrawer.getByText('24 horas, todos los días'),
-  ).toBeVisible()
+  await expect(configDrawer.getByText('24 horas, todos los días')).toBeVisible()
   await page.getByRole('button', { name: 'Confirmar' }).click()
   await expect(page.getByRole('button', { name: 'Confirmar' })).toHaveCount(0)
   await restaurant.getByRole('button', { name: 'Gestionar cola' }).click()
@@ -361,7 +343,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
   await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
-  await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
+  await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await queueDrawer
     .getByRole('button', { name: 'Actualizar', exact: true })
@@ -378,18 +360,14 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .getByRole('button', { name: 'Avanzar un turno', exact: true })
     .click()
   await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
-  await expect(
-    queueDrawer.getByText('Llamado', { exact: true }),
-  ).toBeVisible()
+  await expect(queueDrawer.getByText('Llamado', { exact: true })).toBeVisible()
   await guest.reload()
   await expect(
     guest.getByText('Estado: Es tu turno. Acude al servicio.', {
       exact: true,
     }),
   ).toBeVisible()
-  await queueDrawer
-    .getByRole('button', { name: /^Acciones del turno/ })
-    .click()
+  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
   await queueDrawer
     .getByRole('button', { name: 'Confirmar llegada', exact: true })
     .click()
@@ -403,9 +381,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(
     queueDrawer.getByText('En servicio', { exact: true }),
   ).toBeVisible()
-  await queueDrawer
-    .getByRole('button', { name: /^Acciones del turno/ })
-    .click()
+  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
   await queueDrawer
     .getByRole('button', { name: 'Liberar recurso', exact: true })
     .click()
@@ -433,9 +409,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     queueDrawer.getByRole('button', { name: 'Avanzar un turno' }),
   ).toBeDisabled()
   await guest.close()
-  await queueDrawer
-    .getByRole('button', { name: 'Volver', exact: true })
-    .click()
+  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
   await expect(queueDrawer).toHaveCount(0)
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.getByRole('button', { name: 'Ajustes', exact: true }).click()
@@ -503,13 +477,10 @@ test('space-specific durations and an availability delay survive browser save an
     owner = `owner_${suffix}`,
     password = 'e2e-only-password-12345'
   const origin = baseURL!
-  const seed = await request.post(
-    '/api/v1/experiments/local/staff/identity',
-    {
-      headers: { 'X-NoQueue-Pilot-Token': pilot },
-      data: { username: sales, password },
-    },
-  )
+  const seed = await request.post('/api/v1/experiments/local/staff/identity', {
+    headers: { 'X-NoQueue-Pilot-Token': pilot },
+    data: { username: sales, password },
+  })
   expect(seed.ok(), await seed.text()).toBeTruthy()
   const login = await request.post('/api/v1/auth/sign-in/username', {
     headers: { Origin: origin },
@@ -521,6 +492,7 @@ test('space-specific durations and an availability delay survive browser save an
     {
       headers: { Origin: origin, 'Idempotency-Key': crypto.randomUUID() },
       data: {
+        ...(await resolveFixtureLocation(request, origin)),
         organizationName: 'Timing Test',
         slug: `timing-${suffix}`,
         venueName: 'Timing Venue',
@@ -705,20 +677,16 @@ test('space-specific durations and an availability delay survive browser save an
   await adjustment
     .getByLabel('Motivo', { exact: true })
     .fill('Terrace cleaning')
-  await expect(adjustment.getByLabel('Duración temporal (min)')).toHaveCount(
-    0,
-  )
+  await expect(adjustment.getByLabel('Duración temporal (min)')).toHaveCount(0)
   await expect(advanced.getByLabel('Motor de estimación')).toHaveCount(0)
   await expect(
     advanced.getByLabel(
       'Confirmo que todos los recursos están vacíos al inicializar',
     ),
   ).toHaveCount(0)
-  await advanced
-    .getByRole('button', { name: 'Confirmar', exact: true })
-    .click()
+  await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await expect(advanced).toHaveCount(0)
-  await expect(drawer.getByRole('spinbutton')).toHaveCount(3)
+  await expect(drawer.getByRole('spinbutton')).toHaveCount(5)
   await expect(
     drawer.getByRole('button', {
       name: 'Configuración avanzada',
@@ -757,9 +725,7 @@ test('space-specific durations and an availability delay survive browser save an
   await advanced
     .getByRole('button', { name: 'Mesas de 4', exact: true })
     .click()
-  await expect(advanced.getByLabel('Salon · 4 plazas (min)')).toHaveValue(
-    '20',
-  )
+  await expect(advanced.getByLabel('Salon · 4 plazas (min)')).toHaveValue('20')
   await advanced.getByRole('tab', { name: 'Terrace', exact: true }).click()
   await expect(
     advanced.getByRole('tabpanel', { name: 'Salon', exact: true }),
@@ -813,11 +779,9 @@ test('space-specific durations and an availability delay survive browser save an
   await guest.goto(publicURL!)
   await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
   await guest.getByLabel('Espacio', { exact: true }).selectOption('terrace')
-  await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
+  await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
-  await expect(
-    guest.getByText(/Espera aproximada: (59|60) min/),
-  ).toBeVisible()
+  await expect(guest.getByText(/Espera aproximada: (59|60) min/)).toBeVisible()
   await queue.getByRole('button', { name: 'Actualizar', exact: true }).click()
   await expect(
     queue.getByRole('button', { name: 'Avanzar un turno', exact: true }),

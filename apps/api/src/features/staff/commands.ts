@@ -1,3 +1,4 @@
+import { directoryConfigStatement } from '../discovery/configuration'
 import { expireArrivals } from '../queue/customer'
 import { topology } from '../queue/opening-state'
 import { eligibleResources } from '../queue/engine'
@@ -423,6 +424,7 @@ export async function configureQueue(
       queueId,
       version,
     ),
+    directoryConfigStatement(env, queueId, JSON.stringify(config)),
     audit(
       env,
       actor,

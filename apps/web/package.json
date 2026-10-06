@@ -23,6 +23,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@noqueue/contracts": "workspace:*",
     "@tanstack/react-query": "5.103.1",
+    "@zxing/browser": "^0.2.1",
     "better-auth": "1.7.5",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.2.6",

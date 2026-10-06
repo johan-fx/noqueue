@@ -1,3 +1,4 @@
+import { VenueLocationEditor } from './VenueLocationEditor'
 import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
 import { entryActions, receptionLabels } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
@@ -381,6 +382,10 @@ export function Dashboard(props: DashboardProps) {
           </Button>
         )}
       </div>
+      <VenueLocationEditor
+        venueId={venue.id}
+        canConfigure={permissions.includes('queue.configure')}
+      />
       <section aria-label="Listado de servicios" aria-busy={loading}>
         <Card>
           <CardHeader>

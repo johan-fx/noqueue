@@ -16,6 +16,49 @@ export { QueueCoordinator } from '../src/index'
 const staffMail = new Map<string, string>()
 const network = setupNetwork()
 network.use(
+  http.get('https://api.geoapify.com/v1/geocode/:operation', ({ request }) => {
+    const text = new URL(request.url).searchParams.get('text') ?? ''
+    if (text.includes('Vacío')) return HttpResponse.json({ features: [] })
+    if (text.includes('Error')) return new HttpResponse(null, { status: 503 })
+    // Keep the edit journey outside the discovery fixture's 5km Malaga scope.
+    if (text.includes('Valencia'))
+      return HttpResponse.json({
+        features: [
+          {
+            properties: {
+              formatted: 'Calle Colón 1, Valencia',
+              street: 'Calle Colón',
+              housenumber: '1',
+              city: 'Valencia',
+              country_code: 'es',
+              lat: 39.4702,
+              lon: -0.3768,
+              result_type: 'building',
+              place_id: 'fixture-valencia',
+            },
+          },
+        ],
+      })
+    return HttpResponse.json({
+      features: [
+        {
+          properties: {
+            formatted: text.includes('Málaga')
+              ? 'Paseo Marítimo 56, Málaga'
+              : 'Calle Mayor 1, Madrid',
+            street: text.includes('Málaga') ? 'Paseo Marítimo' : 'Calle Mayor',
+            housenumber: '1',
+            city: text.includes('Málaga') ? 'Málaga' : 'Madrid',
+            country_code: 'es',
+            lat: text.includes('Málaga') ? 36.72016 : 40.416,
+            lon: text.includes('Málaga') ? -4.42034 : -3.704,
+            result_type: 'building',
+            place_id: 'fixture-place',
+          },
+        },
+      ],
+    })
+  }),
   http.post('https://api.resend.com/emails', async ({ request }) => {
     const message = (await request.json()) as { to: string[]; text: string }
     staffMail.set(message.to[0]!, message.text)
@@ -231,8 +274,9 @@ app.post('/experiments/local/staff/queue-history', async (c) => {
     .safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_fixture' }, 400)
   const { queueId, spaceId, seats, durations } = parsed.data
-  const { loadQueueState, recalculateQueue } =
-    await import('../src/features/queue/projection')
+  const { loadQueueState, recalculateQueue } = await import(
+    '../src/features/queue/projection'
+  )
   const row = await c.env.DB.prepare('SELECT id FROM queue WHERE id=?')
     .bind(queueId)
     .first()
@@ -274,4 +318,33 @@ app.post('/experiments/local/staff/queue-history', async (c) => {
   await c.env.DB.batch(statements)
   await recalculateQueue(c.env, queueId)
   return c.json({ ok: true, inserted: durations.length })
+})
+
+// Deterministic current prediction fixture; never available in deployable entrypoints.
+app.post('/experiments/local/staff/discovery-projections', async (c) => {
+  const { venueId } = z.object({ venueId: z.uuid() }).parse(await c.req.json())
+  const queues = await c.env.DB.prepare(
+    'SELECT id,config FROM queue WHERE venue_id=?',
+  )
+    .bind(venueId)
+    .all<{ id: string; config: string }>()
+  const now = Date.now(),
+    statements: D1PreparedStatement[] = []
+  for (const queue of queues.results) {
+    const type = (JSON.parse(queue.config) as { type: string }).type
+    const wait = type === 'reception' ? 10 : type === 'restaurant' ? 15 : 18,
+      id = crypto.randomUUID()
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,1,'es',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?))",
+      ).bind(id, queue.id, id, id, id, id, now, queue.id),
+    )
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO queue_projection(entry_id,position,eta_minutes,predicted_at,quality,updated_at) VALUES (?,1,?,?, 'estimated',?)",
+      ).bind(id, wait, now + wait * 60000, now),
+    )
+  }
+  await c.env.DB.batch(statements)
+  return c.json({ ok: true })
 })

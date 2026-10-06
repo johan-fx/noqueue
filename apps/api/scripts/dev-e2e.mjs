@@ -24,6 +24,7 @@ config.vars = {
   PUBLIC_APP_ORIGIN: `http://127.0.0.1:${port}`,
   BETTER_AUTH_SECRET: 'e2e-only-auth-secret-at-least-32-characters',
   AUTH_EMAIL_API_KEY: 'e2e-only-mail-key',
+  GEOAPIFY_API_KEY: 'e2e-only-geocode-key',
   AUTH_EMAIL_FROM: 'test@example.com',
   WHATSAPP_ENABLED: 'true',
   CONFIRMATION_EXPERIMENT_ENABLED: 'true',

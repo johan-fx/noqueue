@@ -184,6 +184,8 @@ export const serviceSchema = z
   })
 export type ServiceInput = z.infer<typeof serviceSchema>
 export const provisionSchema = z.object({
+  locationToken: z.string().min(1).max(6000),
+  locationOperationId: z.uuid(),
   organizationName: name,
   slug: z
     .string()

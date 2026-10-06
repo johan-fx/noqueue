@@ -132,6 +132,8 @@ describe('staff contracts', () => {
   })
   it('normalizes username and validates time zones', () => {
     const data = {
+      locationToken: 'verified-token',
+      locationOperationId: '00000000-0000-4000-8000-000000000000',
       organizationName: 'Hotel',
       slug: 'hotel-one',
       venueName: 'Hotel',

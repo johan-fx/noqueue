@@ -1,3 +1,4 @@
+import { fixtureLocation } from '../../../test/location-fixture'
 import { env } from 'cloudflare:workers'
 import { expect, it, vi } from 'vitest'
 import { provision } from './provision'
@@ -38,6 +39,7 @@ async function setup(service = config) {
     .bind(id, `${id}@test.invalid`)
     .run()
   const t = await provision(env, id, id, {
+    ...(await fixtureLocation(id)),
     organizationName: 'Test',
     slug: id,
     venueName: 'Test',
@@ -594,6 +596,7 @@ it('confirms inventory in place while preserving admissions and allocations', as
   }
   await runLifecycleCommand(env, t.actor, t.queue, key, body)
   await runLifecycleCommand(env, t.actor, t.queue, key, body)
+  await expectDirectorySnapshot(t.queue)
   const after = await loadQueueState(env, t.queue),
     current = await openingContext(env, t.queue)
   expect(current.open).toBe(true)
@@ -1666,4 +1669,95 @@ it('expires once when a due alarm races a staff arrival through the coordinator'
     .first<{ released_at: number; outcome: string }>()
   expect(allocation?.outcome).toBe('expired')
   expect(allocation!.released_at).toBeGreaterThanOrEqual(deadline)
+})
+
+async function expectDirectorySnapshot(queueId: string) {
+  const row = await env.DB.prepare(
+    'SELECT q.config,d.source_config,d.normalized_config FROM queue q JOIN service_directory_config d ON d.queue_id=q.id WHERE q.id=?',
+  )
+    .bind(queueId)
+    .first<{
+      config: string
+      source_config: string
+      normalized_config: string
+    }>()
+  expect(row).not.toBeNull()
+  expect(row!.source_config).toBe(row!.config)
+  expect(JSON.parse(row!.normalized_config)).toMatchObject(
+    JSON.parse(row!.config),
+  )
+}
+it('all config producers keep source-bound directory snapshots atomic through provisioning, activation, lifecycle and reconfiguration', async () => {
+  const t = await setup()
+  await expectDirectorySnapshot(t.queue)
+  await open(t, 0)
+  await expectDirectorySnapshot(t.queue)
+  expect((await loadQueueState(env, t.queue)).config?.estimationMode).toBe(
+    'active',
+  )
+  for (const action of [
+    'disable_intelligence',
+    'enable_intelligence',
+  ] as const) {
+    const context = await openingContext(env, t.queue)
+    await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      action,
+      contextToken: context.contextToken,
+    })
+    await expectDirectorySnapshot(t.queue)
+  }
+  const state = await loadQueueState(env, t.queue)
+  const version = await env.DB.prepare('SELECT version FROM queue WHERE id=?')
+    .bind(t.queue)
+    .first<number>('version')
+  await configureQueue(env, t.actor, t.queue, {
+    ...state.config!,
+    name: 'Updated Restaurant',
+    version,
+    open: true,
+  })
+  await expectDirectorySnapshot(t.queue)
+  const before = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+    .bind(t.queue)
+    .first('config')
+  await env.DB.exec(
+    "CREATE TRIGGER reject_directory BEFORE INSERT ON service_directory_config BEGIN SELECT RAISE(ABORT,'fixture snapshot failure'); END",
+  )
+  const nextVersion = await env.DB.prepare(
+    'SELECT version FROM queue WHERE id=?',
+  )
+    .bind(t.queue)
+    .first<number>('version')
+  await expect(
+    configureQueue(env, t.actor, t.queue, {
+      ...(await loadQueueState(env, t.queue)).config!,
+      name: 'Must roll back',
+      version: nextVersion,
+      open: true,
+    }),
+  ).rejects.toThrow()
+  expect(
+    await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+      .bind(t.queue)
+      .first('config'),
+  ).toBe(before)
+  await env.DB.exec('DROP TRIGGER reject_directory')
+  await expectDirectorySnapshot(t.queue)
+})
+it('failed provisioning snapshot insertion leaves no organization or service from its transaction', async () => {
+  const organizations = await env.DB.prepare(
+    'SELECT count(*) n FROM organization',
+  ).first('n')
+  const queues = await env.DB.prepare('SELECT count(*) n FROM queue').first('n')
+  await env.DB.exec(
+    "CREATE TRIGGER reject_directory BEFORE INSERT ON service_directory_config BEGIN SELECT RAISE(ABORT,'fixture snapshot failure'); END",
+  )
+  await expect(setup()).rejects.toThrow()
+  expect(
+    await env.DB.prepare('SELECT count(*) n FROM organization').first('n'),
+  ).toBe(organizations)
+  expect(await env.DB.prepare('SELECT count(*) n FROM queue').first('n')).toBe(
+    queues,
+  )
+  await env.DB.exec('DROP TRIGGER reject_directory')
 })

@@ -41,6 +41,7 @@ export function ServiceConfigDrawer({
   mode,
   initial,
   saving = false,
+  saveDisabled = false,
   error = '',
   resetKey = 'create',
   finalFocus,
@@ -51,6 +52,7 @@ export function ServiceConfigDrawer({
   mode: 'create' | 'edit'
   initial?: ServiceInput
   saving?: boolean
+  saveDisabled?: boolean
   error?: string
   // Identifies which service is being edited. The drawer itself stays mounted
   // so Base UI can play the enter transition; only the form values reset.
@@ -118,6 +120,7 @@ export function ServiceConfigDrawer({
       setIndex((current) => current + 1)
       return
     }
+    if (saveDisabled) return
     const parsed = serviceSchema.safeParse(pruneQueueBySeat(form.getValues()))
     if (!parsed.success) {
       form.setError('root', { message: 'Revisa los datos antes de confirmar.' })
@@ -288,7 +291,7 @@ export function ServiceConfigDrawer({
           <Button
             type="button"
             className="h-12 w-full"
-            disabled={saving}
+            disabled={saving || (step === 'summary' && saveDisabled)}
             onClick={() => void forward()}
           >
             {saving

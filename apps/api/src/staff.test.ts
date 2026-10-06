@@ -1,3 +1,4 @@
+import { issueLocationToken } from './features/staff/location'
 import { env } from 'cloudflare:workers'
 import {
   vi,
@@ -88,6 +89,8 @@ async function identity(role = 'user') {
 }
 function input(name = username()): ProvisionInput {
   return {
+    locationToken: '',
+    locationOperationId: crypto.randomUUID(),
     organizationName: 'Hotel Test',
     slug: `hotel-${crypto.randomUUID()}`,
     venueName: 'Hotel Madrid',
@@ -111,9 +114,31 @@ function input(name = username()): ProvisionInput {
     ],
   }
 }
+async function withLocation(actor: string, data = input()) {
+  const candidate = await issueLocationToken(
+    env,
+    actor,
+    { kind: 'provision', id: data.locationOperationId },
+    {
+      formatted: 'Calle Mayor 1, Madrid',
+      latitude: 40.416,
+      longitude: -3.704,
+      address: {
+        street: 'Calle Mayor',
+        houseNumber: '1',
+        city: 'Madrid',
+        countryCode: 'es',
+      },
+      provider: 'geoapify',
+      providerId: 'fixture',
+      attribution: [{ text: 'Geoapify', url: 'https://www.geoapify.com/' }],
+    },
+  )
+  return { ...data, locationToken: candidate.token }
+}
 async function tenant() {
   const sales = await identity('commercial_operator'),
-    data = input()
+    data = await withLocation(sales.id)
   const result = await provision(env, sales.id, crypto.randomUUID(), data)
   const owner = {
     id: result.userId,
@@ -187,7 +212,7 @@ describe('manual username authentication and scoped provisioning', () => {
   })
   it('provisions atomically, idempotently, without mail or stored plaintext; rejects username takeover', async () => {
     const sales = await identity('commercial_operator'),
-      data = input(),
+      data = await withLocation(sales.id),
       key = crypto.randomUUID()
     const [a, b] = await Promise.all([
       provision(env, sales.id, key, data),
@@ -460,7 +485,7 @@ describe('manual username authentication and scoped provisioning', () => {
     expect(statuses).not.toContain(200)
   })
   it('rolls back new credential identities when tenant creation fails', async () => {
-    const data = input()
+    const data = await withLocation('missing-actor')
     await expect(
       provision(env, 'missing-actor', crypto.randomUUID(), data),
     ).rejects.toThrow()
@@ -1743,4 +1768,363 @@ it('serves anonymous venue aggregates and protects token-bound commands, retries
     404,
   )
   expect((await request(path, '', 'POST', command, key)).status).toBe(404)
+})
+
+it('authorizes address confirmation by server role and scope, rejects unsigned or mismatched selections', async () => {
+  const t = await tenant(),
+    otherSales = await identity('commercial_operator'),
+    viewer = await member(t, 'viewer'),
+    manager = await member(t, 'venue_manager'),
+    admin = await identity('platform_admin')
+  const scope = { kind: 'venue', id: t.venueId }
+  network.use(
+    http.get('https://api.geoapify.com/v1/geocode/search', () =>
+      HttpResponse.json({
+        features: [
+          {
+            properties: {
+              formatted: 'Calle Mayor 1 Madrid',
+              street: 'Calle Mayor',
+              city: 'Madrid',
+              country_code: 'es',
+              lat: 40.416,
+              lon: -3.704,
+              place_id: 'fixture',
+              result_type: 'building',
+            },
+          },
+        ],
+      }),
+    ),
+  )
+  for (const cookie of [
+    t.owner.cookie,
+    t.sales.cookie,
+    manager.cookie,
+    admin.cookie,
+  ])
+    expect(
+      (
+        await request('/staff/locations/resolve', cookie, 'POST', {
+          text: 'Calle Mayor 1 Madrid',
+          scope,
+        })
+      ).status,
+    ).toBe(200)
+  expect(
+    (
+      await request('/staff/locations/resolve', viewer.cookie, 'POST', {
+        text: 'Calle Mayor 1 Madrid',
+        scope,
+      })
+    ).status,
+  ).toBe(403)
+  expect(
+    (
+      await request('/staff/locations/resolve', otherSales.cookie, 'POST', {
+        text: 'Calle Mayor 1 Madrid',
+        scope,
+      })
+    ).status,
+  ).toBe(404)
+  expect(
+    (
+      await request('/staff/locations/resolve', '', 'POST', {
+        text: 'Calle Mayor 1 Madrid',
+        scope,
+      })
+    ).status,
+  ).toBe(401)
+  const selected = (await (
+    await request('/staff/locations/resolve', manager.cookie, 'POST', {
+      text: 'Calle Mayor 1 Madrid',
+      scope,
+    })
+  ).json()) as { candidates: { token: string }[] }
+  const token = selected.candidates[0]!.token
+  expect(
+    (
+      await request(`/staff/venues/${t.venueId}`, t.owner.cookie, 'PATCH', {
+        version: 1,
+        locationToken: token,
+      })
+    ).status,
+  ).toBe(400)
+  expect(
+    (
+      await request(`/staff/venues/${t.venueId}`, manager.cookie, 'PATCH', {
+        version: 1,
+        locationToken: token,
+        latitude: 1,
+        longitude: 1,
+      })
+    ).status,
+  ).toBe(400)
+  const saved = await request(
+    `/staff/venues/${t.venueId}`,
+    manager.cookie,
+    'PATCH',
+    { version: 1, locationToken: token },
+  )
+  expect(saved.status).toBe(200)
+  expect((await saved.json()) as object).toMatchObject({ version: 2 })
+  expect(
+    (
+      await request(`/staff/venues/${t.venueId}`, manager.cookie, 'PATCH', {
+        version: 1,
+        locationToken: token,
+      })
+    ).status,
+  ).toBe(409)
+  expect(
+    (
+      await request(`/staff/venues/${t.venueId}`, viewer.cookie, 'PATCH', {
+        version: 2,
+        locationToken: token,
+      })
+    ).status,
+  ).toBe(403)
+})
+it('fails new provisioning without a location and does not store partial tenant data', async () => {
+  const sales = await identity('commercial_operator'),
+    data = input()
+  const response = await request(
+    '/staff/commercial/organizations',
+    sales.cookie,
+    'POST',
+    data,
+    crypto.randomUUID(),
+  )
+  expect(response.status).toBe(400)
+  expect(
+    await env.DB.prepare('SELECT id FROM organization WHERE slug=?')
+      .bind(data.slug)
+      .first(),
+  ).toBeNull()
+  await expect(
+    provision(env, sales.id, crypto.randomUUID(), {
+      ...data,
+      locationToken: 'unsigned',
+    }),
+  ).rejects.toThrow('location_confirmation_invalid')
+  expect(
+    await env.DB.prepare('SELECT id FROM user WHERE username=?')
+      .bind(data.ownerUsername)
+      .first(),
+  ).toBeNull()
+})
+
+it('service creation prepares a validated snapshot in the same transaction and failures leave no partial service', async () => {
+  const t = await tenant()
+  const created = await request(
+    `/staff/venues/${t.venueId}/queues`,
+    t.owner.cookie,
+    'POST',
+    { ...input().services[0]!, name: 'Directory service' },
+    crypto.randomUUID(),
+  )
+  expect(created.status).toBe(201)
+  const { id } = (await created.json()) as { id: string }
+  const row = await env.DB.prepare(
+    'SELECT q.config,d.source_config,d.normalized_config FROM queue q JOIN service_directory_config d ON d.queue_id=q.id WHERE q.id=?',
+  )
+    .bind(id)
+    .first<{
+      config: string
+      source_config: string
+      normalized_config: string
+    }>()
+  expect(row!.source_config).toBe(row!.config)
+  expect(JSON.parse(row!.normalized_config)).toMatchObject({
+    name: 'Directory service',
+    type: 'restaurant',
+  })
+  const count = await env.DB.prepare(
+    'SELECT count(*) n FROM queue WHERE venue_id=?',
+  )
+    .bind(t.venueId)
+    .first('n')
+  await env.DB.exec(
+    "CREATE TRIGGER reject_directory BEFORE INSERT ON service_directory_config BEGIN SELECT RAISE(ABORT,'fixture snapshot failure'); END",
+  )
+  const failed = await request(
+    `/staff/venues/${t.venueId}/queues`,
+    t.owner.cookie,
+    'POST',
+    { ...input().services[0]!, name: 'Failed directory service' },
+    crypto.randomUUID(),
+  )
+  expect(failed.status).toBe(503)
+  expect(
+    await env.DB.prepare('SELECT count(*) n FROM queue WHERE venue_id=?')
+      .bind(t.venueId)
+      .first('n'),
+  ).toBe(count)
+  await env.DB.exec('DROP TRIGGER reject_directory')
+})
+
+it('authenticated autocomplete keeps provider order, filters imprecise candidates and signs exact scope without writes', async () => {
+  const sales = await identity('commercial_operator'),
+    scope = { kind: 'provision' as const, id: crypto.randomUUID() }
+  network.use(
+    http.get(
+      'https://api.geoapify.com/v1/geocode/autocomplete',
+      ({ request: providerRequest }) => {
+        const url = new URL(providerRequest.url)
+        expect(url.searchParams.get('filter')).toBe('countrycode:es')
+        expect(url.searchParams.get('lang')).toBe('es')
+        expect(url.searchParams.get('limit')).toBe('5')
+        expect(url.searchParams.get('format')).toBe('geojson')
+        return HttpResponse.json({
+          features: [
+            { properties: { formatted: 'Madrid', result_type: 'city' } },
+            ...['Second', 'First', 'Second'].map((name) => ({
+              properties: {
+                formatted: `${name} Madrid`,
+                street: name,
+                city: 'Madrid',
+                country_code: 'es',
+                lat: 40,
+                lon: -3,
+                result_type: 'street',
+                place_id: name,
+              },
+            })),
+          ],
+        })
+      },
+    ),
+  )
+  const response = await request(
+    '/staff/locations/autocomplete',
+    sales.cookie,
+    'POST',
+    { text: 'Calle Madrid', scope },
+  )
+  expect(response.status).toBe(200)
+  expect(response.headers.get('Cache-Control')).toBe('no-store')
+  const result = (await response.json()) as {
+    candidates: { token: string; location: { formatted: string } }[]
+  }
+  expect(result.candidates.map((c) => c.location.formatted)).toEqual([
+    'Second Madrid',
+    'First Madrid',
+  ])
+  const { readLocationToken } = await import('./features/staff/location')
+  expect(
+    (await readLocationToken(env, result.candidates[0]!.token, sales.id, scope))
+      .formatted,
+  ).toBe('Second Madrid')
+  expect(
+    (
+      await request('/staff/locations/autocomplete', '', 'POST', {
+        text: 'Calle Madrid',
+        scope,
+      })
+    ).status,
+  ).toBe(401)
+  const user = await identity()
+  expect(
+    (
+      await request('/staff/locations/autocomplete', user.cookie, 'POST', {
+        text: 'Calle Madrid',
+        scope,
+      })
+    ).status,
+  ).toBe(403)
+  expect(
+    (
+      await request('/staff/locations/autocomplete', sales.cookie, 'POST', {
+        text: 'abc',
+        scope,
+      })
+    ).status,
+  ).toBe(400)
+})
+it('resolve and autocomplete share thirty atomic queries per actor and return Retry-After', async () => {
+  const sales = await identity('commercial_operator'),
+    scope = { kind: 'provision', id: crypto.randomUUID() }
+  network.use(
+    http.get('https://api.geoapify.com/v1/geocode/:operation', () =>
+      HttpResponse.json({ features: [] }),
+    ),
+  )
+  const responses = await Promise.all(
+    Array.from({ length: 31 }, (_, i) =>
+      request(
+        `/staff/locations/${i % 2 ? 'resolve' : 'autocomplete'}`,
+        sales.cookie,
+        'POST',
+        { text: 'Calle Madrid', scope },
+      ),
+    ),
+  )
+  expect(responses.filter((r) => r.status === 200)).toHaveLength(30)
+  const limited = responses.filter((r) => r.status === 429)
+  expect(limited).toHaveLength(1)
+  expect(Number(limited[0]!.headers.get('Retry-After'))).toBeGreaterThan(0)
+})
+it('scheduled quota cleanup does not delete the current geocode actor bucket', async () => {
+  const actor = crypto.randomUUID(),
+    bucket = Math.floor(Date.now() / 60000)
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO staff_rate VALUES (?,30)').bind(
+      `geocode:${actor}:${bucket}`,
+    ),
+    env.DB.prepare('INSERT INTO staff_rate VALUES (?,30)').bind(
+      `geocode:${actor}:${bucket - 6}`,
+    ),
+    env.DB.prepare('INSERT INTO staff_rate VALUES (?,60)').bind(
+      `${actor}:${bucket}`,
+    ),
+  ])
+  const worker = (await import('./index')).default
+  await worker.scheduled({} as ScheduledController, env)
+  expect(
+    await env.DB.prepare('SELECT count FROM staff_rate WHERE key=?')
+      .bind(`geocode:${actor}:${bucket}`)
+      .first('count'),
+  ).toBe(30)
+  expect(
+    await env.DB.prepare('SELECT count FROM staff_rate WHERE key=?')
+      .bind(`geocode:${actor}:${bucket - 6}`)
+      .first(),
+  ).toBeNull()
+  expect(
+    await env.DB.prepare('SELECT count FROM staff_rate WHERE key=?')
+      .bind(`${actor}:${bucket}`)
+      .first('count'),
+  ).toBe(60)
+})
+it('autocomplete rejection paths keep privacy headers, reject origins and bound bodies', async () => {
+  const sales = await identity('commercial_operator'),
+    scope = { kind: 'provision', id: crypto.randomUUID() }
+  for (const [expected, headers, body] of [
+    [
+      403,
+      { Origin: 'https://external.invalid' },
+      JSON.stringify({ text: 'Calle Madrid', scope }),
+    ],
+    [
+      413,
+      { Origin: origin },
+      JSON.stringify({ text: 'x'.repeat(70000), scope }),
+    ],
+  ] as const) {
+    const r = await app.request(
+      `${origin}/api/v1/staff/locations/autocomplete`,
+      {
+        method: 'POST',
+        headers: {
+          ...headers,
+          Cookie: sales.cookie,
+          'Content-Type': 'application/json',
+        },
+        body,
+      },
+      env,
+    )
+    expect(r.status).toBe(expected)
+    expect(r.headers.get('Cache-Control')).toBe('no-store')
+  }
 })

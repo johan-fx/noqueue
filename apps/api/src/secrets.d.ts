@@ -1,4 +1,5 @@
 interface CloudflareBindings {
+  GEOAPIFY_API_KEY: string
   BETTER_AUTH_SECRET: string
   AUTH_EMAIL_API_KEY: string
   AUTH_EMAIL_FROM: string

@@ -1,3 +1,4 @@
+import { backfillDirectoryConfigs } from './features/discovery/configuration'
 import { runCustomerCommand, expireArrivals } from './features/queue/customer'
 import type { CustomerCommand } from '@noqueue/contracts/queue'
 import { openingContext, runLifecycleCommand } from './features/staff/opening'
@@ -173,6 +174,7 @@ export default {
     }
   },
   async scheduled(_controller, env) {
+    await backfillDirectoryConfigs(env)
     const queues = await env.DB.prepare('SELECT id FROM queue').all<{
       id: string
     }>()
@@ -186,7 +188,7 @@ export default {
     await reconcile(env)
     await env.DB.batch([
       env.DB.prepare(
-        "DELETE FROM staff_rate WHERE CAST(substr(key,instr(key,':')+1) AS INTEGER) < ?",
+        "DELETE FROM staff_rate WHERE key IN (SELECT key FROM (SELECT key,CASE WHEN substr(key,1,8)='geocode:' THEN substr(key,9) ELSE key END AS normalized FROM staff_rate) WHERE CAST(substr(normalized,instr(normalized,':')+1) AS INTEGER) < ?)",
       ).bind(Math.floor(Date.now() / 60000) - 5),
       env.DB.prepare('DELETE FROM rateLimit WHERE lastRequest < ?').bind(
         Date.now() - 86400000,

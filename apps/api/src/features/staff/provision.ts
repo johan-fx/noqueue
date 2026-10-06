@@ -1,3 +1,5 @@
+import { directoryConfigStatement } from '../discovery/configuration'
+import { readLocationToken, locationValues } from './location'
 import { normalizeConfig } from '../queue/projection'
 import type { ProvisionInput } from '@noqueue/contracts/staff'
 import { HTTPException } from 'hono/http-exception'
@@ -43,6 +45,10 @@ export async function provision(
       userId: string
     }
   }
+  const location = await readLocationToken(env, input.locationToken, actor, {
+    kind: 'provision',
+    id: input.locationOperationId,
+  })
   try {
     if (
       await env.DB.prepare('SELECT id FROM organization WHERE slug=?')
@@ -76,20 +82,31 @@ export async function provision(
         'INSERT INTO tenant_account(organization_id,created_by) VALUES (?,?)',
       ).bind(organizationId, actor),
       env.DB.prepare(
-        'INSERT INTO venue(id,organization_id,name,timezone) VALUES (?,?,?,?)',
-      ).bind(venueId, organizationId, input.venueName, input.timezone),
-      ...input.services.map((service) =>
-        env.DB.prepare(
-          'INSERT INTO queue(id,venue_id,capacity,average_minutes,open,name,config) VALUES (?,?,?,?,0,?,?)',
-        ).bind(
-          crypto.randomUUID(),
-          venueId,
-          service.capacity,
-          service.averageMinutes,
-          service.name,
-          JSON.stringify(normalizeConfig(service)),
-        ),
+        'INSERT INTO venue(id,organization_id,name,timezone,address_formatted,address_json,latitude,longitude,location_provider,location_provider_id,location_attribution,location_confirmed_at,location_source,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)',
+      ).bind(
+        venueId,
+        organizationId,
+        input.venueName,
+        input.timezone,
+        ...locationValues(location),
       ),
+      ...input.services.flatMap((service) => {
+        const queueId = crypto.randomUUID()
+        const source = JSON.stringify(normalizeConfig(service))
+        return [
+          env.DB.prepare(
+            'INSERT INTO queue(id,venue_id,capacity,average_minutes,open,name,config) VALUES (?,?,?,?,0,?,?)',
+          ).bind(
+            queueId,
+            venueId,
+            service.capacity,
+            service.averageMinutes,
+            service.name,
+            source,
+          ),
+          directoryConfigStatement(env, queueId, source),
+        ]
+      }),
       ...membershipStatements(env, userId, organizationId, venueId, 'owner'),
       audit(
         env,

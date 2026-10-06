@@ -282,3 +282,23 @@ it('labels pool queue capacity in people rather than turns', async () => {
     screen.queryByLabelText('Nº máximo de turnos en cola'),
   ).not.toBeInTheDocument()
 })
+it('a lost or expired location confirmation disables only final save without losing wizard data', async () => {
+  const onSave = vi.fn(),
+    props = {
+      open: true,
+      mode: 'create' as const,
+      onClose: vi.fn(),
+      onSave,
+      initial: { ...emptyService, name: 'Expiry regression' },
+    }
+  const view = render(
+    <ServiceConfigDrawer {...props} {...{ saveDisabled: true }} />,
+  )
+  for (let i = 0; i < 4; i++) await next()
+  const confirm = screen.getByRole('button', { name: /^Confirmar$/ })
+  expect(confirm).toBeDisabled()
+  fireEvent.click(confirm)
+  expect(onSave).not.toHaveBeenCalled()
+  view.rerender(<ServiceConfigDrawer {...props} {...{ saveDisabled: false }} />)
+  expect(confirm).toBeEnabled()
+})

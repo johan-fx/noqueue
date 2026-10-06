@@ -5,6 +5,22 @@ import { WebShell } from '../shells/WebShell'
 
 export const webRoutes: RouteObject[] = [
   {
+    path: '/',
+    lazy: async () => ({
+      Component: (await import('@/features/customer/PublicDiscovery'))
+        .PublicDiscovery,
+    }),
+  },
+  {
+    path: '/search',
+    lazy: async () => {
+      const { PublicDiscovery } = await import(
+        '@/features/customer/PublicDiscovery'
+      )
+      return { Component: () => <PublicDiscovery search /> }
+    },
+  },
+  {
     path: '/login',
     lazy: async () => ({
       Component: (await import('@/features/auth/Login')).Login,
@@ -51,6 +67,7 @@ export const webRoutes: RouteObject[] = [
     element: <WebShell />,
     children: [
       { path: '/q/demo-queue', element: <DemoQueue /> },
+      { path: '/demo', element: <WebJoinQueueScreen /> },
       { path: '*', element: <WebJoinQueueScreen /> },
     ],
   },

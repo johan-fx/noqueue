@@ -1,11 +1,20 @@
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  retryAfter: number
+  constructor(status: number, message: string, retryAfter = 0) {
     super(message)
     this.status = status
+    this.retryAfter = retryAfter
   }
 }
 const messages: Record<string, string> = {
+  location_confirmation_invalid:
+    'La dirección no está confirmada o la selección ha caducado. Busca y confirma de nuevo.',
+  location_provider_unavailable:
+    'No se puede resolver la dirección ahora. Conservamos tus datos; inténtalo de nuevo.',
+  invalid_location: 'Revisa la dirección y confirma un resultado preciso.',
+  venue_version_conflict:
+    'Otra persona ha modificado la ubicación. Actualiza la versión y revisa antes de guardar.',
   restore_reason_required: 'Indica un motivo para restaurar el turno.',
   active_approach_confirmation_required:
     'Confirma la aplicación de los umbrales a los turnos en espera.',
@@ -75,9 +84,11 @@ export async function api<T>(
   method = 'GET',
   body?: unknown,
   key?: string,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(`/api/v1/staff${path}`, {
     method,
+    ...(signal ? { signal } : {}),
     credentials: 'include',
     cache: 'no-store',
     headers: {
@@ -92,6 +103,7 @@ export async function api<T>(
       response.status,
       messages[data.error as string] ??
         'No se ha podido completar la operación.',
+      Math.max(0, Number(response.headers.get('Retry-After')) || 0),
     )
   return data as T
 }

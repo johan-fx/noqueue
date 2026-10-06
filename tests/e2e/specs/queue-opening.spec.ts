@@ -1,3 +1,4 @@
+import { resolveFixtureLocation } from '../helpers/location.js'
 import { test, expect } from '@playwright/test'
 test('mobile opening inventory, keyboard tabs, occupied release, and closing confirmation', async ({
   page,
@@ -30,48 +31,46 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
       })
     ).ok(),
   ).toBeTruthy()
-  const created = await request.post(
-    '/api/v1/staff/commercial/organizations',
-    {
-      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
-      data: {
-        organizationName: 'Opening test',
-        slug: `opening-${suffix}`,
-        venueName: 'Hotel Opening',
-        timezone: 'Europe/Madrid',
-        ownerName: 'Owner',
-        ownerUsername: owner,
-        ownerPassword: password,
-        services: [
-          {
-            name: 'Restaurante',
-            type: 'restaurant',
-            capacity: 30,
-            averageMinutes: 30,
-            graceMinutes: 5,
-            cutoffMinutes: 0,
-            twentyFourHours: true,
-            schedules: [],
-            receptionServices: [],
-            spaces: [
-              {
-                id: 'terrace',
-                name: 'Terraza',
-                tables: 2,
-                tableTypes: [{ seats: 4, count: 2, averageMinutes: 50 }],
-              },
-              {
-                id: 'salon',
-                name: 'Salón',
-                tables: 1,
-                tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
-              },
-            ],
-          },
-        ],
-      },
+  const created = await request.post('/api/v1/staff/commercial/organizations', {
+    headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+    data: {
+      ...(await resolveFixtureLocation(request, baseURL!)),
+      organizationName: 'Opening test',
+      slug: `opening-${suffix}`,
+      venueName: 'Hotel Opening',
+      timezone: 'Europe/Madrid',
+      ownerName: 'Owner',
+      ownerUsername: owner,
+      ownerPassword: password,
+      services: [
+        {
+          name: 'Restaurante',
+          type: 'restaurant',
+          capacity: 30,
+          averageMinutes: 30,
+          graceMinutes: 5,
+          cutoffMinutes: 0,
+          twentyFourHours: true,
+          schedules: [],
+          receptionServices: [],
+          spaces: [
+            {
+              id: 'terrace',
+              name: 'Terraza',
+              tables: 2,
+              tableTypes: [{ seats: 4, count: 2, averageMinutes: 50 }],
+            },
+            {
+              id: 'salon',
+              name: 'Salón',
+              tables: 1,
+              tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
+            },
+          ],
+        },
+      ],
     },
-  )
+  })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { venueId } = (await created.json()) as { venueId: string }
   expect(
@@ -151,9 +150,7 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
     })
     .click()
   await expect(menuTrigger).toBeFocused()
-  await queueDrawer
-    .getByRole('button', { name: 'Volver', exact: true })
-    .click()
+  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
   await expect(toggle).toBeChecked()
   await expect(page.getByText('Desactivada manualmente')).toBeVisible()
   await page.reload()
@@ -163,9 +160,7 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
     .getByRole('button', { name: 'Volver a gestión automática', exact: true })
     .click()
   await expect(menuTrigger).toBeFocused()
-  await queueDrawer
-    .getByRole('button', { name: 'Volver', exact: true })
-    .click()
+  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
   await expect(page.getByText('Gestión inteligente activa')).toBeVisible()
 
   await toggle.click()
@@ -196,9 +191,7 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
   await page.keyboard.press('Enter')
   await sheet.getByRole('button', { name: 'Mesas de 4', exact: true }).focus()
   await page.keyboard.press('Enter')
-  await sheet
-    .getByLabel('Salón · 4 plazas ocupadas fuera de la cola')
-    .fill('0')
+  await sheet.getByLabel('Salón · 4 plazas ocupadas fuera de la cola').fill('0')
   await expect(
     sheet.getByRole('button', { name: 'Abrir cola', exact: true }),
   ).toBeInViewport()
@@ -218,9 +211,7 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
   await expect(sheet).toHaveCount(0)
   await expect(queueDrawer).toBeVisible()
   await expect(menuTrigger).toBeFocused()
-  await queueDrawer
-    .getByRole('button', { name: 'Volver', exact: true })
-    .click()
+  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
   await toggle.click()
   sheet = page.getByRole('dialog', { name: 'Cerrar cola · Restaurante' })
   await expect(

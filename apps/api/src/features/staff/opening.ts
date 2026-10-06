@@ -1,3 +1,4 @@
+import { directoryConfigStatement } from '../discovery/configuration'
 import {
   queueLifecycleSchema,
   type QueueLifecycleCommand,
@@ -91,9 +92,7 @@ export async function runLifecycleCommand(
   if (!parsed.success)
     throw new HTTPException(400, { message: 'invalid_inventory' })
   input = parsed.data
-  const fingerprint = await hash(
-    JSON.stringify({ queueId, lifecycle: input }),
-  )
+  const fingerprint = await hash(JSON.stringify({ queueId, lifecycle: input }))
   const previous = await env.DB.prepare(
     'SELECT request_hash,result FROM staff_command WHERE actor_id=? AND request_key=?',
   )
@@ -130,8 +129,7 @@ export async function runLifecycleCommand(
     input.action === 'confirm_inventory' ||
     input.action === 'occupancy'
   ) {
-    const answers =
-      input.action === 'occupancy' ? [input.group] : input.groups
+    const answers = input.action === 'occupancy' ? [input.group] : input.groups
     if (
       input.action !== 'occupancy' &&
       answers.length !== context.groups.length
@@ -186,39 +184,35 @@ export async function runLifecycleCommand(
         'INSERT INTO queue_opening VALUES (?,?,?,?,?) ON CONFLICT(queue_id) DO UPDATE SET topology=excluded.topology,complete=excluded.complete,opened_at=excluded.opened_at,actor_id=excluded.actor_id',
       ).bind(queueId, topology(config), Number(complete), now, actor),
     )
+    const source = JSON.stringify({
+      ...config,
+      estimationMode: 'shadow',
+      resourceStateKnown: complete,
+    })
     // Activation happens after the atomic inventory write, through the same projection path.
     statements.push(
       env.DB.prepare(
         `UPDATE queue SET ${
           input.action === 'open' ? 'open=1,' : ''
         }config=?,version=version+1 WHERE id=?`,
-      ).bind(
-        JSON.stringify({
-          ...config,
-          estimationMode: 'shadow',
-          resourceStateKnown: complete,
-        }),
-        queueId,
-      ),
+      ).bind(source, queueId),
+      directoryConfigStatement(env, queueId, source),
     )
   } else if (
     input.action === 'disable_intelligence' ||
     input.action === 'enable_intelligence'
   ) {
+    const source = JSON.stringify({
+      ...config,
+      intelligencePolicy:
+        input.action === 'disable_intelligence' ? 'disabled' : 'automatic',
+      estimationMode: 'shadow',
+    })
     statements.push(
       env.DB.prepare(
         'UPDATE queue SET config=?,version=version+1 WHERE id=?',
-      ).bind(
-        JSON.stringify({
-          ...config,
-          intelligencePolicy:
-            input.action === 'disable_intelligence'
-              ? 'disabled'
-              : 'automatic',
-          estimationMode: 'shadow',
-        }),
-        queueId,
-      ),
+      ).bind(source, queueId),
+      directoryConfigStatement(env, queueId, source),
     )
   } else
     statements.push(

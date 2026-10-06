@@ -1,3 +1,4 @@
+import { fixtureLocation } from '../../../test/location-fixture'
 declare const process: { env: Record<string, string | undefined> }
 import { record as check } from '../../../test/queue-evidence'
 import fc from 'fast-check'
@@ -18,6 +19,7 @@ async function setup() {
     .bind(id, `${id}@test.invalid`)
     .run()
   const tenant = await provision(env, id, id, {
+    ...(await fixtureLocation(id)),
     organizationName: 'Verification',
     slug: id,
     venueName: 'Verification',

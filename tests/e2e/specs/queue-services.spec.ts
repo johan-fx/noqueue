@@ -1,3 +1,4 @@
+import { resolveFixtureLocation } from '../helpers/location.js'
 import { test, expect, type Page, type Locator } from '@playwright/test'
 type QueueSummary = { id: string; config: { type: string } }
 type StaffEntry = { id: string; code: string }
@@ -68,6 +69,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   const created = await request.post('/api/v1/staff/commercial/organizations', {
     headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
     data: {
+      ...(await resolveFixtureLocation(request, baseURL!)),
       organizationName: 'Queue services',
       slug: `services-${suffix}`,
       venueName: 'Hotel Services',

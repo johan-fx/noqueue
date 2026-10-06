@@ -1,3 +1,4 @@
+import { resolveFixtureLocation } from './location.js'
 import {
   expect,
   type Page,
@@ -45,6 +46,7 @@ export async function setup(
     {
       headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
       data: {
+        ...(await resolveFixtureLocation(request, origin)),
         organizationName: 'Verification',
         slug: `verify-${suffix}`,
         venueName: 'Queue Verification',

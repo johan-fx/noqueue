@@ -6,6 +6,7 @@ export const queueActionLabels = {
   cancel: 'Cancelar turno',
   no_show: 'No presentado',
   skip: 'Pasar al final',
+  restore: 'Restaurar turno',
 }
 export const receptionLabels = {
   check_in: 'Check-in',
@@ -19,5 +20,7 @@ export function entryActions(status: string): QueueCommand['action'][] {
     ? ['complete', 'no_show', 'cancel']
     : status === 'completed'
     ? ['release']
+    : status === 'expired'
+    ? ['restore']
     : []
 }

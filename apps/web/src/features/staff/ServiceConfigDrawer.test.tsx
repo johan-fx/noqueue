@@ -94,9 +94,9 @@ describe('service configuration wizard', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'De 4' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
-    expect(
-      screen.getByLabelText('Nº total de mesas disponibles'),
-    ).toHaveValue(3)
+    expect(screen.getByLabelText('Nº total de mesas disponibles')).toHaveValue(
+      3,
+    )
     await next()
     await next()
     await next()
@@ -157,9 +157,7 @@ describe('service configuration wizard', () => {
         target: { value: '70' },
       },
     )
-    fireEvent.click(
-      within(advanced).getByRole('button', { name: 'Confirmar' }),
-    )
+    fireEvent.click(within(advanced).getByRole('button', { name: 'Confirmar' }))
     await next()
     await next()
     expect(screen.getByText('Interior · 2 plazas: 50 min')).toBeVisible()
@@ -241,10 +239,10 @@ it('keeps only the three basic settings visible and discards advanced changes on
   )
   await next()
   await next()
-  expect(screen.getAllByRole('spinbutton')).toHaveLength(3)
-  expect(
-    screen.queryByLabelText('Motor de estimación'),
-  ).not.toBeInTheDocument()
+  expect(screen.getAllByRole('spinbutton')).toHaveLength(5)
+  expect(screen.getByLabelText('Turnos por delante')).toHaveValue(2)
+  expect(screen.getByLabelText('Minutos de espera')).toHaveValue(10)
+  expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
   fireEvent.click(
     screen.getByRole('button', { name: 'Configuración avanzada' }),
   )
@@ -252,12 +250,8 @@ it('keeps only the three basic settings visible and discards advanced changes on
   fireEvent.change(screen.getByLabelText('Terraza · 4 plazas (min)'), {
     target: { value: '90' },
   })
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Opciones de operación' }),
-  )
-  expect(
-    screen.queryByLabelText('Motor de estimación'),
-  ).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Opciones de operación' }))
+  expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
   expect(
     screen.queryByLabelText(/todos los recursos están vacíos/),
   ).not.toBeInTheDocument()
@@ -267,12 +261,8 @@ it('keeps only the three basic settings visible and discards advanced changes on
   )
   fireEvent.click(screen.getByRole('button', { name: 'Mesas de 4' }))
   expect(screen.getByLabelText('Terraza · 4 plazas (min)')).toHaveValue(40)
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Opciones de operación' }),
-  )
-  expect(
-    screen.queryByLabelText('Motor de estimación'),
-  ).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Opciones de operación' }))
+  expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
 })
 
 it('labels pool queue capacity in people rather than turns', async () => {

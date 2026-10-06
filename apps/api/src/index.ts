@@ -1,3 +1,5 @@
+import { runCustomerCommand, expireArrivals } from './features/queue/customer'
+import type { CustomerCommand } from '@noqueue/contracts/queue'
 import { openingContext, runLifecycleCommand } from './features/staff/opening'
 import type { QueueLifecycleCommand } from '@noqueue/contracts/staff'
 import { recalculateQueue } from './features/queue/projection'
@@ -25,6 +27,43 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     this.tail = result.catch(() => undefined)
     return result
   }
+  private async withQueue<T>(queueId: string, work: () => Promise<T>) {
+    await this.ctx.storage.put('queueId', queueId)
+    await expireArrivals(this.env, queueId)
+    try {
+      return await work()
+    } finally {
+      const next = await this.env.DB.prepare(
+        "SELECT MIN(arrival_deadline_at) AS deadline FROM queue_entry WHERE queue_id=? AND status='called'",
+      )
+        .bind(queueId)
+        .first<{ deadline: number | null }>()
+      if (next?.deadline != null)
+        await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, next.deadline))
+      else await this.ctx.storage.deleteAlarm()
+    }
+  }
+  async alarm() {
+    const queueId = await this.ctx.storage.get<string>('queueId')
+    if (queueId)
+      await this.serialize(() =>
+        this.withQueue(queueId, () => recalculateQueue(this.env, queueId)),
+      )
+  }
+  customerCommand(
+    queueId: string,
+    token: string,
+    key: string,
+    input: CustomerCommand,
+  ) {
+    return this.serialize(() =>
+      this.withQueue(queueId, () =>
+        this.staffResult(() =>
+          runCustomerCommand(this.env, queueId, token, key, input),
+        ),
+      ),
+    )
+  }
   private async staffResult(work: () => Promise<{ ok: boolean }>) {
     try {
       return { status: 200, body: await work() }
@@ -42,8 +81,10 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     input: QueueCommand,
   ) {
     return this.serialize(() =>
-      this.staffResult(() =>
-        runQueueCommand(this.env, actor, queueId, key, input),
+      this.withQueue(queueId, () =>
+        this.staffResult(() =>
+          runQueueCommand(this.env, actor, queueId, key, input),
+        ),
       ),
     )
   }
@@ -68,16 +109,20 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     )
   }
   read(queueId: string, token: string) {
-    return this.serialize(async () => {
-      await recalculateQueue(this.env, queueId)
-      return readEntrySnapshot(this.env, token)
-    })
+    return this.serialize(() =>
+      this.withQueue(queueId, async () => {
+        await recalculateQueue(this.env, queueId)
+        return readEntrySnapshot(this.env, token)
+      }),
+    )
   }
   refresh(queueId: string) {
-    return this.serialize(async () => {
-      await recalculateQueue(this.env, queueId)
-      return { ok: true }
-    })
+    return this.serialize(() =>
+      this.withQueue(queueId, async () => {
+        await recalculateQueue(this.env, queueId)
+        return { ok: true }
+      }),
+    )
   }
   experiment(action: 'seed' | 'advance', key: string) {
     return this.serialize(() => changeExperiment(this.env, action, key))

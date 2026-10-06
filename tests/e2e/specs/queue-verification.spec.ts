@@ -33,7 +33,14 @@ test('Q-BROWSER-ORDER public joins and skip update staff and two isolated client
   baseURL,
   evidence,
 }, info) => {
-  await queueOrder({ page, request, browser, baseURL: baseURL!, evidence, info })
+  await queueOrder({
+    page,
+    request,
+    browser,
+    baseURL: baseURL!,
+    evidence,
+    info,
+  })
 })
 test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physical capacity', async ({
   page,
@@ -54,7 +61,7 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
     await expect(alice.getByText(/Es tu turno/)).toBeVisible()
     await act(page, 'Alice', 'Confirmar llegada')
     await expect(
-      alice.getByText('Estado: En servicio', { exact: true })
+      alice.getByText('Se ha confirmado tu llegada', { exact: true }),
     ).toBeVisible()
     const second = await browser.newContext({
       baseURL: baseURL!,
@@ -72,7 +79,7 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
         {
           headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
           data: { entryId: row.id, version: row.version, action: 'call' },
-        }
+        },
       )
       await prove(
         info,
@@ -80,12 +87,12 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
         'Q-BROWSER-RESOURCE',
         'occupied resource rejects another call',
         refused.status(),
-        409
+        409,
       )
       await page.getByRole('tab', { name: 'Completados' }).click()
       await act(page, 'Alice', 'Liberar recurso')
       await expect(
-        alice.getByText('Estado: Servicio finalizado', { exact: true })
+        alice.getByText('Se ha confirmado tu llegada', { exact: true }),
       ).toBeVisible()
       await page.getByRole('tab', { name: 'Lista', exact: true }).click()
       await act(page, 'Bob', 'Llamar')
@@ -96,7 +103,7 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
         'Q-BROWSER-RESOURCE',
         'release allows the next real call',
         true,
-        true
+        true,
       )
     } finally {
       await second.close()
@@ -129,20 +136,20 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
     const form = await guest.newPage()
     await form.goto(`/q/${t.queue}`)
     await expect(
-      form.getByText('La cola está cerrada.', { exact: true })
+      form.getByText('La cola está cerrada.', { exact: true }),
     ).toBeVisible()
     await expect(
-      form.getByRole('button', { name: 'Unirme a la cola' })
+      form.getByRole('button', { name: 'Ponerme en lista' }),
     ).toBeDisabled()
     await expect(
-      alice.getByText('Estado: waiting', { exact: true })
+      alice.getByText('Ya casi es tu turno', { exact: true }),
     ).toBeVisible()
     const rejected = await form.request.post(
       `/api/v1/public/services/${t.queue}/entries`,
       {
         headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
         data: { displayName: 'Closed', partySize: 4, locale: 'es' },
-      }
+      },
     )
     expect(rejected.ok()).toBe(false)
     await prove(
@@ -151,7 +158,7 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
       'Q-BROWSER-CLOSE',
       'new admission rejected; existing turn remains waiting',
       rejected.status(),
-      409
+      409,
     )
   } finally {
     await guest.close()
@@ -176,7 +183,7 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
       await join(first, t.queue, 'First')
       await join(second, t.queue, 'Second')
       await expect(
-        second.getByText('Espera aproximada: 50 min', { exact: true })
+        second.getByLabel('Espera aproximada: 50 min', { exact: true }),
       ).toBeVisible()
       const expected = kind === 'MEAN' ? 35 : 54
       if (kind === 'MEAN') {
@@ -206,7 +213,7 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
                 },
               ],
             },
-          }
+          },
         )
         expect(response.ok(), await response.text()).toBeTruthy()
       } else {
@@ -220,9 +227,9 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
           (
             await request.post(
               '/api/v1/experiments/local/staff/queue-history',
-              { data }
+              { data },
             )
-          ).status()
+          ).status(),
         ).toBe(401)
         expect(
           (
@@ -231,25 +238,27 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
               {
                 headers: pilot,
                 data: { ...data, durations: Array(32).fill(60) },
-              }
+              },
             )
-          ).status()
+          ).status(),
         ).toBe(400)
         const loaded = await request.post(
           '/api/v1/experiments/local/staff/queue-history',
-          { headers: pilot, data }
+          { headers: pilot, data },
         )
         expect(loaded.ok(), await loaded.text()).toBeTruthy()
       }
       await expect(
-        second.getByText(`Espera aproximada: ${expected} min`, { exact: true })
+        second.getByLabel(`Espera aproximada: ${expected} min`, {
+          exact: true,
+        }),
       ).toBeVisible()
       const row = page
         .getByRole('dialog', { name: 'Gestionar cola', exact: true })
         .locator('li')
         .filter({ hasText: 'Second' })
       await expect(
-        row.getByText(`${expected} min`, { exact: true })
+        row.getByText(`${expected} min`, { exact: true }),
       ).toBeVisible()
       await prove(
         info,
@@ -257,9 +266,9 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
         `Q-BROWSER-${kind}`,
         'terrace/4 expected ETA rendered by both clients',
         await second
-          .getByText(`Espera aproximada: ${expected} min`, { exact: true })
-          .textContent(),
-        `Espera aproximada: ${expected} min`
+          .getByLabel(`Espera aproximada: ${expected} min`, { exact: true })
+          .getAttribute('aria-label'),
+        `Espera aproximada: ${expected} min`,
       )
       await second.screenshot({
         path: info.outputPath('customer-estimate.png'),

@@ -1,3 +1,4 @@
+import { expireArrivals } from '../queue/customer'
 import { topology } from '../queue/opening-state'
 import { eligibleResources } from '../queue/engine'
 import {
@@ -35,11 +36,17 @@ export async function runQueueCommand(
     await recalculateQueue(env, queueId, now)
     return JSON.parse(previous.result) as { ok: true }
   }
+  await expireArrivals(env, queueId, now)
   const entry = await env.DB.prepare(
-    'SELECT status,version,called_at FROM queue_entry WHERE id=? AND queue_id=?',
+    'SELECT status,version,called_at,arrival_deadline_at FROM queue_entry WHERE id=? AND queue_id=?',
   )
     .bind(input.entryId, queueId)
-    .first<{ status: string; version: number; called_at: number | null }>()
+    .first<{
+      status: string
+      version: number
+      called_at: number | null
+      arrival_deadline_at: number | null
+    }>()
   if (!entry) throw new HTTPException(404, { message: 'not_found' })
   if (entry.version !== input.version)
     throw new HTTPException(409, { message: 'version_conflict' })
@@ -50,16 +57,23 @@ export async function runQueueCommand(
     cancel: ['waiting', 'called'],
     no_show: ['called'],
     skip: ['waiting'],
+    restore: ['expired'],
   }
   if (!transitions[input.action]!.includes(entry.status))
     throw new HTTPException(409, { message: 'invalid_transition' })
+  if (input.action === 'restore' && !input.overrideReason)
+    throw new HTTPException(400, { message: 'restore_reason_required' })
   if (input.action === 'no_show') {
-    const q = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
-      .bind(queueId)
-      .first<{ config: string }>()
-    const grace = (JSON.parse(q!.config) as { graceMinutes: number })
-      .graceMinutes
-    if (!entry.called_at || now < entry.called_at + grace * 60000)
+    let deadline = entry.arrival_deadline_at
+    if (deadline === null && entry.called_at !== null) {
+      const q = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+        .bind(queueId)
+        .first<{ config: string }>()
+      const grace = (JSON.parse(q!.config) as { graceMinutes: number })
+        .graceMinutes
+      deadline = entry.called_at + grace * 60000
+    }
+    if (deadline === null || now < deadline)
       throw new HTTPException(409, { message: 'arrival_grace_active' })
   }
   const status = {
@@ -69,6 +83,7 @@ export async function runQueueCommand(
     cancel: 'cancelled',
     no_show: 'no_show',
     skip: 'waiting',
+    restore: 'waiting',
   }[input.action]
   const state = await recalculateQueue(env, queueId, now)
   const extra: D1PreparedStatement[] = []
@@ -132,7 +147,7 @@ export async function runQueueCommand(
     if (resource)
       extra.push(
         env.DB.prepare(
-          'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,?,?,?,?)',
+          'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET resource_id=excluded.resource_id,space_id=excluded.space_id,seats=excluded.seats,reserved_at=excluded.reserved_at,arrived_at=NULL,released_at=NULL,outcome=NULL WHERE queue_allocation.released_at IS NOT NULL',
         ).bind(
           input.entryId,
           queueId,
@@ -143,6 +158,19 @@ export async function runQueueCommand(
         ),
       )
   }
+  if (input.action === 'restore')
+    extra.push(
+      env.DB.prepare(
+        'INSERT INTO queue_override_audit VALUES (?,?,?,?,?,?)',
+      ).bind(
+        crypto.randomUUID(),
+        queueId,
+        input.entryId,
+        actor,
+        input.overrideReason!,
+        now,
+      ),
+    )
   if (input.action === 'complete' && allocation)
     extra.push(
       env.DB.prepare(
@@ -176,8 +204,7 @@ export async function runQueueCommand(
         predicted?.predicted_at == null
           ? null
           : (now - predicted.predicted_at) / 60000,
-        predicted?.legacy_eta_minutes ??
-          Math.max(0, position) * state.baseline,
+        predicted?.legacy_eta_minutes ?? Math.max(0, position) * state.baseline,
         predicted?.created_at ?? null,
         state.config?.estimationMode ?? 'shadow',
       ),
@@ -186,10 +213,19 @@ export async function runQueueCommand(
   await env.DB.batch([
     ...extra,
     env.DB.prepare(
-      `UPDATE queue_entry SET status=?,version=version+1,called_at=?,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
+      `UPDATE queue_entry SET status=?,version=version+1,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
     ).bind(
       status,
-      input.action === 'call' ? now : entry.called_at,
+      input.action === 'call'
+        ? now
+        : input.action === 'restore'
+        ? null
+        : entry.called_at,
+      input.action,
+      state.config?.type === 'restaurant'
+        ? now + state.config.graceMinutes * 60000
+        : null,
+      input.action,
       input.action,
       queueId,
       input.entryId,
@@ -201,7 +237,11 @@ export async function runQueueCommand(
     ).bind(
       crypto.randomUUID(),
       input.entryId,
-      status === 'waiting' ? 'skipped' : status,
+      input.action === 'restore'
+        ? 'restored'
+        : status === 'waiting'
+        ? 'skipped'
+        : status,
       now,
     ),
     audit(
@@ -232,7 +272,7 @@ export async function configureQueue(
   const parsed = queueSettingsSchema.safeParse(body)
   if (!parsed.success)
     throw new HTTPException(400, { message: 'invalid_settings' })
-  const { version, open, ...rawConfig } = parsed.data
+  const { version, open, applyApproachToActive, ...rawConfig } = parsed.data
   const current = await env.DB.prepare(
     'SELECT version,open FROM queue WHERE id=?',
   )
@@ -242,6 +282,13 @@ export async function configureQueue(
     throw new HTTPException(409, { message: 'version_conflict' })
   const old = await loadQueueState(env, queueId)
   const config = normalizeConfig(rawConfig, old.config)
+  const approachChanged =
+    (config.approachTurns ?? 2) !== (old.config?.approachTurns ?? 2) ||
+    (config.approachMinutes ?? 10) !== (old.config?.approachMinutes ?? 10)
+  if (approachChanged && old.parties.length && !applyApproachToActive)
+    throw new HTTPException(409, {
+      message: 'active_approach_confirmation_required',
+    })
   if (
     rawConfig.intelligencePolicy !== undefined &&
     rawConfig.intelligencePolicy !==
@@ -321,9 +368,7 @@ export async function configureQueue(
           (space) =>
             space.id === entry.preferred_space_id &&
             (!space.tableTypes?.length ||
-              space.tableTypes.some(
-                (type) => type.seats >= entry.party_size,
-              )),
+              space.tableTypes.some((type) => type.seats >= entry.party_size)),
         ),
     )
   )

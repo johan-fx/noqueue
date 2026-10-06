@@ -1,3 +1,4 @@
+import { expireArrivals } from './customer'
 import { activateIfReady, inventorySafety } from './opening-state'
 import { serviceSchema, type ServiceInput } from '@noqueue/contracts/staff'
 import { groupMinutes, projectQueue, type Resource } from './engine'
@@ -235,6 +236,7 @@ export async function recalculateQueue(
   queueId: string,
   now = Date.now(),
 ) {
+  await expireArrivals(env, queueId, now)
   await activateIfReady(env, queueId)
   const state = await loadQueueState(env, queueId, now)
   const statements: D1PreparedStatement[] = []
@@ -297,10 +299,7 @@ export async function recalculateQueue(
   if (statements.length) await env.DB.batch(statements)
   return state
 }
-export async function readProjection(
-  env: CloudflareBindings,
-  entryId: string,
-) {
+export async function readProjection(env: CloudflareBindings, entryId: string) {
   const row = await env.DB.prepare(
     'SELECT position,eta_minutes AS etaMinutes,predicted_at AS predictedAt,quality AS estimateQuality,resource_id AS resourceId,callable FROM queue_projection WHERE entry_id=?',
   )

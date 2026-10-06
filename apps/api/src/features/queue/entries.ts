@@ -1,8 +1,6 @@
-import {
-  normalizeConfig,
-  recalculateQueue,
-  readProjection,
-} from './projection'
+import { customerPhase } from './customer'
+import { publicService } from './public-context'
+import { normalizeConfig, recalculateQueue, readProjection } from './projection'
 import { serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
 import { serviceAcceptsEntries } from '../staff/availability'
@@ -15,6 +13,7 @@ import { readConfirmation } from './confirmation'
 import {
   encryptPhone,
   encryptDisplayName,
+  decryptDisplayName,
   hash,
   hmac,
   phoneHash,
@@ -72,7 +71,62 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
     }>()
   if (!row) throw new Error('Entry queue missing')
   const projection = await readProjection(env, entry.id)
+  const service = await publicService(env, entry.queue_id)
+  let customer
+  if (service?.type === 'restaurant') {
+    const detail = await env.DB.prepare(
+      `SELECT e.display_name_cipher,e.party_size,e.preferred_space_id,e.locale,e.version,e.created_at,e.called_at,e.arrival_deadline_at,q.config,(SELECT MAX(created_at) FROM queue_event WHERE entry_id=e.id AND kind='completed') AS arrived_at FROM queue_entry e JOIN queue q ON q.id=e.queue_id WHERE e.id=?`,
+    )
+      .bind(entry.id)
+      .first<{
+        display_name_cipher: string | null
+        party_size: number
+        preferred_space_id: string | null
+        locale: string
+        version: number
+        created_at: number
+        called_at: number | null
+        arrival_deadline_at: number | null
+        config: string
+        arrived_at: number | null
+      }>()
+    if (detail) {
+      const phase = customerPhase(
+        entry.status,
+        projection?.position ?? row.position,
+        projection?.etaMinutes ?? 0,
+        projection?.estimateQuality,
+        JSON.parse(detail.config),
+      )
+      customer = {
+        service,
+        displayName: detail.display_name_cipher
+          ? await decryptDisplayName(
+              env.PII_ENCRYPTION_KEY,
+              detail.display_name_cipher,
+            )
+          : null,
+        partySize: detail.party_size,
+        preferredSpaceId: detail.preferred_space_id,
+        locale: detail.locale,
+        version: detail.version,
+        serverNow: Date.now(),
+        createdAt: detail.created_at,
+        calledAt: detail.called_at,
+        arrivalDeadlineAt: detail.arrival_deadline_at,
+        arrivedAt: detail.arrived_at,
+        phase,
+        actions:
+          phase === 'waiting'
+            ? ['update', 'cancel']
+            : phase === 'approaching'
+            ? ['update', 'cancel', 'yield']
+            : [],
+      }
+    }
+  }
   return entrySchema.parse({
+    customer,
     code: entry.code,
     position: entry.status === 'waiting' ? row.position : 0,
     etaMinutes: 0,
@@ -204,9 +258,7 @@ export async function joinQueue(
       const spaces =
         input.preferredSpaceId === 'fastest'
           ? config.spaces
-          : config.spaces.filter(
-              (space) => space.id === input.preferredSpaceId,
-            )
+          : config.spaces.filter((space) => space.id === input.preferredSpaceId)
       if (
         config.type !== 'restaurant' ||
         !spaces.some(

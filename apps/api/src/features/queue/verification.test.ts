@@ -6,13 +6,14 @@ import { expect, it } from 'vitest'
 import { provision } from '../staff/provision'
 import { runQueueCommand } from '../staff/commands'
 import { openingContext, runLifecycleCommand } from '../staff/opening'
+import { expireArrivals } from './customer'
 import { loadQueueState } from './projection'
 
 const minute = 60_000
 async function setup() {
   const id = crypto.randomUUID()
   await env.DB.prepare(
-    "INSERT INTO user(id,name,email,createdAt,updatedAt,role) VALUES (?,'Sales',?,datetime('now'),datetime('now'),'commercial_operator')"
+    "INSERT INTO user(id,name,email,createdAt,updatedAt,role) VALUES (?,'Sales',?,datetime('now'),datetime('now'),'commercial_operator')",
   )
     .bind(id, `${id}@test.invalid`)
     .run()
@@ -69,7 +70,7 @@ async function setup() {
 async function entry(queue: string, now: number, size = 4, space = 'terrace') {
   const id = crypto.randomUUID()
   await env.DB.prepare(
-    "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,preferred_space_id) VALUES (?,?,?,?,?,?,?,'en',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?),?)"
+    "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,preferred_space_id) VALUES (?,?,?,?,?,?,?,'en',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?),?)",
   )
     .bind(id, queue, id, id, id, id, size, now, queue, space)
     .run()
@@ -91,7 +92,7 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
         .bind(id)
         .first()
     )?.called_at,
-    now
+    now,
   )
   await runQueueCommand(env, t.actor, t.queue, key, call, now + minute)
   await expect(
@@ -101,8 +102,8 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
       t.queue,
       crypto.randomUUID(),
       { action: 'no_show', entryId: id, version: 1 },
-      now + 4 * minute
-    )
+      now + 4 * minute,
+    ),
   ).rejects.toThrow('arrival_grace_active')
   await runQueueCommand(
     env,
@@ -110,7 +111,7 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
     t.queue,
     crypto.randomUUID(),
     { action: 'complete', entryId: id, version: 1 },
-    now + 2 * minute
+    now + 2 * minute,
   )
   await runQueueCommand(
     env,
@@ -118,7 +119,7 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
     t.queue,
     crypto.randomUUID(),
     { action: 'release', entryId: id, version: 2 },
-    now + 62 * minute
+    now + 62 * minute,
   )
   const state = await loadQueueState(env, t.queue, now + 62 * minute)
   check(
@@ -126,7 +127,7 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
     'allocation timeline',
     now + 62 * minute,
     state.allocations.map((a) => [a.reserved_at, a.arrived_at, a.released_at]),
-    [[now, now + 2 * minute, now + 62 * minute]]
+    [[now, now + 2 * minute, now + 62 * minute]],
   )
   check(
     'Q-CLOCK',
@@ -134,12 +135,12 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
     now + 62 * minute,
     (
       await env.DB.prepare(
-        'SELECT created_at FROM queue_event WHERE entry_id=? ORDER BY created_at'
+        'SELECT created_at FROM queue_event WHERE entry_id=? ORDER BY created_at',
       )
         .bind(id)
         .all<{ created_at: number }>()
     ).results.map((e) => e.created_at),
-    [now, now + 2 * minute, now + 62 * minute]
+    [now, now + 2 * minute, now + 62 * minute],
   )
 })
 it('Q-COMMAND-LEARNING real arrival-release durations update only the matching group', async () => {
@@ -153,7 +154,7 @@ it('Q-COMMAND-LEARNING real arrival-release durations update only the matching g
       t.queue,
       crypto.randomUUID(),
       { action: 'call', entryId: id, version: 0 },
-      now
+      now,
     )
     await runQueueCommand(
       env,
@@ -161,7 +162,7 @@ it('Q-COMMAND-LEARNING real arrival-release durations update only the matching g
       t.queue,
       crypto.randomUUID(),
       { action: 'complete', entryId: id, version: 1 },
-      now + 10 * minute
+      now + 2 * minute,
     )
     await runQueueCommand(
       env,
@@ -169,7 +170,7 @@ it('Q-COMMAND-LEARNING real arrival-release durations update only the matching g
       t.queue,
       crypto.randomUUID(),
       { action: 'release', entryId: id, version: 2 },
-      now + 70 * minute
+      now + 62 * minute,
     )
     now += 71 * minute
     // baseline 50*5 + 60*(1+1.1+1.2), divided by 8.3 -> 54.
@@ -186,7 +187,7 @@ it('Q-COMMAND-LEARNING real arrival-release durations update only the matching g
         ['terrace', 2, 50],
         ['terrace', 4, sample < 3 ? 50 : 54],
         ['salon', 4, 20],
-      ]
+      ],
     )
   }
 })
@@ -209,7 +210,7 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
         for (const action of actions) {
           const id = waiting.shift()!
           const row = await env.DB.prepare(
-            'SELECT version FROM queue_entry WHERE id=?'
+            'SELECT version FROM queue_entry WHERE id=?',
           )
             .bind(id)
             .first<{ version: number }>()
@@ -232,7 +233,7 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
               t.queue,
               crypto.randomUUID(),
               { entryId: id, version: row!.version + 1, action: 'complete' },
-              now + minute
+              now + minute,
             )
             await runQueueCommand(
               env,
@@ -240,7 +241,7 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
               t.queue,
               crypto.randomUUID(),
               { entryId: id, version: row!.version + 2, action: 'release' },
-              now + 31 * minute
+              now + 31 * minute,
             )
           } else if (action === 'no_show') {
             await expect(
@@ -250,17 +251,19 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
                 t.queue,
                 crypto.randomUUID(),
                 { entryId: id, version: row!.version + 1, action: 'no_show' },
-                now + 5 * minute - 1
-              )
+                now + 5 * minute - 1,
+              ),
             ).rejects.toThrow('arrival_grace_active')
-            await runQueueCommand(
-              env,
-              t.actor,
-              t.queue,
-              crypto.randomUUID(),
-              { entryId: id, version: row!.version + 1, action: 'no_show' },
-              now + 5 * minute
-            )
+            await expireArrivals(env, t.queue, now + 5 * minute)
+            expect(
+              (
+                await env.DB.prepare(
+                  'SELECT status FROM queue_entry WHERE id=?',
+                )
+                  .bind(id)
+                  .first()
+              )?.status,
+            ).toBe('expired')
           }
           now += 32 * minute
           if (waiting.length < 3) waiting.push(await entry(t.queue, now))
@@ -272,38 +275,38 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
             {
               order: state.parties.map((p) => p.id),
               activeAllocations: state.allocations.filter(
-                (a) => a.released_at === null
+                (a) => a.released_at === null,
               ).length,
             },
-            { order: waiting, activeAllocations: 0 }
+            { order: waiting, activeAllocations: 0 },
           )
           const events = (
             await env.DB.prepare(
-              'SELECT kind FROM queue_event WHERE entry_id=?'
+              'SELECT kind FROM queue_event WHERE entry_id=?',
             )
               .bind(id)
               .all<{ kind: string }>()
           ).results
           if (action !== 'skip')
             expect(events.filter((e) => e.kind === 'called')).toHaveLength(
-              action === 'cancel' ? 0 : 1
+              action === 'cancel' ? 0 : 1,
             )
           executed++
         }
-      }
+      },
     ),
     {
       numRuns: runs,
       seed,
       ...(process.env.QUEUE_PATH ? { path: process.env.QUEUE_PATH } : {}),
-    }
+    },
   )
   check(
     'Q-SEQUENCES',
     `seed=${seed}; ${runs} sequences × ${length} real operations`,
     1_800_000_000_000,
     executed,
-    runs * length
+    runs * length,
   )
   // Extended profile executes 10,000 D1 command operations, not simulated no-ops.
 }, 600_000)
@@ -314,7 +317,7 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
   const { recalculateQueue } = await import('./projection')
   await recalculateQueue(env, t.queue, now)
   const initial = await env.DB.prepare(
-    'SELECT predicted_at,created_at FROM queue_forecast_anchor WHERE entry_id=?'
+    'SELECT predicted_at,created_at FROM queue_forecast_anchor WHERE entry_id=?',
   )
     .bind(id)
     .first()
@@ -324,11 +327,11 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
     'recalculation does not rewrite baseline',
     now + minute,
     await env.DB.prepare(
-      'SELECT predicted_at,created_at FROM queue_forecast_anchor WHERE entry_id=?'
+      'SELECT predicted_at,created_at FROM queue_forecast_anchor WHERE entry_id=?',
     )
       .bind(id)
       .first(),
-    initial
+    initial,
   )
   const key = crypto.randomUUID()
   await runQueueCommand(
@@ -337,7 +340,7 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
     t.queue,
     key,
     { action: 'call', entryId: id, version: 0 },
-    now + 2 * minute
+    now + 2 * minute,
   )
   await expect(
     runQueueCommand(
@@ -346,8 +349,8 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
       t.queue,
       key,
       { action: 'cancel', entryId: id, version: 1 },
-      now + 3 * minute
-    )
+      now + 3 * minute,
+    ),
   ).rejects.toThrow('idempotency_conflict')
   await expect(
     runQueueCommand(
@@ -356,11 +359,11 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
       t.queue,
       crypto.randomUUID(),
       { action: 'complete', entryId: id, version: 0 },
-      now + 3 * minute
-    )
+      now + 3 * minute,
+    ),
   ).rejects.toThrow('version_conflict')
   const evidence = await env.DB.prepare(
-    'SELECT predicted_at,error_minutes FROM queue_wait_evidence WHERE entry_id=?'
+    'SELECT predicted_at,error_minutes FROM queue_wait_evidence WHERE entry_id=?',
   )
     .bind(id)
     .first()
@@ -369,7 +372,7 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
     'error measured against initial forecast',
     now + 2 * minute,
     evidence,
-    { predicted_at: now, error_minutes: 2 }
+    { predicted_at: now, error_minutes: 2 },
   )
 })
 it('Q-BOUNDARIES D1 learning retains only the last 30 completed durations', async () => {
@@ -389,7 +392,7 @@ it('Q-BOUNDARIES D1 learning retains only the last 30 completed durations', asyn
         t.queue,
         crypto.randomUUID(),
         { action, entryId: id, version },
-        time
+        time,
       )
     now += (duration + 2) * minute
     if (sample === 30 || sample === 31)
@@ -398,9 +401,9 @@ it('Q-BOUNDARIES D1 learning retains only the last 30 completed durations', asyn
         `completed ${sample}`,
         now,
         (await loadQueueState(env, t.queue, now)).resources.find(
-          (r) => r.spaceId === 'terrace' && r.seats === 4
+          (r) => r.spaceId === 'terrace' && r.seats === 4,
         )?.averageMinutes,
-        sample === 30 ? 77 : 59
+        sample === 30 ? 77 : 59,
       )
   }
 }, 30_000)

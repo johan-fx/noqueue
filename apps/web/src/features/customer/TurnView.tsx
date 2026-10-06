@@ -1,0 +1,365 @@
+import { Link } from 'react-router'
+import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
+import type { Entry } from '@noqueue/contracts/queue'
+import { Button } from '@/components/ui/button'
+import {
+  Stepper,
+  StepperItem,
+  StepperIndicator,
+} from '@/components/reui/stepper'
+import { CustomerFooter, type Locale } from './shared'
+
+export function TurnView({
+  entry,
+  locale,
+  now,
+  updatedAt,
+  joined = false,
+  onAction,
+}: {
+  entry: Entry
+  locale: Locale
+  now: number
+  updatedAt: number
+  joined?: boolean
+  onAction: (action: 'update' | 'cancel' | 'yield') => void
+}) {
+  const c = entry.customer!,
+    es = locale === 'es',
+    phase = c.phase
+  const arrived = phase === 'arrived',
+    expired = phase === 'expired',
+    cancelled = phase === 'cancelled',
+    approaching = phase === 'approaching',
+    called = phase === 'called'
+  const active = !arrived && !expired && !cancelled
+  const step = arrived || called ? 3 : approaching ? 2 : 1
+  const titles = {
+    waiting: es
+      ? `Estás en la lista de espera de ${c.service.venueName}`
+      : `You are on the waiting list at ${c.service.venueName}`,
+    approaching: es ? 'Ya casi es tu turno' : 'It is almost your turn',
+    called: es ? '¡Es tu turno!' : 'It is your turn!',
+    arrived: es ? 'Se ha confirmado tu llegada' : 'Your arrival is confirmed',
+    expired: es
+      ? `Lo sentimos, tu turno en ${c.service.venueName} ha expirado`
+      : `Sorry, your turn at ${c.service.venueName} has expired`,
+    cancelled: es
+      ? 'Has abandonado la lista'
+      : 'You have left the waiting list',
+  }
+  const descriptions = {
+    waiting: es
+      ? 'Te avisaremos aquí cuando sea el momento de acercarte.'
+      : 'This page will let you know when it is time to approach.',
+    approaching: es
+      ? `Es un buen momento para ir acercándote con calma a ${c.service.venueName}.`
+      : `Now is a good time to make your way to ${c.service.venueName}.`,
+    called: es
+      ? 'Acércate al restaurante. El personal confirmará tu llegada.'
+      : 'Please come to the restaurant. Staff will confirm your arrival.',
+    arrived: es
+      ? 'Esperamos que disfrutes de tu experiencia con nosotros.'
+      : 'We hope you enjoy your experience with us.',
+    expired: es
+      ? 'No hemos confirmado tu llegada a tiempo, por lo que tu turno ya no está activo. Si aún quieres venir, puedes volver a unirte a la lista de espera.'
+      : 'Your arrival was not confirmed in time, so your turn is no longer active. You can join the waiting list again.',
+    cancelled: es
+      ? 'Tu turno ya no está activo. Puedes volver a apuntarte cuando quieras.'
+      : 'Your turn is no longer active. You can join again whenever you like.',
+  }
+  const remaining =
+    c.arrivalDeadlineAt == null ? null : Math.max(0, c.arrivalDeadlineAt - now)
+  const countdown =
+    remaining == null
+      ? '—'
+      : `${Math.floor(remaining / 60000)}:${String(
+          Math.floor(remaining / 1000) % 60,
+        ).padStart(2, '0')}`
+  const known =
+    entry.estimateQuality !== 'unknown' && entry.estimateQuality !== undefined
+  const color = arrived
+    ? 'text-green-600'
+    : expired
+    ? 'text-red-700'
+    : approaching || called
+    ? 'text-orange-500'
+    : 'text-gray-700'
+  const labels = es
+    ? [
+        'Lista virtual',
+        arrived ? 'Mesa asignada' : 'En marcha',
+        '¡Es tu turno!',
+      ]
+    : ['Waiting list', arrived ? 'Table assigned' : 'On your way', 'Your turn!']
+  return (
+    <>
+      <div className="flex flex-1 flex-col gap-6 px-4 pt-2 pb-6">
+        <div className="space-y-2">
+          <h1 className="text-2xl leading-8 font-medium text-gray-950">
+            {titles[phase]}
+          </h1>
+          <p className="text-base leading-6 text-gray-500">
+            {descriptions[phase]}
+          </p>
+        </div>
+        {!expired && !cancelled && (
+          <Stepper
+            value={step}
+            role="list"
+            aria-label={es ? 'Progreso del turno' : 'Queue progress'}
+            className="relative flex justify-between pt-1"
+          >
+            <div
+              aria-hidden="true"
+              className="absolute top-2.5 right-4 left-0 h-0.5 bg-muted"
+            />
+            <div
+              aria-hidden="true"
+              className={`absolute top-2.5 left-0 h-0.5 bg-gray-700 ${
+                step === 3 ? 'right-4' : step === 2 ? 'w-1/2' : 'w-0'
+              }`}
+            />
+            {labels.map((label, index) => (
+              <StepperItem
+                key={index}
+                step={index + 1}
+                role="listitem"
+                aria-current={step === index + 1 ? 'step' : undefined}
+                className="relative !flex-none !flex-col !items-start gap-2"
+              >
+                <StepperIndicator
+                  className={`size-[13px] bg-transparent data-[state=active]:bg-gray-700 data-[state=completed]:bg-transparent ${
+                    index === 1
+                      ? 'self-center'
+                      : index === 2
+                      ? 'self-end mr-4'
+                      : ''
+                  }`}
+                />
+                <span
+                  className={`text-base ${
+                    index + 1 > step ? 'text-gray-400' : ''
+                  }`}
+                >
+                  {label}
+                </span>
+              </StepperItem>
+            ))}
+          </Stepper>
+        )}
+        {!cancelled && (
+          <div
+            aria-label={
+              active && !called && known
+                ? es
+                  ? `Espera aproximada: ${entry.etaMinutes} min`
+                  : `Estimated wait: ${entry.etaMinutes} min`
+                : undefined
+            }
+            className={`relative mx-auto grid size-43 shrink-0 place-items-center ${color}`}
+          >
+            <svg
+              className="absolute inset-0 size-full -rotate-90"
+              viewBox="0 0 172 172"
+              aria-hidden="true"
+            >
+              <circle
+                cx="86"
+                cy="86"
+                r="80"
+                fill="none"
+                stroke="var(--secondary)"
+                strokeWidth="12"
+              />
+              <circle
+                cx="86"
+                cy="86"
+                r="80"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="12"
+                strokeLinecap="round"
+                strokeDasharray={
+                  arrived || expired
+                    ? undefined
+                    : approaching
+                    ? '435 503'
+                    : '340 503'
+                }
+              />
+            </svg>
+            {arrived ? (
+              <div className="relative grid justify-items-center gap-3 text-xs">
+                <CheckCheck className="size-6" />
+                <p>{es ? 'Llegada confirmada' : 'Arrival confirmed'}</p>
+              </div>
+            ) : (
+              <div className="relative text-center">
+                <p
+                  className={`text-4xl leading-10 ${
+                    active && !called ? 'text-black' : ''
+                  }`}
+                >
+                  {expired
+                    ? '0'
+                    : called
+                    ? countdown
+                    : known
+                    ? entry.etaMinutes
+                    : '—'}
+                </p>
+                <p
+                  className={`mt-1 max-w-28 text-xs leading-4 ${
+                    !expired && !called ? 'text-muted-foreground' : ''
+                  }`}
+                >
+                  {expired || called ? (
+                    es ? (
+                      'minutos para llegar'
+                    ) : (
+                      'minutes to arrive'
+                    )
+                  ) : known ? (
+                    <>
+                      {es ? 'minutos' : 'minutes'}
+                      <br />
+                      {es ? 'aprox.' : 'approx.'}
+                    </>
+                  ) : es ? (
+                    'Espera pendiente de datos'
+                  ) : (
+                    'Wait estimate not yet available'
+                  )}
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+        {arrived ? (
+          <p className="mx-auto flex items-center gap-3 rounded-lg bg-gray-50 p-4">
+            <Timer className="size-5" />
+            <span>
+              {es ? 'Hora de llegada' : 'Arrival time'}:{' '}
+              <strong>
+                {c.arrivedAt == null
+                  ? '—'
+                  : new Intl.DateTimeFormat(locale, {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    }).format(c.arrivedAt)}
+              </strong>
+            </span>
+          </p>
+        ) : (
+          <div className="space-y-2 text-center">
+            <div
+              className={`mx-auto w-fit rounded-xl p-4 ${
+                expired ? 'bg-red-50 text-red-700' : 'bg-secondary'
+              }`}
+            >
+              <p>
+                {es ? 'Tu turno:' : 'Your turn:'}{' '}
+                <span className="ml-1 text-2xl">{entry.code}</span>
+              </p>
+              {active && !called && (
+                <p>
+                  {es ? 'Hay ' : ''}
+                  <strong>
+                    {Math.max(0, entry.position - 1)} {es ? 'turnos' : 'turns'}
+                  </strong>{' '}
+                  {es ? 'delante de ti' : 'ahead of you'}
+                </p>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {es ? 'Última actualización:' : 'Last update:'}{' '}
+              {new Intl.DateTimeFormat(locale, {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+              }).format(updatedAt)}
+            </p>
+          </div>
+        )}
+        {approaching && (
+          <div className="flex items-start gap-3 rounded-lg bg-gray-50 p-4">
+            <Timer className="mt-1 size-6 shrink-0" />
+            <div>
+              <p className="font-semibold">
+                {es
+                  ? '¿Crees que vas a llegar tarde?'
+                  : 'Think you might be late?'}
+              </p>
+              <p className="text-gray-500">
+                {es
+                  ? 'Puedes pasar turno o abandonar la lista.'
+                  : 'You can yield your turn or leave the list.'}
+              </p>
+            </div>
+          </div>
+        )}
+        {called && remaining === 0 && (
+          <p role="status">
+            {es
+              ? 'Comprobando el estado del turno…'
+              : 'Checking your turn status…'}
+          </p>
+        )}
+        {joined && phase === 'waiting' && (
+          <div
+            role="status"
+            className="mt-auto flex gap-3 rounded-lg border border-green-600 p-4 text-sm"
+          >
+            <CircleCheck className="size-4 shrink-0 text-green-600" />
+            <div>
+              <p className="font-medium text-foreground">
+                {es
+                  ? '¡Ya estás en lista de espera!'
+                  : 'You are on the waiting list!'}
+              </p>
+              <p className="mt-1 text-muted-foreground">
+                {es
+                  ? 'Guarda este enlace privado para consultar tu turno.'
+                  : 'Save this private link to check your turn.'}
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+      {active && !called && (
+        <CustomerFooter>
+          <Button
+            variant="outline"
+            className="border-red-700 text-red-700"
+            onClick={() => onAction('cancel')}
+          >
+            {es ? 'Abandonar la lista' : 'Leave the list'}
+          </Button>
+          <Button
+            variant="outline"
+            className="border-gray-800"
+            onClick={() => onAction(approaching ? 'yield' : 'update')}
+          >
+            {approaching
+              ? es
+                ? 'Pasar turno'
+                : 'Yield turn'
+              : es
+              ? 'Modificar'
+              : 'Edit'}
+          </Button>
+        </CustomerFooter>
+      )}
+      {(expired || cancelled) && (
+        <CustomerFooter>
+          <Button
+            render={<Link to={`/v/${c.service.venueId}?lang=${locale}`} />}
+          >
+            {es ? 'Seleccionar lista de espera' : 'Choose a waiting list'}
+          </Button>
+        </CustomerFooter>
+      )}
+    </>
+  )
+}

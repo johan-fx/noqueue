@@ -81,6 +81,8 @@ export const serviceSchema = z
     type: z.enum(['restaurant', 'reception', 'pool']),
     capacity: z.number().int().min(1).max(10000),
     averageMinutes: z.number().int().min(1).max(1440),
+    approachTurns: z.number().int().min(0).max(100).optional(),
+    approachMinutes: z.number().int().min(0).max(1440).optional(),
     graceMinutes: z.number().int().min(1).max(120),
     cutoffMinutes: z.number().int().min(0).max(240),
     twentyFourHours: z.boolean(),
@@ -222,6 +224,7 @@ export const queueCommandSchema = z.object({
     'cancel',
     'no_show',
     'skip',
+    'restore',
   ]),
   overrideReason: z.string().trim().min(3).max(300).optional(),
 })
@@ -229,6 +232,7 @@ export type QueueCommand = z.infer<typeof queueCommandSchema>
 export const queueSettingsSchema = serviceSchema.extend({
   version: z.number().int().min(0),
   open: z.boolean(),
+  applyApproachToActive: z.boolean().optional(),
 })
 export const membershipUpdateSchema = z.object({
   role: z.enum(['venue_manager', 'queue_staff', 'viewer']),

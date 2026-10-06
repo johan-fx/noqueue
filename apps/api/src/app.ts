@@ -1,3 +1,4 @@
+import { customerRoutes } from './features/queue/customer-routes'
 import { publicServices } from './features/staff/public'
 import { createAuth } from './auth/server'
 import { readLocalMail } from './auth/mail'
@@ -81,6 +82,7 @@ app.all('/auth/*', async (c) => {
 })
 app.route('/staff', staffRoutes)
 app.route('/public/services', publicServices)
+app.route('/public', customerRoutes)
 
 // A local-only mailbox for manually following Better Auth verification links.
 // It is both runtime- and host-gated, and requires a local secret header.

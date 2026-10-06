@@ -13,10 +13,7 @@ import { setupNetwork } from '@msw/cloudflare'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
 import { createAuth } from './auth/server'
-import {
-  provisionSchema,
-  type ProvisionInput,
-} from '@noqueue/contracts/staff'
+import { provisionSchema, type ProvisionInput } from '@noqueue/contracts/staff'
 import { provision } from './features/staff/provision'
 const network = setupNetwork(),
   mails = new Map<string, string>()
@@ -582,8 +579,7 @@ describe('manual username authentication and scoped provisioning', () => {
       ).status,
     ).toBe(200)
     expect(
-      (await request(`/staff/venues/${t.venueId}/queues`, other.cookie))
-        .status,
+      (await request(`/staff/venues/${t.venueId}/queues`, other.cookie)).status,
     ).toBe(404)
     expect(
       (
@@ -727,10 +723,7 @@ describe('platform establishment navigation', () => {
     expect(new Set(seen).size).toBe(105)
     expect(
       await (
-        await request(
-          '/staff/commercial/organizations?page=6',
-          t.sales.cookie,
-        )
+        await request('/staff/commercial/organizations?page=6', t.sales.cookie)
       ).json(),
     ).toEqual({ items: [], page: 6, hasMore: false })
     for (const page of ['0', '-1', '1.5', 'abc', '9007199254740991'])
@@ -770,8 +763,7 @@ describe('platform establishment navigation', () => {
     expect((await request(path, other.cookie)).status).toBe(404)
     expect((await request(path, t.owner.cookie)).status).toBe(403)
     expect(
-      (await request('/staff/commercial/venues/missing', admin.cookie))
-        .status,
+      (await request('/staff/commercial/venues/missing', admin.cookie)).status,
     ).toBe(404)
     expect((await request(path)).status).toBe(401)
     for (const cookie of [admin.cookie, t.sales.cookie])
@@ -898,6 +890,12 @@ it('audits explicit order overrides and preserves cancellation, no-show and skip
         .first<{ reason: string }>()
     )?.reason,
   ).toBe('Accessibility accommodation')
+  // Manual no-show applies to legacy calls without a persisted arrival deadline.
+  await env.DB.prepare(
+    'UPDATE queue_entry SET arrival_deadline_at=NULL WHERE id=?',
+  )
+    .bind(ids[2]!)
+    .run()
   expect((await command(2, 1, 'no_show')).status).toBe(409)
   await env.DB.prepare('UPDATE queue_entry SET called_at=? WHERE id=?')
     .bind(Date.now() - 6 * 60000, ids[2]!)
@@ -1164,12 +1162,7 @@ it('calls a fallback party without overriding a preferred-space-only older party
   await env.DB.prepare(
     "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,'terrace:2:0','terrace',2,?,?)",
   )
-    .bind(
-      occupied,
-      t.queueId,
-      Date.now() - 10 * 60000,
-      Date.now() - 10 * 60000,
-    )
+    .bind(occupied, t.queueId, Date.now() - 10 * 60000, Date.now() - 10 * 60000)
     .run()
   await t.add(2, 2)
   const fallback = await t.add(3, 4)
@@ -1463,7 +1456,8 @@ it('exposes safe service metadata and handles scoped manual/public detailed join
     key,
   )
   expect(manual.status, await manual.clone().text()).toBe(201)
-  const created = await manual.json()
+  const created =
+    (await manual.json()) as import('@noqueue/contracts/queue').Entry
   expect(
     await (
       await request(
@@ -1474,7 +1468,10 @@ it('exposes safe service metadata and handles scoped manual/public detailed join
         key,
       )
     ).json(),
-  ).toEqual(created)
+  ).toEqual({
+    ...created,
+    customer: { ...created.customer, serverNow: expect.any(Number) },
+  })
   expect(
     (
       await request(
@@ -1500,7 +1497,7 @@ it('exposes safe service metadata and handles scoped manual/public detailed join
         `/public/services/${t.queueId}/entries`,
         '',
         'POST',
-        { partySize: 2, locale: 'es' },
+        { displayName: 'New Guest', partySize: 2, locale: 'es' },
         crypto.randomUUID(),
       )
     ).status,
@@ -1514,7 +1511,7 @@ it('exposes safe service metadata and handles scoped manual/public detailed join
     space: { name: 'Interior', source: 'preferred' },
   })
   expect(entries[2]).toMatchObject({
-    displayName: null,
+    displayName: 'New Guest',
     receptionService: null,
     preferredSpaceId: null,
     space: null,
@@ -1559,7 +1556,7 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
     `/public/services/${t.queueId}/entries`,
     '',
     'POST',
-    { partySize: 4, locale: 'es' },
+    { displayName: 'Guest', partySize: 4, locale: 'es' },
     crypto.randomUUID(),
   )
   expect(r.status).toBe(201)
@@ -1651,4 +1648,99 @@ it('manual consent passes through the coordinator and durably queues encrypted c
   expect(
     await decryptPhone(env.PII_ENCRYPTION_KEY, rows.results[0]!.phone_cipher),
   ).toBe('+34600000000')
+})
+
+it('serves anonymous venue aggregates and protects token-bound commands, retries and suspension', async () => {
+  const t = await tenant()
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
+    .bind(t.queueId)
+    .run()
+  await env.DB.prepare('DELETE FROM staff_rate').run()
+  const joined = await request(
+    `/public/services/${t.queueId}/entries`,
+    '',
+    'POST',
+    {
+      displayName: 'Private Guest',
+      partySize: 3,
+      preferredSpaceId: 'fastest',
+      locale: 'es',
+    },
+    crypto.randomUUID(),
+  )
+  expect(joined.status).toBe(201)
+  const entry = (await joined.json()) as {
+    recoveryToken: string
+    customer: { version: number }
+  }
+  const venueResponse = await request(`/public/venues/${t.venueId}/services`)
+  expect(venueResponse.headers.get('Cache-Control')).toBe('no-store')
+  const venue = (await venueResponse.json()) as {
+    services: { waitingPeople: number; averageWaitMinutes: number | null }[]
+  }
+  expect(venue.services[0]?.waitingPeople).toBe(3)
+  expect(venue.services[0]?.averageWaitMinutes).toBeNull()
+  expect(JSON.stringify(venue)).not.toContain('Private Guest')
+  expect(JSON.stringify(venue)).not.toContain(entry.recoveryToken)
+  const path = `/public/entries/${entry.recoveryToken}/commands`
+  const command = { action: 'cancel', version: entry.customer.version },
+    key = crypto.randomUUID()
+  const forbidden = await app.request(
+    `${origin}/api/v1${path}`,
+    {
+      method: 'POST',
+      headers: {
+        Origin: 'https://other.invalid',
+        'Content-Type': 'application/json',
+        'Idempotency-Key': key,
+      },
+      body: JSON.stringify(command),
+    },
+    env,
+  )
+  expect(forbidden.status).toBe(403)
+  expect(
+    (
+      await request(
+        '/public/entries/' + 'a'.repeat(64) + '/commands',
+        '',
+        'POST',
+        command,
+        key,
+      )
+    ).status,
+  ).toBe(404)
+  expect(
+    (
+      await request(
+        path,
+        '',
+        'POST',
+        { ...command, entryId: 'another-entry' },
+        key,
+      )
+    ).status,
+  ).toBe(400)
+  expect((await request(path, '', 'POST', command, key)).status).toBe(200)
+  expect((await request(path, '', 'POST', command, key)).status).toBe(200)
+  expect(
+    (await request(path, '', 'POST', { action: 'yield', version: 0 }, key))
+      .status,
+  ).toBe(409)
+  const snapshot = (await (
+    await request(`/public/entries/${entry.recoveryToken}`)
+  ).json()) as { status: string }
+  expect(snapshot.status).toBe('cancelled')
+  for (let i = 0; i < 31; i++) await request(path, '', 'POST', command, key)
+  expect((await request(path, '', 'POST', command, key)).status).toBe(429)
+  await env.DB.prepare('DELETE FROM staff_rate').run()
+  await env.DB.prepare(
+    "UPDATE tenant_account SET status='suspended' WHERE organization_id=?",
+  )
+    .bind(t.organizationId)
+    .run()
+  expect((await request(`/public/venues/${t.venueId}/services`)).status).toBe(
+    404,
+  )
+  expect((await request(path, '', 'POST', command, key)).status).toBe(404)
 })

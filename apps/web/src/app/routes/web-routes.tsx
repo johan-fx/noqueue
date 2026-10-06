@@ -1,4 +1,4 @@
-import { DemoQueue, DemoEntry } from '@/features/join-queue/web/DemoQueue'
+import { DemoQueue } from '@/features/join-queue/web/DemoQueue'
 import { WebJoinQueueScreen } from '@/features/join-queue/web/WebJoinQueueScreen'
 import type { RouteObject } from 'react-router'
 import { WebShell } from '../shells/WebShell'
@@ -29,16 +29,28 @@ export const webRoutes: RouteObject[] = [
     }),
   },
   {
+    path: '/v/:venueId',
+    lazy: async () => ({
+      Component: (await import('@/features/customer/PublicVenue')).PublicVenue,
+    }),
+  },
+  {
+    path: '/q/:queueId',
+    lazy: async () => ({
+      Component: (await import('@/features/customer/PublicQueue')).PublicQueue,
+    }),
+  },
+  {
+    path: '/t/:recoveryToken',
+    lazy: async () => ({
+      Component: (await import('@/features/customer/CustomerTurn'))
+        .CustomerTurn,
+    }),
+  },
+  {
     element: <WebShell />,
     children: [
       { path: '/q/demo-queue', element: <DemoQueue /> },
-      {
-        path: '/q/:queueId',
-        lazy: async () => ({
-          Component: (await import('@/features/staff/PublicQueue')).PublicQueue,
-        }),
-      },
-      { path: '/t/:recoveryToken', element: <DemoEntry /> },
       { path: '*', element: <WebJoinQueueScreen /> },
     ],
   },

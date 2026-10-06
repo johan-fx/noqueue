@@ -69,9 +69,7 @@ type DashboardProps =
 
 export function Dashboard(props: DashboardProps) {
   const { venue } = props
-  const creationRequest = useRef<{ payload: string; key: string } | null>(
-    null,
-  )
+  const creationRequest = useRef<{ payload: string; key: string } | null>(null)
   const [drawer, setDrawer] = useState<
     'create' | 'edit' | 'members' | 'queue' | null
   >(null)
@@ -135,8 +133,7 @@ export function Dashboard(props: DashboardProps) {
     props.mode === 'commercial'
       ? ['queue.read', 'queue.configure', 'members.manage']
       : roleCapabilities[props.venue.role]
-  const queueLabel =
-    props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
+  const queueLabel = props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
   const queue = queues.find((q) => q.id === selected)
   useEffect(() => {
     let live = true
@@ -218,10 +215,22 @@ export function Dashboard(props: DashboardProps) {
         setLastSync('')
         setSelected(result.id)
       } else if (drawer === 'edit' && queue) {
+        const approachChanged =
+          (config.approachTurns ?? 2) !== (queue.config.approachTurns ?? 2) ||
+          (config.approachMinutes ?? 10) !==
+            (queue.config.approachMinutes ?? 10)
+        if (
+          approachChanged &&
+          !window.confirm(
+            'Los nuevos umbrales de acercamiento se aplicarán a los turnos en espera. ¿Quieres continuar?',
+          )
+        )
+          return
         await api(`/queues/${queue.id}`, 'PATCH', {
           ...config,
           version: queue.version,
           open: !!queue.open,
+          applyApproachToActive: approachChanged,
         })
       } else return
       setDrawer(null)
@@ -259,7 +268,7 @@ export function Dashboard(props: DashboardProps) {
       entryId: snapshot.entry.id,
       version: snapshot.entry.version,
       action: snapshot.action,
-      ...(snapshot.action === 'call' && overrideReason.trim()
+      ...(['call', 'restore'].includes(snapshot.action) && overrideReason.trim()
         ? { overrideReason: overrideReason.trim() }
         : {}),
     }
@@ -325,9 +334,7 @@ export function Dashboard(props: DashboardProps) {
         (!entry.preferredSpaceId || entry.preferredSpaceId === 'fastest')) ||
         entry.callable === true),
   )
-  function openQueueOperation(
-    action: NonNullable<typeof lifecycle>['action'],
-  ) {
+  function openQueueOperation(action: NonNullable<typeof lifecycle>['action']) {
     if (!queue || busy || saving || lifecycle) return
     setLifecycle({
       queueId: queue.id,
@@ -386,9 +393,7 @@ export function Dashboard(props: DashboardProps) {
             {permissions.includes('queue.configure') && (
               <CardAction>
                 <Button
-                  onClick={(event) =>
-                    openDrawer('create', event.currentTarget)
-                  }
+                  onClick={(event) => openDrawer('create', event.currentTarget)}
                 >
                   <Plus aria-hidden="true" />
                   Añadir servicio
@@ -464,8 +469,7 @@ export function Dashboard(props: DashboardProps) {
                       </CardHeader>
                       <CardContent>
                         {(service.readiness?.state === 'pending' ||
-                          occupancyAction(service) ===
-                            'confirm_inventory') && (
+                          occupancyAction(service) === 'confirm_inventory') && (
                           <Alert className="mb-3">
                             <Info aria-hidden="true" />
                             <AlertTitle>
@@ -506,29 +510,19 @@ export function Dashboard(props: DashboardProps) {
                           </Alert>
                         )}
                         {service.readiness?.state === 'disabled' && (
-                          <p
-                            className="mb-3 text-sm font-medium"
-                            role="status"
-                          >
+                          <p className="mb-3 text-sm font-medium" role="status">
                             Desactivada manualmente
                           </p>
                         )}
                         {service.readiness?.state === 'active' && (
-                          <p
-                            className="mb-3 text-sm font-medium"
-                            role="status"
-                          >
+                          <p className="mb-3 text-sm font-medium" role="status">
                             Gestión inteligente activa
                           </p>
                         )}
                         <dl className="grid grid-cols-2 gap-3 text-sm">
                           <div>
-                            <dt className="text-muted-foreground">
-                              Capacidad
-                            </dt>
-                            <dd className="font-medium">
-                              {service.capacity}
-                            </dd>
+                            <dt className="text-muted-foreground">Capacidad</dt>
+                            <dd className="font-medium">{service.capacity}</dd>
                           </div>
                           <div>
                             <dt className="text-muted-foreground">
@@ -581,9 +575,7 @@ export function Dashboard(props: DashboardProps) {
               </div>
             ) : (
               <p className="py-10 text-center text-muted-foreground">
-                {loading
-                  ? 'Cargando servicios…'
-                  : 'Todavía no hay servicios.'}
+                {loading ? 'Cargando servicios…' : 'Todavía no hay servicios.'}
               </p>
             )}
           </CardContent>
@@ -720,10 +712,9 @@ export function Dashboard(props: DashboardProps) {
                 onAction={selectCommand}
               />
             )}
-            {drawer === 'members' &&
-              permissions.includes('members.manage') && (
-                <Members venueId={venue.id} name={venue.name} compact />
-              )}
+            {drawer === 'members' && permissions.includes('members.manage') && (
+              <Members venueId={venue.id} name={venue.name} compact />
+            )}
           </div>
           {(drawer === 'members' ||
             (drawer === 'queue' &&
@@ -826,21 +817,22 @@ export function Dashboard(props: DashboardProps) {
                   {commandError}
                 </p>
               )}
-              {pending?.action === 'call' && (
+              {pending && ['call', 'restore'].includes(pending.action) && (
                 <label className="space-y-2 text-sm">
-                  Motivo de excepción al orden (opcional)
+                  {pending.action === 'restore'
+                    ? 'Motivo de restauración (obligatorio)'
+                    : 'Motivo de excepción al orden (opcional)'}
                   <input
                     className="w-full rounded border p-2"
                     value={overrideReason}
                     minLength={3}
                     maxLength={300}
-                    onChange={(event) =>
-                      setOverrideReason(event.target.value)
-                    }
+                    onChange={(event) => setOverrideReason(event.target.value)}
                   />
                   <span className="text-muted-foreground">
-                    Solo para una llamada deliberada fuera de orden. Se
-                    auditará.
+                    {pending.action === 'restore'
+                      ? 'Volverá a espera sin recuperar una mesa ya reasignada. Se auditará el motivo.'
+                      : 'Solo para una llamada deliberada fuera de orden. Se auditará.'}
                   </span>
                 </label>
               )}
@@ -851,9 +843,7 @@ export function Dashboard(props: DashboardProps) {
                       ? 'border-destructive text-destructive hover:text-destructive'
                       : ''
                   }`}
-                  variant={
-                    pending?.action === 'cancel' ? 'outline' : 'default'
-                  }
+                  variant={pending?.action === 'cancel' ? 'outline' : 'default'}
                   disabled={busy || commandStale}
                   onClick={() => void command()}
                 >

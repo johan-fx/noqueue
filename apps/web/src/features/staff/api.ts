@@ -6,6 +6,9 @@ export class ApiError extends Error {
   }
 }
 const messages: Record<string, string> = {
+  restore_reason_required: 'Indica un motivo para restaurar el turno.',
+  active_approach_confirmation_required:
+    'Confirma la aplicación de los umbrales a los turnos en espera.',
   whatsapp_consent_required:
     'El cliente debe facilitar su teléfono y consentir los avisos de WhatsApp.',
   whatsapp_unavailable:

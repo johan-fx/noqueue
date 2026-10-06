@@ -1,6 +1,5 @@
 import { serviceJoinSchema } from '@noqueue/contracts/queue'
-import { serviceSchema } from '@noqueue/contracts/staff'
-import { normalizeConfig } from '../queue/projection'
+import { publicService } from '../queue/public-context'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
@@ -17,28 +16,8 @@ publicServices.use('*', async (c, next) => {
   await next()
 })
 publicServices.get('/:id', async (c) => {
-  const row = await c.env.DB.prepare(
-    `SELECT q.id,q.name,q.open,q.config,v.name AS venueName FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
-  )
-    .bind(c.req.param('id'))
-    .first()
-  if (!row) return c.json({ error: 'not_found' }, 404)
-  const { config: rawConfig, ...summary } = row
-  const config = normalizeConfig(
-    serviceSchema.parse(JSON.parse(String(rawConfig))),
-  )
-  return c.json({
-    ...summary,
-    type: config.type,
-    receptionServices: config.receptionServices,
-    spaces: config.spaces.map((space) => ({
-      id: space.id!,
-      name: space.name,
-      maxPartySize: space.tableTypes?.length
-        ? Math.max(...space.tableTypes.map((type) => type.seats))
-        : 20,
-    })),
-  })
+  const service = await publicService(c.env, c.req.param('id'))
+  return service ? c.json(service) : c.json({ error: 'not_found' }, 404)
 })
 publicServices.post('/:id/entries', async (c) => {
   if (c.req.header('Origin') !== c.env.PUBLIC_APP_ORIGIN)
@@ -53,6 +32,9 @@ publicServices.post('/:id/entries', async (c) => {
     .bind(c.req.param('id'))
     .first()
   if (!row) return c.json({ error: 'not_found' }, 404)
+  const service = await publicService(c.env, c.req.param('id'))
+  if (service?.type === 'restaurant' && !parsed.data.displayName?.trim())
+    return c.json({ error: 'name_required' }, 400)
   const bucket = Math.floor(Date.now() / 60000)
   const ip = await hmac(
     await hash(c.env.BETTER_AUTH_SECRET),
@@ -63,8 +45,7 @@ publicServices.post('/:id/entries', async (c) => {
   )
     .bind(`${ip}:${bucket}`)
     .first<{ count: number }>()
-  if (!limit || limit.count > 10)
-    return c.json({ error: 'rate_limited' }, 429)
+  if (!limit || limit.count > 10) return c.json({ error: 'rate_limited' }, 429)
   const namespace =
     c.env.APP_ENV === 'local'
       ? c.env.QUEUE_COORDINATOR

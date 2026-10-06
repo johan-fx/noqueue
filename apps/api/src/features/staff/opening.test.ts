@@ -440,9 +440,7 @@ it.each(['manual_disabled', 'legacy_pending'] as const)(
 it('preserves legacy unknown-inventory calls without inventing allocations', async () => {
   const t = await setup(),
     id = await entry(t.queue)
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queue)
-    .run()
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?').bind(t.queue).run()
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     entryId: id,
     version: 0,
@@ -576,9 +574,7 @@ it('confirms inventory in place while preserving admissions and allocations', as
   const t = await setup(),
     reserved = await entry(t.queue, 'called'),
     waiting = await entry(t.queue)
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queue)
-    .run()
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?').bind(t.queue).run()
   await env.DB.prepare(
     "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,'terrace:4:0','terrace',4,?)",
   )
@@ -700,9 +696,7 @@ it('rejects stale initial confirmations and repairs an invalidated inventory wit
 it('serializes competing initial confirmations and refuses incomplete configuration', async () => {
   const t = await setup(),
     coordinator = env.QUEUE_COORDINATOR.getByName(t.queue)
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queue)
-    .run()
+  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?').bind(t.queue).run()
   const context = await openingContext(env, t.queue)
   const body = {
     action: 'confirm_inventory' as const,
@@ -811,9 +805,9 @@ it('keeps opt-out through configuration and reopen, preserves capacity, and requ
     version: ctx.version,
     open: true,
   })
-  expect(
-    (await loadQueueState(env, t.queue)).config?.intelligencePolicy,
-  ).toBe('disabled')
+  expect((await loadQueueState(env, t.queue)).config?.intelligencePolicy).toBe(
+    'disabled',
+  )
   ctx = await openingContext(env, t.queue)
   await expect(
     configureQueue(env, t.actor, t.queue, {
@@ -828,9 +822,7 @@ it('keeps opt-out through configuration and reopen, preserves capacity, and requ
     contextToken: ctx.contextToken,
   })
   await open(t, 2)
-  expect((await openingContext(env, t.queue)).readiness.state).toBe(
-    'disabled',
-  )
+  expect((await openingContext(env, t.queue)).readiness.state).toBe('disabled')
   const id = await entry(t.queue)
   // The salon remains the only unheld resource; consume it and reject the next call even while disabled.
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
@@ -862,9 +854,9 @@ it('keeps opt-out through configuration and reopen, preserves capacity, and requ
       },
     ],
   })
-  expect(
-    (await loadQueueState(env, t.queue)).config?.intelligencePolicy,
-  ).toBe('disabled')
+  expect((await loadQueueState(env, t.queue)).config?.intelligencePolicy).toBe(
+    'disabled',
+  )
   await setPolicy('enable_intelligence')
   ctx = await openingContext(env, t.queue)
   expect(ctx.readiness.state).toBe('pending')
@@ -930,9 +922,7 @@ it('rejects stale policy snapshots and replays a post-commit policy change only 
     fail.mockRestore()
   }
   await runLifecycleCommand(env, t.actor, t.queue, key, body)
-  expect((await openingContext(env, t.queue)).readiness.state).toBe(
-    'disabled',
-  )
+  expect((await openingContext(env, t.queue)).readiness.state).toBe('disabled')
   expect(
     (
       await env.DB.prepare(
@@ -997,10 +987,7 @@ it('persists encrypted service details, binds projection/calls, audits manual jo
     }>()
   expect(row!.display_name_cipher).not.toContain('María')
   expect(
-    await decryptDisplayName(
-      env.PII_ENCRYPTION_KEY,
-      row!.display_name_cipher,
-    ),
+    await decryptDisplayName(env.PII_ENCRYPTION_KEY, row!.display_name_cipher),
   ).toBe('María López')
   expect(row!.preferred_space_id).toBe('terrace')
   expect((await loadQueueState(env, t.queue)).projections[0]).toMatchObject({
@@ -1016,7 +1003,13 @@ it('persists encrypted service details, binds projection/calls, audits manual jo
   ).rejects.toThrow('no_free_compatible_resource')
   expect(
     (await joinQueue(env, t.queue, key, input, false, t.actor)).body,
-  ).toEqual(first.body)
+  ).toEqual({
+    ...first.body,
+    customer: {
+      ...('customer' in first.body ? first.body.customer : {}),
+      serverNow: expect.any(Number),
+    },
+  })
   expect(
     (await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM staff_audit WHERE target_id=? AND action='queue.join'",
@@ -1073,9 +1066,7 @@ it('validates service details and protects active preferred spaces from removal 
     action: 'close',
     contextToken: (await openingContext(env, t.queue)).contextToken,
   })
-  const q = await env.DB.prepare(
-    'SELECT version,config FROM queue WHERE id=?',
-  )
+  const q = await env.DB.prepare('SELECT version,config FROM queue WHERE id=?')
     .bind(t.queue)
     .first<{ version: number; config: string }>()
   const saved = JSON.parse(q!.config)
@@ -1111,8 +1102,7 @@ it('validates service details and protects active preferred spaces from removal 
     ).status,
   ).toBe(201)
   expect(
-    (await joinQueue(env, reception.queue, crypto.randomUUID(), input))
-      .status,
+    (await joinQueue(env, reception.queue, crypto.randomUUID(), input)).status,
   ).toBe(201)
 })
 
@@ -1191,16 +1181,8 @@ it('requires explicit WhatsApp for nonlocal manual joins and only permits the se
   }
   expect(manualJoinRequiresWhatsapp(env)).toBe(false)
   expect(
-    (
-      await joinQueue(
-        env,
-        t.queue,
-        crypto.randomUUID(),
-        input,
-        false,
-        t.actor,
-      )
-    ).status,
+    (await joinQueue(env, t.queue, crypto.randomUUID(), input, false, t.actor))
+      .status,
   ).toBe(201)
   const consented = {
     ...input,
@@ -1263,23 +1245,9 @@ it('recovers committed manual joins after WhatsApp is disabled without sending a
       version: 'whatsapp-queue-updates-v1' as const,
     },
   }
-  const created = await joinQueue(
-    enabled,
-    t.queue,
-    key,
-    input,
-    false,
-    t.actor,
-  )
+  const created = await joinQueue(enabled, t.queue, key, input, false, t.actor)
   expect(created.status).toBe(201)
-  const replay = await joinQueue(
-    disabled,
-    t.queue,
-    key,
-    input,
-    false,
-    t.actor,
-  )
+  const replay = await joinQueue(disabled, t.queue, key, input, false, t.actor)
   expect(replay.status).toBe(200)
   const receipt = created.body as { code: string; recoveryToken: string }
   expect(replay.body).toMatchObject({
@@ -1324,4 +1292,378 @@ it('recovers committed manual joins after WhatsApp is disabled without sending a
       .bind(t.queue)
       .first<{ n: number }>())!.n,
   ).toBe(1)
+})
+
+it('freezes arrival deadlines, rejects late arrival, audits restoration and safely recalls released allocations', async () => {
+  const t = await setup()
+  await open(t, 0)
+  const first = await entry(t.queue),
+    second = await entry(t.queue)
+  const now = Date.now()
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    { action: 'call', entryId: first, version: 0 },
+    now,
+  )
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT arrival_deadline_at FROM queue_entry WHERE id=?',
+      )
+        .bind(first)
+        .first()
+    )?.arrival_deadline_at,
+  ).toBe(now + 300000)
+  const state = await loadQueueState(env, t.queue)
+  const row = await env.DB.prepare('SELECT version,open FROM queue WHERE id=?')
+    .bind(t.queue)
+    .first<{ version: number; open: number }>()
+  await expect(
+    configureQueue(env, t.actor, t.queue, {
+      ...state.config,
+      version: row!.version,
+      open: !!row!.open,
+      approachTurns: 8,
+    }),
+  ).rejects.toThrow('active_approach_confirmation_required')
+  await configureQueue(env, t.actor, t.queue, {
+    ...state.config,
+    version: row!.version,
+    open: !!row!.open,
+    graceMinutes: 10,
+    approachTurns: 8,
+    applyApproachToActive: true,
+  })
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT arrival_deadline_at FROM queue_entry WHERE id=?',
+      )
+        .bind(first)
+        .first()
+    )?.arrival_deadline_at,
+  ).toBe(now + 300000)
+  await expect(
+    runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      { action: 'complete', entryId: first, version: 1 },
+      now + 300000,
+    ),
+  ).rejects.toThrow('version_conflict')
+  expect(
+    (
+      await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+        .bind(first)
+        .first()
+    )?.status,
+  ).toBe('expired')
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    { action: 'call', entryId: second, version: 0 },
+    now + 300001,
+  )
+  const occupied = await env.DB.prepare(
+    'SELECT resource_id FROM queue_allocation WHERE entry_id=?',
+  )
+    .bind(second)
+    .first<{ resource_id: string }>()
+  await expect(
+    runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      { action: 'restore', entryId: first, version: 2 },
+      now + 300002,
+    ),
+  ).rejects.toThrow('restore_reason_required')
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    {
+      action: 'restore',
+      entryId: first,
+      version: 2,
+      overrideReason: 'Arrival incorrectly recorded',
+    },
+    now + 300002,
+  )
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    { action: 'call', entryId: first, version: 3 },
+    now + 300003,
+  )
+  const allocation = await env.DB.prepare(
+    'SELECT resource_id,released_at FROM queue_allocation WHERE entry_id=?',
+  )
+    .bind(first)
+    .first<{ resource_id: string; released_at: number | null }>()
+  expect(allocation?.released_at).toBeNull()
+  expect(allocation?.resource_id).not.toBe(occupied?.resource_id)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT COUNT(*) n FROM queue_override_audit WHERE entry_id=?',
+      )
+        .bind(first)
+        .first()
+    )?.n,
+  ).toBe(1)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT arrival_deadline_at FROM queue_entry WHERE id=?',
+      )
+        .bind(first)
+        .first()
+    )?.arrival_deadline_at,
+  ).toBe(now + 300003 + 600000)
+})
+
+it('preserves the promised arrival window when grace is reduced, with a legacy fallback', async () => {
+  const t = await setup()
+  await open(t, 0)
+  const id = await entry(t.queue)
+  const now = Date.now()
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    {
+      action: 'call',
+      entryId: id,
+      version: 0,
+    },
+    now,
+  )
+  const state = await loadQueueState(env, t.queue)
+  const current = await env.DB.prepare(
+    'SELECT version,open FROM queue WHERE id=?',
+  )
+    .bind(t.queue)
+    .first<{ version: number; open: number }>()
+  await configureQueue(env, t.actor, t.queue, {
+    ...state.config!,
+    version: current!.version,
+    open: !!current!.open,
+    graceMinutes: 1,
+  })
+  await expect(
+    runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      {
+        action: 'no_show',
+        entryId: id,
+        version: 1,
+      },
+      now + 120000,
+    ),
+  ).rejects.toThrow('arrival_grace_active')
+  expect(
+    await env.DB.prepare(
+      'SELECT status,arrival_deadline_at FROM queue_entry WHERE id=?',
+    )
+      .bind(id)
+      .first(),
+  ).toEqual({ status: 'called', arrival_deadline_at: now + 300000 })
+  expect(
+    await env.DB.prepare(
+      'SELECT released_at FROM queue_allocation WHERE entry_id=?',
+    )
+      .bind(id)
+      .first(),
+  ).toEqual({ released_at: null })
+
+  // Calls created before deadline activation retain the existing manual grace policy.
+  await env.DB.prepare(
+    'UPDATE queue_entry SET arrival_deadline_at=NULL WHERE id=?',
+  )
+    .bind(id)
+    .run()
+  await expect(
+    runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      {
+        action: 'no_show',
+        entryId: id,
+        version: 1,
+      },
+      now + 30000,
+    ),
+  ).rejects.toThrow('arrival_grace_active')
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    {
+      action: 'no_show',
+      entryId: id,
+      version: 1,
+    },
+    now + 120000,
+  )
+  expect(
+    await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+      .bind(id)
+      .first(),
+  ).toEqual({ status: 'no_show' })
+  expect(
+    await env.DB.prepare(
+      'SELECT released_at FROM queue_allocation WHERE entry_id=?',
+    )
+      .bind(id)
+      .first(),
+  ).toEqual({ released_at: now + 120000 })
+})
+
+it.each(['customer', 'staff'] as const)(
+  'serializes concurrent update and call when %s dispatches first',
+  async (first) => {
+    const { hash } = await import('../queue/crypto')
+    const t = await setup()
+    await open(t, 0)
+    const id = await entry(t.queue)
+    const token = crypto.randomUUID()
+    await env.DB.prepare('UPDATE queue_entry SET recovery_hash=? WHERE id=?')
+      .bind(await hash(token), id)
+      .run()
+    const stub = env.QUEUE_COORDINATOR.getByName(t.queue)
+    const customer = () =>
+      stub.customerCommand(t.queue, token, crypto.randomUUID(), {
+        action: 'update',
+        version: 0,
+        displayName: 'Updated guest',
+        partySize: 2,
+        preferredSpaceId: 'fastest',
+        locale: 'es',
+      })
+    const staff = () =>
+      stub.staffCommand(t.actor, t.queue, crypto.randomUUID(), {
+        action: 'call',
+        entryId: id,
+        version: 0,
+      })
+    const results = await Promise.all(
+      first === 'customer' ? [customer(), staff()] : [staff(), customer()],
+    )
+    expect(results.map((result) => result.status).sort()).toEqual([200, 409])
+    expect(results.find((result) => result.status === 409)?.body).toEqual({
+      error: 'version_conflict',
+    })
+    const snapshot = await env.DB.prepare(
+      'SELECT status,version,party_size FROM queue_entry WHERE id=?',
+    )
+      .bind(id)
+      .first<{ status: string; version: number; party_size: number }>()
+    expect(snapshot?.version).toBe(1)
+    const customerWon =
+      (first === 'customer' ? results[0] : results[1])!.status === 200
+    expect(snapshot).toEqual({
+      status: customerWon ? 'waiting' : 'called',
+      version: 1,
+      party_size: customerWon ? 2 : 4,
+    })
+    if (customerWon) {
+      expect(
+        (
+          await stub.staffCommand(t.actor, t.queue, crypto.randomUUID(), {
+            action: 'call',
+            entryId: id,
+            version: 1,
+          })
+        ).status,
+      ).toBe(200)
+    } else {
+      expect(
+        (
+          await stub.customerCommand(t.queue, token, crypto.randomUUID(), {
+            action: 'update',
+            version: 1,
+            displayName: 'Too late',
+            partySize: 2,
+            preferredSpaceId: 'fastest',
+            locale: 'es',
+          })
+        ).body,
+      ).toEqual({ error: 'invalid_transition' })
+    }
+    expect(
+      (await loadQueueState(env, t.queue)).allocations.filter(
+        (a) => a.released_at === null,
+      ),
+    ).toHaveLength(1)
+  },
+)
+
+it('expires once when a due alarm races a staff arrival through the coordinator', async () => {
+  const { runDurableObjectAlarm } = await import('cloudflare:test')
+  const t = await setup()
+  await open(t, 0)
+  const id = await entry(t.queue)
+  const stub = env.QUEUE_COORDINATOR.getByName(t.queue)
+  expect(
+    (
+      await stub.staffCommand(t.actor, t.queue, crypto.randomUUID(), {
+        action: 'call',
+        entryId: id,
+        version: 0,
+      })
+    ).status,
+  ).toBe(200)
+  const deadline = Date.now()
+  await env.DB.prepare(
+    'UPDATE queue_entry SET arrival_deadline_at=? WHERE id=?',
+  )
+    .bind(deadline, id)
+    .run()
+  const [arrival] = await Promise.all([
+    stub.staffCommand(t.actor, t.queue, crypto.randomUUID(), {
+      action: 'complete',
+      entryId: id,
+      version: 1,
+    }),
+    runDurableObjectAlarm(stub),
+  ])
+  expect(arrival.status).toBe(409)
+  await stub.refresh(t.queue)
+  expect(
+    await env.DB.prepare('SELECT status,version FROM queue_entry WHERE id=?')
+      .bind(id)
+      .first(),
+  ).toEqual({ status: 'expired', version: 2 })
+  const events = await env.DB.prepare(
+    "SELECT kind FROM queue_event WHERE entry_id=? AND kind IN ('expired','completed')",
+  )
+    .bind(id)
+    .all()
+  expect(events.results).toEqual([{ kind: 'expired' }])
+  const allocation = await env.DB.prepare(
+    'SELECT released_at,outcome FROM queue_allocation WHERE entry_id=?',
+  )
+    .bind(id)
+    .first<{ released_at: number; outcome: string }>()
+  expect(allocation?.outcome).toBe('expired')
+  expect(allocation!.released_at).toBeGreaterThanOrEqual(deadline)
 })

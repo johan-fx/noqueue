@@ -65,50 +65,47 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     spaces: [],
     receptionServices: [],
   }
-  const created = await request.post(
-    '/api/v1/staff/commercial/organizations',
-    {
-      headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
-      data: {
-        organizationName: 'Queue services',
-        slug: `services-${suffix}`,
-        venueName: 'Hotel Services',
-        timezone: 'Europe/Madrid',
-        ownerName: 'Owner',
-        ownerUsername: owner,
-        ownerPassword: password,
-        services: [
-          {
-            ...common,
-            name: 'Restaurante',
-            type: 'restaurant',
-            spaces: [
-              {
-                id: 'interior',
-                name: 'Interior',
-                tables: 2,
-                tableTypes: [{ seats: 4, count: 2 }],
-              },
-              {
-                id: 'terrace',
-                name: 'Terraza',
-                tables: 1,
-                tableTypes: [{ seats: 6, count: 1 }],
-              },
-            ],
-          },
-          {
-            ...common,
-            name: 'Recepción',
-            type: 'reception',
-            stations: 2,
-            receptionServices: ['check_in', 'check_out', 'other'],
-          },
-          { ...common, name: 'Bar piscina', type: 'pool' },
-        ],
-      },
+  const created = await request.post('/api/v1/staff/commercial/organizations', {
+    headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+    data: {
+      organizationName: 'Queue services',
+      slug: `services-${suffix}`,
+      venueName: 'Hotel Services',
+      timezone: 'Europe/Madrid',
+      ownerName: 'Owner',
+      ownerUsername: owner,
+      ownerPassword: password,
+      services: [
+        {
+          ...common,
+          name: 'Restaurante',
+          type: 'restaurant',
+          spaces: [
+            {
+              id: 'interior',
+              name: 'Interior',
+              tables: 2,
+              tableTypes: [{ seats: 4, count: 2 }],
+            },
+            {
+              id: 'terrace',
+              name: 'Terraza',
+              tables: 1,
+              tableTypes: [{ seats: 6, count: 1 }],
+            },
+          ],
+        },
+        {
+          ...common,
+          name: 'Recepción',
+          type: 'reception',
+          stations: 2,
+          receptionServices: ['check_in', 'check_out', 'other'],
+        },
+        { ...common, name: 'Bar piscina', type: 'pool' },
+      ],
     },
-  )
+  })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { venueId } = (await created.json()) as { venueId: string }
   await page.goto('/login')
@@ -148,9 +145,10 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   const guest = await page.context().newPage()
   await guest.goto(`/q/${restaurant.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('María López')
-  await guest.getByLabel('Número de personas').fill('4')
-  await guest.getByLabel('Espacio', { exact: true }).selectOption('terrace')
-  await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
+  for (let i = 0; i < 3; i++)
+    await guest.getByRole('button', { name: 'Más comensales' }).click()
+  await guest.getByRole('radio', { name: 'Terraza' }).check()
+  await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await page
     .getByRole('article', { name: 'Servicio Restaurante', exact: true })
@@ -280,9 +278,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     fullPage: false,
     animations: 'disabled',
   })
-  await arrival
-    .getByRole('button', { name: 'Confirmar', exact: true })
-    .click()
+  await arrival.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await expect(drawer.getByText('María López')).toHaveCount(0)
   await drawer.getByRole('tab', { name: 'Completados' }).click()
   await expect(drawer.getByText('Terraza · Asignado')).toBeVisible()

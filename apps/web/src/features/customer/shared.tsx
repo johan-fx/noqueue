@@ -40,8 +40,9 @@ export function CustomerShell({
   setLocale: (locale: Locale) => void
   children: ReactNode
 }) {
+  // Desktop column is a bit wider than the previous lg cap, with no side borders.
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-lg flex-col bg-background text-gray-700 sm:border-x">
+    <main className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-background text-gray-700">
       <header className="flex h-11 shrink-0 items-center justify-between px-4">
         {back ? (
           <Link

@@ -1774,7 +1774,6 @@ it('authorizes address confirmation by server role and scope, rejects unsigned o
   const t = await tenant(),
     otherSales = await identity('commercial_operator'),
     viewer = await member(t, 'viewer'),
-    manager = await member(t, 'venue_manager'),
     admin = await identity('platform_admin')
   const scope = { kind: 'venue', id: t.venueId }
   network.use(
@@ -1797,12 +1796,7 @@ it('authorizes address confirmation by server role and scope, rejects unsigned o
       }),
     ),
   )
-  for (const cookie of [
-    t.owner.cookie,
-    t.sales.cookie,
-    manager.cookie,
-    admin.cookie,
-  ])
+  for (const cookie of [t.sales.cookie, admin.cookie])
     expect(
       (
         await request('/staff/locations/resolve', cookie, 'POST', {
@@ -1836,7 +1830,7 @@ it('authorizes address confirmation by server role and scope, rejects unsigned o
     ).status,
   ).toBe(401)
   const selected = (await (
-    await request('/staff/locations/resolve', manager.cookie, 'POST', {
+    await request('/staff/locations/resolve', t.sales.cookie, 'POST', {
       text: 'Calle Mayor 1 Madrid',
       scope,
     })
@@ -1849,10 +1843,10 @@ it('authorizes address confirmation by server role and scope, rejects unsigned o
         locationToken: token,
       })
     ).status,
-  ).toBe(400)
+  ).toBe(403)
   expect(
     (
-      await request(`/staff/venues/${t.venueId}`, manager.cookie, 'PATCH', {
+      await request(`/staff/venues/${t.venueId}`, t.sales.cookie, 'PATCH', {
         version: 1,
         locationToken: token,
         latitude: 1,
@@ -1862,7 +1856,7 @@ it('authorizes address confirmation by server role and scope, rejects unsigned o
   ).toBe(400)
   const saved = await request(
     `/staff/venues/${t.venueId}`,
-    manager.cookie,
+    t.sales.cookie,
     'PATCH',
     { version: 1, locationToken: token },
   )
@@ -1870,7 +1864,7 @@ it('authorizes address confirmation by server role and scope, rejects unsigned o
   expect((await saved.json()) as object).toMatchObject({ version: 2 })
   expect(
     (
-      await request(`/staff/venues/${t.venueId}`, manager.cookie, 'PATCH', {
+      await request(`/staff/venues/${t.venueId}`, t.sales.cookie, 'PATCH', {
         version: 1,
         locationToken: token,
       })
@@ -2127,4 +2121,203 @@ it('autocomplete rejection paths keep privacy headers, reject origins and bound 
     expect(r.status).toBe(expected)
     expect(r.headers.get('Cache-Control')).toBe('no-store')
   }
+})
+
+it.each(['owner', 'venue_manager', 'queue_staff', 'viewer'] as const)(
+  'denies venue location writes and geocoding to membership %s without side effects or quotas',
+  async (role) => {
+    const t = await tenant()
+    const actor = role === 'owner' ? t.owner : await member(t, role)
+    const scope = { kind: 'venue' as const, id: t.venueId }
+    const location = {
+      formatted: 'Calle Nueva 2, Madrid',
+      latitude: 40.416,
+      longitude: -3.704,
+      address: {
+        street: 'Calle Nueva',
+        houseNumber: '2',
+        city: 'Madrid',
+        countryCode: 'es' as const,
+      },
+      provider: 'geoapify' as const,
+      providerId: 'old-valid-selection',
+      attribution: [{ text: 'Geoapify', url: 'https://www.geoapify.com/' }],
+    }
+    const oldToken = await issueLocationToken(env, actor.id, scope, location)
+    const provider = vi.fn(() => HttpResponse.json({ features: [] }))
+    network.use(
+      http.get('https://api.geoapify.com/v1/geocode/:operation', provider),
+    )
+    const before = await env.DB.prepare('SELECT * FROM venue WHERE id=?')
+      .bind(t.venueId)
+      .first()
+    const audits = await env.DB.prepare(
+      'SELECT COUNT(*) n FROM staff_audit WHERE venue_id=?',
+    )
+      .bind(t.venueId)
+      .first('n')
+    const rates = (
+      await env.DB.prepare(
+        'SELECT * FROM staff_rate WHERE key LIKE ? OR key LIKE ? ORDER BY key',
+      )
+        .bind(actor.id + ':%', 'geocode:' + actor.id + ':%')
+        .all()
+    ).results
+    for (const route of ['resolve', 'autocomplete']) {
+      const response = await request(
+        '/staff/locations/' + route,
+        actor.cookie,
+        'POST',
+        { text: 'Calle Nueva 2 Madrid', scope },
+      )
+      expect(response.status).toBe(403)
+      expect(response.headers.get('Cache-Control')).toBe('no-store')
+    }
+    for (const token of [oldToken.token, 'invalid'])
+      expect(
+        (
+          await request('/staff/venues/' + t.venueId, actor.cookie, 'PATCH', {
+            version: 1,
+            locationToken: token,
+          })
+        ).status,
+      ).toBe(403)
+    expect(provider).not.toHaveBeenCalled()
+    expect(
+      await env.DB.prepare('SELECT * FROM venue WHERE id=?')
+        .bind(t.venueId)
+        .first(),
+    ).toEqual(before)
+    expect(
+      await env.DB.prepare(
+        'SELECT COUNT(*) n FROM staff_audit WHERE venue_id=?',
+      )
+        .bind(t.venueId)
+        .first('n'),
+    ).toBe(audits)
+    expect(
+      (
+        await env.DB.prepare(
+          'SELECT * FROM staff_rate WHERE key LIKE ? OR key LIKE ? ORDER BY key',
+        )
+          .bind(actor.id + ':%', 'geocode:' + actor.id + ':%')
+          .all()
+      ).results,
+    ).toEqual(rates)
+    expect(
+      (await request('/staff/venues/' + t.venueId + '/location', actor.cookie))
+        .status,
+    ).toBe(200)
+    if (role === 'owner' || role === 'venue_manager') {
+      const config = (await (
+        await request('/staff/venues/' + t.venueId + '/queues', actor.cookie)
+      ).json()) as { version: number; config: object }[]
+      const response = await request(
+        '/staff/queues/' + t.queueId,
+        actor.cookie,
+        'PATCH',
+        { ...config[0]!.config, version: config[0]!.version, open: false },
+      )
+      expect(response.status).toBe(200)
+    }
+  },
+)
+
+it('restricts both geocoders and location saves to global commercial ownership or platform administration', async () => {
+  const t = await tenant(),
+    other = await identity('commercial_operator'),
+    admin = await identity('platform_admin')
+  // A global commercial operator's venue membership must not bypass client ownership.
+  const memberSales = await member(t, 'venue_manager')
+  await env.DB.prepare("UPDATE user SET role='commercial_operator' WHERE id=?")
+    .bind(memberSales.id)
+    .run()
+  network.use(
+    http.get('https://api.geoapify.com/v1/geocode/:operation', () =>
+      HttpResponse.json({
+        features: [
+          {
+            properties: {
+              formatted: 'Calle Dos 2 Madrid',
+              street: 'Calle Dos',
+              city: 'Madrid',
+              country_code: 'es',
+              lat: 40.416,
+              lon: -3.704,
+              place_id: 'new',
+              result_type: 'building',
+            },
+          },
+        ],
+      }),
+    ),
+  )
+  for (const actor of [other, memberSales]) {
+    for (const venueId of [t.venueId, crypto.randomUUID()]) {
+      for (const route of ['resolve', 'autocomplete'])
+        expect(
+          (
+            await request('/staff/locations/' + route, actor.cookie, 'POST', {
+              text: 'Calle Dos 2 Madrid',
+              scope: { kind: 'venue', id: venueId },
+            })
+          ).status,
+        ).toBe(404)
+      expect(
+        (
+          await request('/staff/venues/' + venueId, actor.cookie, 'PATCH', {
+            version: 1,
+            locationToken: 'invalid',
+          })
+        ).status,
+      ).toBe(404)
+    }
+  }
+  for (const actor of [t.sales, admin]) {
+    let token = ''
+    for (const route of ['resolve', 'autocomplete']) {
+      const response = await request(
+        '/staff/locations/' + route,
+        actor.cookie,
+        'POST',
+        { text: 'Calle Dos 2 Madrid', scope: { kind: 'venue', id: t.venueId } },
+      )
+      expect(response.status).toBe(200)
+      token = ((await response.json()) as { candidates: { token: string }[] })
+        .candidates[0]!.token
+    }
+    const version = await env.DB.prepare('SELECT version FROM venue WHERE id=?')
+      .bind(t.venueId)
+      .first<number>('version')
+    const response = await request(
+      '/staff/venues/' + t.venueId,
+      actor.cookie,
+      'PATCH',
+      { version, locationToken: token },
+    )
+    expect(response.status).toBe(200)
+    expect((await response.json()) as object).toMatchObject({
+      version: version! + 1,
+      location: { formatted: 'Calle Dos 2 Madrid' },
+    })
+  }
+  await env.DB.prepare(
+    "UPDATE tenant_account SET status='suspended' WHERE organization_id=?",
+  )
+    .bind(t.organizationId)
+    .run()
+  expect(
+    (await request('/staff/venues/' + t.venueId + '/location', t.owner.cookie))
+      .status,
+  ).toBe(404)
+  // Existing commercial/platform suspended-tenant maintenance access is unchanged.
+  for (const actor of [t.sales, admin])
+    expect(
+      (
+        await request('/staff/locations/autocomplete', actor.cookie, 'POST', {
+          text: 'Calle Dos 2 Madrid',
+          scope: { kind: 'venue', id: t.venueId },
+        })
+      ).status,
+    ).toBe(200)
 })

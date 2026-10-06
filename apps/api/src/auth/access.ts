@@ -46,6 +46,23 @@ async function commercialVenue(
   // Callers only need the organization id. The role is not used to authorize again.
   return { role: 'owner' as StaffRole, organizationId: owned.organizationId }
 }
+export async function venueLocationEditAccess(
+  env: CloudflareBindings,
+  actor: { id: string; role: string },
+  venueId: string,
+) {
+  // Global sales/platform roles are independent of establishment membership.
+  if (!isCommercial(actor.role))
+    throw new HTTPException(403, { message: 'forbidden' })
+  const access = await commercialVenue(
+    env,
+    actor.id,
+    venueId,
+    'queue.configure',
+  )
+  if (!access) throw new HTTPException(404, { message: 'not_found' })
+  return access
+}
 export async function queueAccess(
   env: CloudflareBindings,
   userId: string,

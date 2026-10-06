@@ -384,7 +384,7 @@ export function Dashboard(props: DashboardProps) {
       </div>
       <VenueLocationEditor
         venueId={venue.id}
-        canConfigure={permissions.includes('queue.configure')}
+        canEditLocation={props.mode === 'commercial'}
       />
       <section aria-label="Listado de servicios" aria-busy={loading}>
         <Card>

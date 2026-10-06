@@ -52,7 +52,20 @@ describe('establishment list permissions', () => {
     'shows appropriate actions for %s',
     async (role: StaffRole, configure, members) => {
       vi.mocked(api).mockImplementation(async (path) =>
-        path.endsWith('/queues') ? [service] : [],
+        path.endsWith('/queues')
+          ? [service]
+          : path.endsWith('/location')
+          ? {
+              version: 1,
+              confirmedAt: 1,
+              location: {
+                formatted: 'Calle Mayor 1, Madrid',
+                attribution: [
+                  { text: 'Geoapify', url: 'https://www.geoapify.com/' },
+                ],
+              },
+            }
+          : [],
       )
       render(
         <Dashboard
@@ -89,6 +102,17 @@ describe('establishment list permissions', () => {
       expect(screen.queryByRole('button', { name: 'Accesos' }) !== null).toBe(
         members,
       )
+      expect(await screen.findByText('Calle Mayor 1, Madrid')).toBeVisible()
+      expect(screen.getByRole('link', { name: 'Geoapify' })).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Editar ubicación' }),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByLabelText('Dirección del establecimiento'),
+      ).not.toBeInTheDocument()
+      expect(
+        screen.queryByRole('button', { name: 'Guardar ubicación' }),
+      ).not.toBeInTheDocument()
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
       expect(
         screen.queryByLabelText('Nombre del servicio'),
@@ -112,9 +136,7 @@ it('commercial management permits configuration and access but only reads queues
       }}
     />,
   )
-  expect(
-    await screen.findByRole('button', { name: 'Ver cola' }),
-  ).toBeVisible()
+  expect(await screen.findByRole('button', { name: 'Ver cola' })).toBeVisible()
   expect(
     screen.queryByRole('button', { name: 'Gestionar cola' }),
   ).not.toBeInTheDocument()
@@ -161,9 +183,7 @@ it('does not advance a known but exhausted shadow queue', async () => {
       }}
     />,
   )
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Gestionar cola' }),
-  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
   expect(
     await screen.findByRole('button', { name: 'Avanzar un turno' }),
   ).toBeDisabled()
@@ -209,9 +229,7 @@ it('blocks advance and explains how to resurvey invalidated managed inventory', 
     />,
   )
   expect(await screen.findByText(/La distribución ha cambiado/)).toBeVisible()
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Gestionar cola' }),
-  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
   expect(
     await screen.findByRole('button', { name: 'Avanzar un turno' }),
   ).toBeDisabled()
@@ -250,17 +268,13 @@ it.each(['pending', 'active'] as const)(
       expect(
         within(alert).getByText('Gestión inteligente pendiente'),
       ).toHaveAttribute('data-slot', 'alert-title')
-      const description = alert.querySelector(
-        '[data-slot="alert-description"]',
-      )
+      const description = alert.querySelector('[data-slot="alert-description"]')
       expect(description).toHaveTextContent(
         'Falta configurar los tipos de mesa o grupos de plazas.',
       )
     } else {
       expect(within(card).queryByRole('alert')).not.toBeInTheDocument()
-      expect(
-        within(card).getByText('Gestión inteligente activa'),
-      ).toBeVisible()
+      expect(within(card).getByText('Gestión inteligente activa')).toBeVisible()
       expect(
         within(card).queryByText('Gestión inteligente pendiente'),
       ).not.toBeInTheDocument()
@@ -506,9 +520,7 @@ it('keeps service Card actions minimal and moves operations into the queue heade
   expect(card.querySelector('[data-slot="card-footer"]')?.textContent).toBe(
     'Gestionar colaConfigurar servicio',
   )
-  fireEvent.click(
-    within(card).getByRole('button', { name: 'Gestionar cola' }),
-  )
+  fireEvent.click(within(card).getByRole('button', { name: 'Gestionar cola' }))
   const drawer = await screen.findByRole('dialog', { name: 'Gestionar cola' })
   expect(
     within(drawer).queryByRole('button', { name: 'Cerrar' }),
@@ -548,8 +560,7 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
         groups: [],
       }
     if (method === 'POST') {
-      disabled =
-        (body as { action: string }).action === 'disable_intelligence'
+      disabled = (body as { action: string }).action === 'disable_intelligence'
       return { ok: true }
     }
     return []
@@ -565,9 +576,7 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
       }}
     />,
   )
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Gestionar cola' }),
-  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
   const trigger = await screen.findByRole('button', {
     name: 'Opciones de la cola',
   })
@@ -711,9 +720,7 @@ it('omits queue footer in non-active tabs and keeps advance connected to the exi
       }}
     />,
   )
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Gestionar cola' }),
-  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
   const drawer = await screen.findByRole('dialog', { name: 'Gestionar cola' })
   for (const tab of ['Completados', 'Cancelados']) {
     fireEvent.click(within(drawer).getByRole('tab', { name: tab }))
@@ -769,9 +776,7 @@ it('refreshes an entry after 409 and requires another confirmation using the fre
       }}
     />,
   )
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Gestionar cola' }),
-  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
   fireEvent.click(
     await screen.findByRole('button', { name: 'Acciones del turno T1' }),
   )
@@ -918,7 +923,7 @@ it('returns cancelled entry confirmation focus to its persistent action trigger'
             calledAt: null,
           },
         ]
-      : []
+      : [],
   )
   render(
     <Dashboard
@@ -929,11 +934,9 @@ it('returns cancelled entry confirmation focus to its persistent action trigger'
         organizationName: 'Empresa',
         role: 'owner',
       }}
-    />
+    />,
   )
-  fireEvent.click(
-    await screen.findByRole('button', { name: 'Gestionar cola' })
-  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
   const trigger = await screen.findByRole('button', {
     name: 'Acciones del turno F1',
   })
@@ -948,4 +951,56 @@ it('returns cancelled entry confirmation focus to its persistent action trigger'
   })
   fireEvent.click(within(dialog).getByRole('button', { name: 'No cancelar' }))
   await waitFor(() => expect(trigger).toHaveFocus())
+})
+
+it('commercial management can edit location independently of membership service permissions', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [service]
+      : path.endsWith('/location')
+      ? { version: 1, confirmedAt: null, location: null }
+      : [],
+  )
+  render(
+    <Dashboard
+      mode="commercial"
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+      }}
+    />,
+  )
+  expect(
+    await screen.findByRole('button', { name: 'Editar ubicación' }),
+  ).toBeVisible()
+})
+it('incomplete staff location is read-only and does not invite unauthorized completion', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [service]
+      : path.endsWith('/location')
+      ? { version: 1, confirmedAt: null, location: null }
+      : [],
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'owner',
+      }}
+    />,
+  )
+  expect(
+    await screen.findByText(
+      'Ubicación pendiente de confirmación por administración.',
+    ),
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Editar ubicación' }),
+  ).not.toBeInTheDocument()
 })

@@ -6,10 +6,10 @@ import { LocationPicker } from './LocationPicker'
 import { api, errorMessage, ApiError } from './api'
 export function VenueLocationEditor({
   venueId,
-  canConfigure,
+  canEditLocation,
 }: {
   venueId: string
-  canConfigure: boolean
+  canEditLocation: boolean
 }) {
   const [snapshot, setSnapshot] = useState<VenueLocationSnapshot | null>(null)
   const [editing, setEditing] = useState(false)
@@ -31,7 +31,7 @@ export function VenueLocationEditor({
     }
   }, [venueId])
   async function save() {
-    if (!snapshot || !token || busy || conflict) return
+    if (!canEditLocation || !snapshot || !token || busy || conflict) return
     setBusy(true)
     setError('')
     try {
@@ -58,7 +58,9 @@ export function VenueLocationEditor({
       <CardContent className="space-y-3">
         <p>
           {snapshot?.location?.formatted ??
-            'Completa la ubicación para mostrar tus servicios en la búsqueda pública.'}
+            (canEditLocation
+              ? 'Completa la ubicación para mostrar tus servicios en la búsqueda pública.'
+              : 'Ubicación pendiente de confirmación por administración.')}
         </p>
         {snapshot?.location && (
           <p className="text-xs text-muted-foreground">
@@ -77,7 +79,7 @@ export function VenueLocationEditor({
             {error}
           </p>
         )}
-        {canConfigure && snapshot && !editing && (
+        {canEditLocation && snapshot && !editing && (
           <Button
             variant="outline"
             onClick={() => {
@@ -89,7 +91,7 @@ export function VenueLocationEditor({
             Editar ubicación
           </Button>
         )}
-        {canConfigure && editing && snapshot && (
+        {canEditLocation && editing && snapshot && (
           <>
             <LocationPicker
               scope={{ kind: 'venue', id: venueId }}

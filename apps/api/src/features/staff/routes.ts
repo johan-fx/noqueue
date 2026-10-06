@@ -28,7 +28,12 @@ import {
 } from '@noqueue/contracts/staff'
 import { createAuth } from '../../auth/server'
 import { isCommercial } from '../../auth/permissions'
-import { audit, queueAccess, venueAccess } from '../../auth/access'
+import {
+  audit,
+  queueAccess,
+  venueAccess,
+  venueLocationEditAccess,
+} from '../../auth/access'
 import { provision } from './provision'
 import {
   credentialStatements,
@@ -94,6 +99,13 @@ staffRoutes.use('*', async (c, next) => {
   if (!user || user.banned)
     throw new HTTPException(403, { message: 'account_unavailable' })
   c.set('actor', user)
+  // Reject non-commercial address mutations before consuming staff or provider quota.
+  if (
+    (c.req.method === 'PATCH' && /\/venues\/[^/]+$/.test(c.req.path)) ||
+    (c.req.method === 'POST' &&
+      /\/locations\/(?:resolve|autocomplete)$/.test(c.req.path))
+  )
+    commercial(user.role)
   if (c.req.method !== 'GET') {
     const key = `${user.id}:${Math.floor(Date.now() / 60000)}`
     const rate = await c.env.DB.prepare(
@@ -129,8 +141,7 @@ async function geocode(
   if (!parsed.success) return c.json({ error: 'invalid_location' }, 400)
   const actor = c.get('actor')
   if (parsed.data.scope.kind === 'provision') commercial(actor.role)
-  else
-    await venueAccess(c.env, actor.id, parsed.data.scope.id, 'queue.configure')
+  else await venueLocationEditAccess(c.env, actor, parsed.data.scope.id)
   const bucket = Math.floor(Date.now() / 60000)
   const rate = await c.env.DB.prepare(
     'INSERT INTO staff_rate VALUES (?,1) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count',
@@ -155,7 +166,7 @@ staffRoutes.get('/venues/:id/location', async (c) => {
 staffRoutes.patch('/venues/:id', async (c) => {
   const actor = c.get('actor'),
     venueId = c.req.param('id')
-  const access = await venueAccess(c.env, actor.id, venueId, 'queue.configure')
+  const access = await venueLocationEditAccess(c.env, actor, venueId)
   const parsed = venueLocationUpdateSchema.safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_location' }, 400)
   return c.json(

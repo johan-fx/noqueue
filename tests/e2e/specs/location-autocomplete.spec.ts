@@ -100,6 +100,7 @@ test('venue edit autocomplete preserves the stored address until explicit save a
   page,
   request,
   baseURL,
+  browser,
 }, testInfo) => {
   const suffix = await login(page, request),
     fields = await resolveFixtureLocation(page.request, baseURL!)
@@ -178,4 +179,67 @@ test('venue edit autocomplete preserves the stored address until explicit save a
       ).json()
     ).location.formatted,
   ).toBe('Calle Colón 1, Valencia')
+  const staff = await browser.newContext({
+    baseURL: baseURL!,
+    viewport: { width: 390, height: 844 },
+    extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
+  })
+  try {
+    const owner = await staff.newPage()
+    await owner.goto('/login')
+    await owner.getByLabel('Usuario o email').fill('o_' + suffix)
+    await owner.getByLabel('Contraseña', { exact: true }).fill(password)
+    await owner.getByRole('button', { name: 'Entrar', exact: true }).click()
+    await expect(
+      owner.getByText('Calle Colón 1, Valencia', { exact: true }),
+    ).toBeVisible()
+    await expect(
+      owner.getByRole('link', { name: 'Geoapify', exact: true }),
+    ).toBeVisible()
+    await expect(
+      owner.getByRole('button', { name: 'Editar ubicación' }),
+    ).toHaveCount(0)
+    await expect(owner.getByLabel('Dirección del establecimiento')).toHaveCount(
+      0,
+    )
+    await expect(
+      owner.getByRole('button', { name: 'Guardar ubicación' }),
+    ).toHaveCount(0)
+    for (const endpoint of ['resolve', 'autocomplete'])
+      expect(
+        (
+          await owner.request.post('/api/v1/staff/locations/' + endpoint, {
+            headers: { Origin: baseURL! },
+            data: {
+              text: 'Calle Mayor 1 Madrid',
+              scope: { kind: 'venue', id: venueId },
+            },
+          })
+        ).status(),
+      ).toBe(403)
+    expect(
+      (
+        await owner.request.patch('/api/v1/staff/venues/' + venueId, {
+          headers: { Origin: baseURL! },
+          data: { version: 2, locationToken: 'invalid' },
+        })
+      ).status(),
+    ).toBe(403)
+    await owner.screenshot({
+      path: testInfo.outputPath('owner-location-readonly-390.png'),
+      fullPage: true,
+      animations: 'disabled',
+    })
+    await expect(
+      owner.getByRole('button', { name: 'Configurar servicio' }),
+    ).toBeVisible()
+    const location = await owner.request.get(
+      '/api/v1/staff/venues/' + venueId + '/location',
+    )
+    expect((await location.json()).location.formatted).toBe(
+      'Calle Colón 1, Valencia',
+    )
+  } finally {
+    await staff.close()
+  }
 })

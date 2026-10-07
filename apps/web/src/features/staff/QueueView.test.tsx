@@ -303,3 +303,9 @@ it('closes row actions when externally changing views or queues', () => {
     screen.queryByRole('button', { name: 'Cancelar turno' }),
   ).not.toBeInTheDocument()
 })
+it('keeps automatic service closure in cancelled history with a truthful reason', () => {
+  const closed: StaffEntry = { ...entries[4]!, cancellationReason: 'service_ended' }
+  render(<QueueView queue={queue} entries={[closed]} tab="cancelled" onTabChange={vi.fn()} canOperate={false} busy={false} lastSync="12:00" error="" onRefresh={vi.fn()} onAction={vi.fn()} />)
+  expect(screen.getByText('Cancelado por cierre de servicio')).toBeVisible()
+  expect(screen.queryByText('No presentado')).not.toBeInTheDocument()
+})

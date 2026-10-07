@@ -358,6 +358,7 @@ export type QueueSummary = Partial<AdmissionStatus> & {
   readiness?: QueueReadiness
 }
 export type StaffEntry = {
+  cancellationReason?: 'service_ended'
   displayName?: string | null
   receptionService?: 'check_in' | 'check_out' | 'other' | null
   preferredSpaceId?: string | null

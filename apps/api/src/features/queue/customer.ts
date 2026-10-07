@@ -1,3 +1,4 @@
+import { maintainServiceEntries } from './service-expiry'
 import { noticeStatement, publishNotice } from './notices'
 import { HTTPException } from 'hono/http-exception'
 import {
@@ -63,6 +64,7 @@ export async function runCustomerCommand(
   now = Date.now(),
 ) {
   customerCommandSchema.parse(input)
+  await maintainServiceEntries(env, queueId, now)
   await expireArrivals(env, queueId, now)
   const entry = await env.DB.prepare(
     'SELECT id,status,version,sequence FROM queue_entry WHERE recovery_hash=? AND queue_id=?',

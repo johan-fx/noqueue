@@ -1,3 +1,4 @@
+import { maintainServiceEntries } from './features/queue/service-expiry'
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
 import { runCustomerCommand, expireArrivals } from './features/queue/customer'
 import type { CustomerCommand } from '@noqueue/contracts/queue'
@@ -30,14 +31,15 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   private async withQueue<T>(queueId: string, work: () => Promise<T>) {
     await this.ctx.storage.put('queueId', queueId)
+    await maintainServiceEntries(this.env, queueId)
     await expireArrivals(this.env, queueId)
     try {
       return await work()
     } finally {
       const next = await this.env.DB.prepare(
-        "SELECT MIN(arrival_deadline_at) AS deadline FROM queue_entry WHERE queue_id=? AND status='called'",
+        "SELECT MIN(deadline) AS deadline FROM (SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called' UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting')",
       )
-        .bind(queueId)
+        .bind(queueId, queueId)
         .first<{ deadline: number | null }>()
       if (next?.deadline != null)
         await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, next.deadline))
@@ -91,11 +93,11 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   staffConfigure(actor: string, queueId: string, input: unknown) {
     return this.serialize(() =>
-      this.staffResult(() => configureQueue(this.env, actor, queueId, input)),
+      this.withQueue(queueId, () => this.staffResult(() => configureQueue(this.env, actor, queueId, input))),
     )
   }
   openingContext(queueId: string) {
-    return this.serialize(() => openingContext(this.env, queueId))
+    return this.serialize(() => this.withQueue(queueId, () => openingContext(this.env, queueId)))
   }
   lifecycle(
     actor: string,
@@ -104,9 +106,9 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     input: QueueLifecycleCommand,
   ) {
     return this.serialize(() =>
-      this.staffResult(() =>
+      this.withQueue(queueId, () => this.staffResult(() =>
         runLifecycleCommand(this.env, actor, queueId, key, input),
-      ),
+      )),
     )
   }
   read(queueId: string, token: string) {
@@ -129,13 +131,18 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     return this.serialize(() => changeExperiment(this.env, action, key))
   }
   dispatch(id: string) {
-    return this.serialize(() => dispatchNotificationSerialized(this.env, id))
+    return this.serialize(async () => {
+      const row = await this.env.DB.prepare('SELECT e.queue_id FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE n.id=?')
+        .bind(id).first<{ queue_id: string }>()
+      if (row) return this.withQueue(row.queue_id, () => dispatchNotificationSerialized(this.env, id))
+      return dispatchNotificationSerialized(this.env, id)
+    })
   }
 
   staffJoin(actor: string, queueId: string, key: string, input: JoinQueue) {
     return this.serialize(async () => {
       try {
-        return await joinQueue(this.env, queueId, key, input, false, actor)
+        return await this.withQueue(queueId, () => joinQueue(this.env, queueId, key, input, false, actor))
       } catch (error) {
         if (error instanceof HTTPException)
           return { status: error.status, body: { error: error.message } }
@@ -149,7 +156,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       return Promise.resolve({ status: 404, body: { error: 'not_found' } })
     // D1 awaits permit interleaving. Chain entire joins, not individual database calls.
     return this.serialize(() =>
-      joinQueue(this.env, queueId, key, input, experiment),
+      this.withQueue(queueId, () => joinQueue(this.env, queueId, key, input, experiment)),
     )
   }
 }
@@ -178,13 +185,18 @@ export default {
     const queues = await env.DB.prepare('SELECT id FROM queue').all<{
       id: string
     }>()
-    for (const queue of queues.results)
-      await (env.APP_ENV === 'local'
-        ? env.QUEUE_COORDINATOR
-        : env.QUEUE_COORDINATOR.jurisdiction('eu')
-      )
-        .getByName(queue.id)
-        .refresh(queue.id)
+    for (const queue of queues.results) {
+      try {
+        await (env.APP_ENV === 'local'
+          ? env.QUEUE_COORDINATOR
+          : env.QUEUE_COORDINATOR.jurisdiction('eu')
+        )
+          .getByName(queue.id)
+          .refresh(queue.id)
+      } catch {
+        console.error({ event: 'service_expiry_refresh_failed', count: 1 })
+      }
+    }
     await reconcile(env)
     await env.DB.batch([
       env.DB.prepare(

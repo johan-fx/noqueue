@@ -1,3 +1,4 @@
+import { maintainServiceEntries } from '../queue/service-expiry'
 import { assignmentContext } from './assignment'
 import { noticeStatement, publishNotice } from '../queue/notices'
 import { admissionState } from './availability'
@@ -56,7 +57,7 @@ export async function runQueueCommand(
     input = { action: 'call', entryId: first.id, version: first.version }
   } else input = command
   const entry = await env.DB.prepare(
-    'SELECT status,version,called_at,arrival_deadline_at FROM queue_entry WHERE id=? AND queue_id=?',
+    'SELECT status,version,called_at,arrival_deadline_at,service_window_id,service_ends_at FROM queue_entry WHERE id=? AND queue_id=?',
   )
     .bind(input.entryId, queueId)
     .first<{
@@ -64,6 +65,8 @@ export async function runQueueCommand(
       version: number
       called_at: number | null
       arrival_deadline_at: number | null
+      service_window_id: string | null
+      service_ends_at: number | null
     }>()
   if (!entry) throw new HTTPException(404, { message: 'not_found' })
   if (entry.version !== input.version)
@@ -89,6 +92,10 @@ export async function runQueueCommand(
   }
   if (!transitions[input.action]!.includes(entry.status))
     throw new HTTPException(409, { message: 'invalid_transition' })
+  if (input.action === 'restore' && (
+    (entry.service_ends_at !== null && now >= entry.service_ends_at) ||
+    (entry.service_window_id === null && !state.config?.twentyFourHours)
+  )) throw new HTTPException(409, { message: 'invalid_transition' })
   if (input.action === 'restore' && !input.overrideReason)
     throw new HTTPException(400, { message: 'restore_reason_required' })
   if (input.action === 'no_show') {
@@ -275,6 +282,7 @@ export async function configureQueue(
   body: unknown,
 ) {
   const access = await queueAccess(env, actor, queueId, 'queue.configure')
+  await maintainServiceEntries(env, queueId)
   const parsed = queueSettingsSchema.safeParse(body)
   if (!parsed.success)
     throw new HTTPException(400, { message: 'invalid_settings' })

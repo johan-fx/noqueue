@@ -336,7 +336,7 @@ app.post('/experiments/local/staff/discovery-projections', async (c) => {
       id = crypto.randomUUID()
     statements.push(
       c.env.DB.prepare(
-        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,1,'es',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?))",
+        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'es',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?),'continuous:local-fixture')",
       ).bind(id, queue.id, id, id, id, id, now, queue.id),
     )
     statements.push(

@@ -363,6 +363,8 @@ export function QueueEntryCard({
                 {entry.status === 'completed' &&
                 queue.config.type !== 'restaurant'
                   ? 'Completado'
+                  : entry.cancellationReason === 'service_ended'
+                  ? 'Cancelado por cierre de servicio'
                   : statusLabels[entry.status] ?? entry.status}
               </span>
             )}

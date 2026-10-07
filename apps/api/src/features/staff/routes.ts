@@ -514,7 +514,7 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   )
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    `SELECT id,code,party_size AS partySize,status,sequence,version,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,arrival_deadline_at AS arrivalDeadlineAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS resourceId,(SELECT space_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
+    `SELECT id,code,party_size AS partySize,status,sequence,version,CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=queue_entry.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,arrival_deadline_at AS arrivalDeadlineAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS resourceId,(SELECT space_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
     .all()
@@ -538,7 +538,7 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   return c.json(
     await Promise.all(
       rows.results.map(async (row) => {
-        const { displayNameCipher, assignedSpaceId, ...entry } = row
+        const { displayNameCipher, assignedSpaceId, cancellationReason, ...entry } = row
         const projection =
           row.status === 'waiting'
             ? await readProjection(c.env, String(row.id))
@@ -555,6 +555,7 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
         const space = config?.spaces.find((space) => space.id === spaceId)
         return {
           ...entry,
+          ...(cancellationReason ? { cancellationReason } : {}),
           ...projection,
           allowedActions: allowedEntryActions(
             config?.type ?? 'reception',

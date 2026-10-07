@@ -1,3 +1,4 @@
+import { maintainServiceEntries } from './service-expiry'
 import { noticeStatement } from './notices'
 import { expireArrivals } from './customer'
 import { activateIfReady, inventorySafety } from './opening-state'
@@ -243,6 +244,7 @@ export async function recalculateQueue(
   queueId: string,
   now = Date.now(),
 ) {
+  await maintainServiceEntries(env, queueId, now)
   await expireArrivals(env, queueId, now)
   await activateIfReady(env, queueId)
   // Preserve history, but retire physical occupancy left by the former quick workflow.

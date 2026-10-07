@@ -31,6 +31,7 @@ export function TurnView({
   const arrived = phase === 'arrived',
     expired = phase === 'expired',
     cancelled = phase === 'cancelled',
+    serviceEnded = cancelled && c.cancellationReason === 'service_ended',
     approaching = phase === 'approaching',
     called = phase === 'called'
   const active = !arrived && !expired && !cancelled
@@ -45,9 +46,9 @@ export function TurnView({
     expired: es
       ? `Lo sentimos, tu turno en ${c.service.venueName} ha expirado`
       : `Sorry, your turn at ${c.service.venueName} has expired`,
-    cancelled: es
-      ? 'Has abandonado la lista'
-      : 'You have left the waiting list',
+    cancelled: serviceEnded
+      ? es ? 'El servicio ha finalizado' : 'Service has ended'
+      : es ? 'Has abandonado la lista' : 'You have left the waiting list',
   }
   const descriptions = {
     waiting: es
@@ -69,9 +70,9 @@ export function TurnView({
     expired: es
       ? 'No hemos confirmado tu llegada a tiempo, por lo que tu turno ya no está activo. Si aún quieres venir, puedes volver a unirte a la lista de espera.'
       : 'Your arrival was not confirmed in time, so your turn is no longer active. You can join the waiting list again.',
-    cancelled: es
-      ? 'Tu turno ya no está activo. Puedes volver a apuntarte cuando quieras.'
-      : 'Your turn is no longer active. You can join again whenever you like.',
+    cancelled: serviceEnded
+      ? es ? 'El servicio ha cerrado y tu turno pendiente se ha cancelado. Puedes apuntarte de nuevo en la próxima apertura.' : 'The service has closed and your pending turn was cancelled. You can join again when service reopens.'
+      : es ? 'Tu turno ya no está activo. Puedes volver a apuntarte cuando quieras.' : 'Your turn is no longer active. You can join again whenever you like.',
   }
   const remaining =
     c.arrivalDeadlineAt == null ? null : Math.max(0, c.arrivalDeadlineAt - now)

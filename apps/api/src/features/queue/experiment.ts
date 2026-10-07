@@ -90,7 +90,7 @@ export async function changeExperiment(
       const id = crypto.randomUUID()
       statements.push(
         env.DB.prepare(
-          `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,1,'es',?,?)`,
+          `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'es',?,?,'continuous:synthetic')`,
         ).bind(
           id,
           experimentQueueId,

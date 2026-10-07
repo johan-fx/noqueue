@@ -1,5 +1,7 @@
 import {
   publicAdmission,
+  validWaitingSql,
+  includesLegacyWaiting,
   resolveAdmission,
   type AdmissionRecord,
 } from '../staff/availability'
@@ -46,7 +48,6 @@ export async function searchServices(
       radians,
     )
   }
-  values.push(now, now - 120000, now)
   if (input.scope === 'nearby' && !input.text) {
     const { latitude, longitude } = input.coordinates!
     const latDelta = radiusMeters / 111000,
@@ -88,12 +89,19 @@ export async function searchServices(
       SELECT q.id,v.id venueId,q.name,v.name venueName,json_extract(d.normalized_config,'$.type') type,
         v.address_formatted address,v.location_attribution attribution,v.timezone,d.normalized_config config,
         a.window_id,a.override_state,a.activated_at,a.reminder_ack,a.legacy_paused_at,a.legacy_config,a.legacy_timezone,
-        (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND status='waiting') waitingPeople,
-        (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND status='waiting') waitingCount,
+        (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, false)}) waitingPeople,
+        (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, false)}) waitingCount,
+        (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, true)} AND service_window_id IS NULL) legacyPeople,
+        (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, true)} AND service_window_id IS NULL) legacyCount,
         ${distanceSql} distanceMeters,
-        (SELECT ROUND(AVG(max(0,(p.predicted_at-?)/60000.0))) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
-          WHERE e.queue_id=q.id AND e.status='waiting' AND p.quality IN ('estimated','provisional')
-            AND p.predicted_at IS NOT NULL AND p.updated_at>=? AND p.updated_at<=?) predictedWait
+        (SELECT COALESCE(SUM(max(0,(p.predicted_at-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedSum,
+        (SELECT COUNT(*) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedCount,
+        (SELECT COALESCE(SUM(max(0,(p.predicted_at-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND e.service_window_id IS NULL AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) legacyPredictedSum,
+        (SELECT COUNT(*) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND e.service_window_id IS NULL AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) legacyPredictedCount
       FROM venue v JOIN queue q ON q.venue_id=v.id
         JOIN service_directory_config d ON d.queue_id=q.id AND d.source_config=q.config AND d.normalized_config IS NOT NULL
         JOIN tenant_account t ON t.organization_id=v.organization_id
@@ -108,7 +116,12 @@ export async function searchServices(
         AdmissionRecord & {
           config: string
           timezone: string
-          predictedWait: number | null
+          predictedSum: number
+          predictedCount: number
+          legacyPeople: number
+          legacyCount: number
+          legacyPredictedSum: number
+          legacyPredictedCount: number
           attribution: string
           waitingPeople: number
           waitingCount: number
@@ -116,18 +129,23 @@ export async function searchServices(
     >()
   const items = result.results.map((row) => {
     const config = JSON.parse(row.config) as ServiceInput
+    const includeLegacy = includesLegacyWaiting(config, row.timezone, new Date(now))
+    const waitingPeople = row.waitingPeople + (includeLegacy ? row.legacyPeople : 0)
+    const waitingCount = row.waitingCount + (includeLegacy ? row.legacyCount : 0)
+    const estimateCount = row.predictedCount + (includeLegacy ? row.legacyPredictedCount : 0)
+    const predictedWait = estimateCount ? Math.round((row.predictedSum + (includeLegacy ? row.legacyPredictedSum : 0)) / estimateCount) : null
     const admission = resolveAdmission(
       config,
       row.timezone,
       row,
-      row.waitingPeople,
+      waitingPeople,
       new Date(now),
-      row.waitingCount,
+      waitingCount,
     )
     const direct =
       admission.serviceOpen &&
       admission.queueState === 'inactive' &&
-      row.waitingPeople === 0
+      waitingPeople === 0
     return {
       id: row.id,
       venueId: row.venueId,
@@ -144,7 +162,7 @@ export async function searchServices(
       waitMinutes: direct
         ? 0
         : admission.serviceOpen && admission.queueState !== 'paused'
-        ? row.predictedWait
+        ? predictedWait
         : null,
     }
   })

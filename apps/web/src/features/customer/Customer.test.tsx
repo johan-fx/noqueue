@@ -157,3 +157,12 @@ it.each(['reception', 'pool'] as const)(
     ).not.toBeInTheDocument()
   },
 )
+it.each(['es', 'en'] as const)('explains automatic service cancellation without blaming the customer (%s)', (locale) => {
+  const turn = entry('cancelled')
+  turn.status = 'cancelled'
+  Object.assign(turn.customer!, { cancellationReason: 'service_ended', actions: [] })
+  render(<MemoryRouter><TurnView entry={turn} locale={locale} now={1000} updatedAt={1000} onAction={vi.fn()} /></MemoryRouter>)
+  expect(screen.getByText(locale === 'es' ? 'El servicio ha finalizado' : 'Service has ended')).toBeVisible()
+  expect(screen.queryByText(locale === 'es' ? 'Has abandonado la lista' : 'You have left the waiting list')).not.toBeInTheDocument()
+  expect(screen.getByRole('link', { name: locale === 'es' ? 'Seleccionar lista de espera' : 'Choose a waiting list' })).toBeVisible()
+})

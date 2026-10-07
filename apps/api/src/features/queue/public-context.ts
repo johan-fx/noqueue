@@ -1,8 +1,9 @@
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { normalizeConfig } from './projection'
-import { admissionState, publicAdmission } from '../staff/availability'
+import { admissionState, publicAdmission, validWaitingSql, includesLegacyWaiting } from '../staff/availability'
 
 export async function publicService(env: CloudflareBindings, id: string) {
+  const now = Date.now()
   const row = await env.DB.prepare(
     `SELECT q.id,q.name,q.open,q.config,v.id AS venueId,v.name AS venueName,v.timezone FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
   )
@@ -18,11 +19,12 @@ export async function publicService(env: CloudflareBindings, id: string) {
     }>()
   if (!row) return null
   const config = normalizeConfig(serviceSchema.parse(JSON.parse(row.config)))
-  const admission = await admissionState(env, id)
+  const admission = await admissionState(env, id, new Date(now))
+  const eligible = validWaitingSql(now, includesLegacyWaiting(config, row.timezone, new Date(now)), 'e')
   const estimate = await env.DB.prepare(
-    "SELECT ROUND(AVG(MAX(0,(p.predicted_at-?)/60000.0))) minutes FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND e.status='waiting' AND p.quality!='unknown' AND p.predicted_at IS NOT NULL AND p.updated_at>=?",
+    `SELECT ROUND(AVG(MAX(0,(p.predicted_at-?)/60000.0))) minutes FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND ${eligible} AND p.quality!='unknown' AND p.predicted_at IS NOT NULL AND p.updated_at>=?`,
   )
-    .bind(Date.now(), id, Date.now() - 120000)
+    .bind(now, id, now - 120000)
     .first<{ minutes: number | null }>()
   return {
     averageWaitMinutes: estimate?.minutes ?? null,

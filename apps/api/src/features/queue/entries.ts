@@ -1,9 +1,10 @@
+import { maintainServiceEntries } from './service-expiry'
 import { customerPhase } from './customer'
 import { publicService } from './public-context'
 import { normalizeConfig, recalculateQueue, readProjection } from './projection'
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
-import { admissionState } from '../staff/availability'
+import { admissionState, serviceDeadline } from '../staff/availability'
 import {
   entrySchema,
   type JoinQueue,
@@ -75,7 +76,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   let customer
   if (service) {
     const detail = await env.DB.prepare(
-      `SELECT e.display_name_cipher,e.party_size,e.preferred_space_id,e.locale,e.version,e.created_at,e.called_at,e.arrival_deadline_at,q.config,(SELECT MAX(created_at) FROM queue_event WHERE entry_id=e.id AND kind='completed') AS arrived_at FROM queue_entry e JOIN queue q ON q.id=e.queue_id WHERE e.id=?`,
+      `SELECT e.display_name_cipher,e.party_size,e.preferred_space_id,e.locale,e.version,e.created_at,e.called_at,e.arrival_deadline_at,q.config,EXISTS(SELECT 1 FROM queue_event WHERE entry_id=e.id AND kind='service_ended') AS service_ended,(SELECT MAX(created_at) FROM queue_event WHERE entry_id=e.id AND kind='completed') AS arrived_at FROM queue_entry e JOIN queue q ON q.id=e.queue_id WHERE e.id=?`,
     )
       .bind(entry.id)
       .first<{
@@ -89,6 +90,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         arrival_deadline_at: number | null
         config: string
         arrived_at: number | null
+        service_ended: number
       }>()
     if (detail) {
       const phase = customerPhase(
@@ -116,6 +118,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         arrivalDeadlineAt: detail.arrival_deadline_at,
         arrivedAt: detail.arrived_at,
         phase,
+        ...(detail.service_ended ? { cancellationReason: 'service_ended' as const } : {}),
         actions:
           service.type !== 'restaurant'
             ? []
@@ -159,6 +162,7 @@ export async function joinQueue(
   experiment = false,
   actor?: string,
 ) {
+  await maintainServiceEntries(env, queueId)
   const access = actor
     ? await queueAccess(env, actor, queueId, 'queue.operate')
     : null
@@ -179,10 +183,11 @@ export async function joinQueue(
     if (existing.request_hash !== requestHash)
       return { status: 409, body: { error: 'idempotency_conflict' } }
     await recalculateQueue(env, queueId)
+    const latest = await env.DB.prepare('SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?').bind(existing.id).first<StoredEntry>()
     return {
       status: 200,
       body: {
-        ...(await presentEntry(env, existing)),
+        ...(await presentEntry(env, latest!)),
         recoveryToken: await recoveryToken(env, existing.id),
       },
     }
@@ -246,6 +251,7 @@ export async function joinQueue(
       sequence: number
     }>()
   if (!queue) return { status: 404, body: { error: 'queue_not_found' } }
+  let snapshot: { windowId: string; endsAt: number | null } | null = null
   if (queue.config) {
     const config = normalizeConfig(
       serviceSchema.parse(JSON.parse(queue.config)),
@@ -289,6 +295,8 @@ export async function joinQueue(
         queue.waiting_people + input.partySize > queue.capacity)
     )
       return { status: 409, body: { error: 'queue_unavailable' } }
+    snapshot = serviceDeadline(config, queue.timezone)
+    if (!snapshot) return { status: 409, body: { error: 'queue_unavailable' } }
   }
   if ((!queue.config && !queue.open) || queue.waiting >= queue.capacity)
     return { status: 409, body: { error: 'queue_unavailable' } }
@@ -302,7 +310,7 @@ export async function joinQueue(
   ).join('')
   const statements = [
     env.DB.prepare(
-      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,display_name_cipher,reception_service,preferred_space_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,display_name_cipher,reception_service,preferred_space_id,service_window_id,service_ends_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       id,
       queueId,
@@ -319,6 +327,8 @@ export async function joinQueue(
         : null,
       input.receptionService ?? null,
       input.preferredSpaceId ?? null,
+      snapshot?.windowId ?? null,
+      snapshot?.endsAt ?? null,
     ),
     env.DB.prepare('INSERT INTO queue_event VALUES (?,?,?,?)').bind(
       crypto.randomUUID(),
@@ -384,17 +394,14 @@ export async function joinQueue(
       console.warn('notification_publish_deferred')
     }
   }
+  // Recalculation may close this service after admission committed the ticket.
+  const latest = await env.DB.prepare(
+    'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?',
+  ).bind(id).first<StoredEntry>()
   return {
     status: 201,
     body: {
-      ...(await presentEntry(env, {
-        id,
-        code,
-        queue_id: queueId,
-        sequence: queue.sequence,
-        request_hash: requestHash,
-        status: 'waiting',
-      })),
+      ...(await presentEntry(env, latest!)),
       recoveryToken: token,
     },
   }

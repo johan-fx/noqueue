@@ -105,8 +105,12 @@ export function TurnSheet({
         : 'If you leave now, you will lose your turn. Do you want to continue?'
       : step === 'yield'
       ? es
-        ? 'Cederás tu posición al siguiente grupo compatible. El tiempo de espera puede aumentar. ¿Quieres continuar?'
-        : 'You will exchange places with the next compatible group. Your wait may increase. Continue?'
+        ? initial.service.type === 'restaurant'
+          ? 'Cederás tu posición al siguiente grupo compatible. El tiempo de espera puede aumentar. ¿Quieres continuar?'
+          : 'Cederás tu posición al siguiente turno compatible. El tiempo de espera puede aumentar. ¿Quieres continuar?'
+        : initial.service.type === 'restaurant'
+        ? 'You will exchange places with the next compatible group. Your wait may increase. Continue?'
+        : 'You will exchange places with the next compatible turn. Your wait may increase. Continue?'
       : step === 'party' && delta === 0
       ? es
         ? 'Dependiendo del número de comensales que cambies, podría cambiar el tiempo de espera.'

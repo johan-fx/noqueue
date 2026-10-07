@@ -7,7 +7,7 @@ import {
   joinedEntrySchema,
   publicServiceSchema,
 } from '@noqueue/contracts/queue'
-import { PublicQueue as LegacyPublicQueue } from '@/features/staff/PublicQueue'
+import { ServiceForm } from './ServiceForm'
 import { RestaurantForm } from './RestaurantForm'
 import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => publicServiceSchema.parse(value)
@@ -30,19 +30,8 @@ export function PublicQueue() {
   useEffect(() => {
     if (service) visitService(service.id)
   }, [service])
-  if (service && service.type !== 'restaurant')
-    return (
-      <CustomerShell
-        title={service.name}
-        back={returnTo ?? `/v/${service.venueId}?lang=${locale}`}
-        locale={locale}
-        setLocale={setLocale}
-      >
-        <div className="p-4">
-          <LegacyPublicQueue providedService={service} locale={locale} />
-        </div>
-      </CustomerShell>
-    )
+  const Form = service?.type === 'restaurant' ? RestaurantForm : ServiceForm
+
   return (
     <CustomerShell
       title={service?.name ?? (locale === 'es' ? 'Restaurante' : 'Restaurant')}
@@ -59,7 +48,7 @@ export function PublicQueue() {
           {locale === 'es' ? 'Cargando…' : 'Loading…'}
         </p>
       )}
-      {service && (
+      {service && (service.type === 'restaurant' || !service.canJoin) && (
         <div className="space-y-2 px-4 pt-4">
           <p role="status">
             {availabilityText(
@@ -76,7 +65,7 @@ export function PublicQueue() {
       )}
       {service &&
         (service.queueState !== 'inactive' || attemptedQueue === queueId) && (
-          <RestaurantForm
+          <Form
             key={queueId}
             service={service}
             locale={locale}

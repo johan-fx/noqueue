@@ -32,9 +32,6 @@ publicServices.post('/:id/entries', async (c) => {
     .bind(c.req.param('id'))
     .first()
   if (!row) return c.json({ error: 'not_found' }, 404)
-  const service = await publicService(c.env, c.req.param('id'))
-  if (service?.type === 'restaurant' && !parsed.data.displayName?.trim())
-    return c.json({ error: 'name_required' }, 400)
   const bucket = Math.floor(Date.now() / 60000)
   const ip = await hmac(
     await hash(c.env.BETTER_AUTH_SECRET),
@@ -52,9 +49,12 @@ publicServices.post('/:id/entries', async (c) => {
       : c.env.QUEUE_COORDINATOR.jurisdiction('eu')
   const result = await namespace
     .getByName(c.req.param('id'))
-    .join(c.req.param('id'), key.data, {
-      ...parsed.data,
-      whatsapp: { consent: false },
-    })
+    .join(
+      c.req.param('id'),
+      key.data,
+      { ...parsed.data, whatsapp: { consent: false } },
+      false,
+      'public-service',
+    )
   return c.json(result.body, result.status as 200)
 })

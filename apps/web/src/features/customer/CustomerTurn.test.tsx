@@ -394,3 +394,85 @@ it('clears confirmed yield feedback on phase changes without reappearing when th
   refresh()
   expect(screen.queryByText('Has pasado turno')).not.toBeInTheDocument()
 })
+
+it.each(['reception', 'pool'] as const)(
+  'keeps %s yield retries frozen and blocks a newly stale sheet',
+  async (type) => {
+    const { fetcher, refresh } = mount(1)
+    resource.data!.customer!.service.type = type
+    resource.data!.customer!.service.spaces = []
+    resource.data!.customer!.actions = ['cancel', 'yield']
+    refresh()
+    fetcher.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Pasar turno' }),
+    )
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Sí, pasar turno' }),
+    )
+    await screen.findByRole('alert')
+    resource.data = {
+      ...resource.data!,
+      customer: { ...resource.data!.customer!, version: 8 },
+    }
+    refresh()
+    expect(screen.queryByText('Has pasado turno')).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Sí, pasar turno' }))
+    expect(await screen.findByText('Has pasado turno')).toBeVisible()
+    expect(fetcher.mock.calls[1]).toEqual(fetcher.mock.calls[0])
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Pasar turno' }),
+    )
+    await screen.findByRole('dialog')
+    resource.data = {
+      ...resource.data!,
+      customer: {
+        ...resource.data!.customer!,
+        version: 9,
+        phase: 'called',
+        actions: [],
+      },
+    }
+    refresh()
+    expect(
+      screen.getByRole('button', { name: 'Sí, pasar turno' }),
+    ).toBeDisabled()
+    expect(screen.queryByText('Has pasado turno')).not.toBeInTheDocument()
+    expect(fetcher).toHaveBeenCalledTimes(2)
+  },
+)
+
+it.each([
+  ['reception', 'es'],
+  ['pool', 'es'],
+  ['restaurant', 'es'],
+  ['reception', 'en'],
+  ['pool', 'en'],
+  ['restaurant', 'en'],
+] as const)(
+  'uses service-specific yield copy for %s in %s',
+  async (type, locale) => {
+    const { refresh } = mount(1, locale)
+    resource.data!.customer!.service.type = type
+    resource.data!.customer!.phase = 'approaching'
+    resource.data!.customer!.actions = ['cancel', 'yield']
+    refresh()
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: locale === 'es' ? 'Pasar turno' : 'Yield turn',
+      }),
+    )
+    const dialog = await screen.findByRole('dialog')
+    expect(
+      within(dialog).getByText(
+        locale === 'es'
+          ? type === 'restaurant'
+            ? /siguiente grupo compatible/
+            : /siguiente turno compatible/
+          : type === 'restaurant'
+          ? /next compatible group/
+          : /next compatible turn/,
+      ),
+    ).toBeVisible()
+  },
+)

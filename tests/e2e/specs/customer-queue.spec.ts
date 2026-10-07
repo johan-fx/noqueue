@@ -546,3 +546,149 @@ test.describe('visual customer states', () => {
     }
   })
 })
+
+for (const type of ['reception', 'pool'] as const) {
+  test(`${type} public form, recovery, yield and cancellation against the real API`, async ({
+    page,
+    request,
+    browser,
+    baseURL,
+  }, testInfo) => {
+    test.setTimeout(90000)
+    const t = await setup(page, request, baseURL!)
+    const config = {
+      name: type === 'reception' ? 'Recepción' : 'Bar piscina',
+      type,
+      capacity: 99,
+      averageMinutes: 30,
+      graceMinutes: 5,
+      cutoffMinutes: 0,
+      twentyFourHours: true,
+      schedules: [],
+      receptionServices:
+        type === 'reception' ? ['check_in', 'check_out', 'other'] : [],
+      spaces: [],
+      approachTurns: 0,
+      approachMinutes: 0,
+    }
+    const created = await page.request.post(
+      `/api/v1/staff/venues/${t.venueId}/queues`,
+      {
+        headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
+        data: config,
+      },
+    )
+    expect(created.ok(), await created.text()).toBeTruthy()
+    const { id } = (await created.json()) as { id: string }
+    const context = await (
+      await page.request.get(`/api/v1/staff/queues/${id}/opening-context`)
+    ).json()
+    const opened = await page.request.post(
+      `/api/v1/staff/queues/${id}/lifecycle`,
+      {
+        headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
+        data: {
+          action: 'open',
+          contextToken: context.contextToken,
+          groups: [],
+        },
+      },
+    )
+    expect(opened.ok(), await opened.text()).toBeTruthy()
+    const guest = await browser.newContext({
+      baseURL: baseURL!,
+      viewport: { width: 390, height: 844 },
+      extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
+    })
+    try {
+      const client = await guest.newPage()
+      await client.goto(`/q/${id}`)
+      await client.getByLabel('Nombre', { exact: true }).fill('Daniel')
+      await expect(
+        client.getByRole('button', { name: 'Más comensales' }),
+      ).toHaveCount(0)
+      if (type === 'reception') {
+        await expect(
+          client.getByRole('radio', { name: 'Check-in', exact: true }),
+        ).toBeChecked()
+        await client.getByRole('radio', { name: 'Otros temas' }).check()
+        await client
+          .getByRole('radio', { name: 'Check-in', exact: true })
+          .check()
+      } else await expect(client.getByRole('radio')).toHaveCount(0)
+      await expect(client.getByRole('button', { name: 'Ponerme en lista' })).toBeEnabled()
+      await client.getByRole('heading', { name: 'Introduce tus datos' }).click()
+      for (const width of [390, 1280]) {
+        await client.setViewportSize({ width, height: 844 })
+        await client.screenshot({
+          path: `/tmp/noqueue-${type}-${width}-${testInfo.project.name}.png`,
+          fullPage: true,
+          animations: 'disabled',
+        })
+        expect(
+          await client.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBeTruthy()
+      }
+      await selectCustomerLanguage(client, 'en')
+      await expect(
+        client.getByRole('heading', { name: 'Enter your details' }),
+      ).toBeVisible()
+      await selectCustomerLanguage(client, 'es')
+      await client.getByRole('button', { name: 'Ponerme en lista' }).click()
+      await expect(client).toHaveURL(/\/t\//)
+      await client.reload()
+      await expect(
+        client.getByRole('button', { name: 'Modificar', exact: true }),
+      ).toHaveCount(0)
+      await expect(
+        client.getByRole('button', { name: 'Pasar turno', exact: true }),
+      ).toHaveCount(1)
+      const token = new URL(client.url()).pathname.split('/').at(-1)!
+      const joined = await (
+        await guest.request.get(`/api/v1/public/entries/${token}`)
+      ).json()
+      expect(joined.customer).toMatchObject({
+        partySize: 1,
+        preferredSpaceId: null,
+        actions: ['cancel', 'yield'],
+      })
+      const successor = await guest.request.post(
+        `/api/v1/public/services/${id}/entries`,
+        {
+          headers: { Origin: baseURL!, 'Idempotency-Key': crypto.randomUUID() },
+          data: {
+            displayName: 'Next guest',
+            partySize: 1,
+            locale: 'es',
+            ...(type === 'reception' ? { receptionService: 'check_out' } : {}),
+          },
+        },
+      )
+      expect(successor.ok(), await successor.text()).toBeTruthy()
+      await client
+        .getByRole('button', { name: 'Pasar turno', exact: true })
+        .click()
+      await client
+        .getByRole('button', { name: 'Sí, pasar turno', exact: true })
+        .click()
+      await expect(
+        client.getByText('Has pasado turno', { exact: true }),
+      ).toBeVisible()
+      await client
+        .getByRole('button', { name: 'Abandonar la lista', exact: true })
+        .click()
+      await client
+        .getByRole('button', { name: 'Sí, abandonar la lista de espera' })
+        .click()
+      await expect(
+        client.getByRole('heading', {
+          name: 'Ya no estás en la lista de espera',
+        }),
+      ).toBeVisible()
+    } finally {
+      await guest.close()
+    }
+  })
+}

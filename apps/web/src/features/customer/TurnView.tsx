@@ -113,7 +113,7 @@ export function TurnView({
           : 'On your way',
         'Your turn!',
       ]
-  if (restaurant && cancelled && !serviceEnded) {
+  if (cancelled && !serviceEnded) {
     return (
       <>
         <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center font-sans">
@@ -347,7 +347,7 @@ export function TurnView({
               : 'Checking your turn status…'}
           </p>
         )}
-        {yielded && restaurant && (phase === 'waiting' || approaching) && (
+        {yielded && (phase === 'waiting' || approaching) && (
           <Alert role="status" className="mt-auto gap-y-1 border-green-600 px-4 py-3 font-sans leading-5 has-[>svg]:gap-x-3">
             <CircleCheck aria-hidden="true" className="size-4 text-green-600!" />
             <AlertTitle>{es ? 'Has pasado turno' : 'You have yielded your turn'}</AlertTitle>
@@ -386,13 +386,13 @@ export function TurnView({
               {es ? 'Abandonar la lista' : 'Leave the list'}
             </Button>
           )}
-          {c.actions.includes(approaching ? 'yield' : 'update') && (
+          {c.actions.includes(approaching || !restaurant ? 'yield' : 'update') && (
             <Button
               variant="outline"
               className="border-gray-800"
-              onClick={() => onAction(approaching ? 'yield' : 'update')}
+              onClick={() => onAction(approaching || !restaurant ? 'yield' : 'update')}
             >
-              {approaching
+              {approaching || !restaurant
                 ? es
                   ? 'Pasar turno'
                   : 'Yield turn'

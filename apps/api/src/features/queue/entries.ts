@@ -120,10 +120,10 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         phase,
         ...(detail.service_ended ? { cancellationReason: 'service_ended' as const } : {}),
         actions:
-          service.type !== 'restaurant'
-            ? []
-            : phase === 'waiting' || phase === 'approaching'
-            ? ['update', 'cancel', 'yield']
+          phase === 'waiting' || phase === 'approaching'
+            ? service.type === 'restaurant'
+              ? ['update', 'cancel', 'yield']
+              : ['cancel', 'yield']
             : [],
       }
     }
@@ -152,6 +152,8 @@ export function manualJoinRequiresWhatsapp(env: CloudflareBindings) {
     return true
   }
 }
+export type JoinSource = 'legacy' | 'public-service'
+
 export async function joinQueue(
   env: CloudflareBindings,
   queueId: string,
@@ -159,6 +161,7 @@ export async function joinQueue(
   input: JoinQueue,
   experiment = false,
   actor?: string,
+  source: JoinSource = 'legacy',
 ) {
   await maintainServiceEntries(env, queueId)
   const access = actor
@@ -191,6 +194,8 @@ export async function joinQueue(
     }
   }
   // Admission guards apply to new turns, never to recovery of a committed request.
+  if (source === 'public-service' && !input.displayName?.trim())
+    return { status: 400, body: { error: 'name_required' } }
   if (actor && manualJoinRequiresWhatsapp(env)) {
     if (!input.whatsapp.consent)
       return { status: 400, body: { error: 'whatsapp_consent_required' } }
@@ -254,6 +259,18 @@ export async function joinQueue(
     const config = normalizeConfig(
       serviceSchema.parse(JSON.parse(queue.config)),
     )
+    if (
+      source === 'public-service' &&
+      config.type === 'pool' &&
+      input.partySize !== 1
+    )
+      return { status: 400, body: { error: 'invalid_party_size' } }
+    if (
+      source === 'public-service' &&
+      config.type === 'reception' &&
+      !input.receptionService
+    )
+      return { status: 400, body: { error: 'invalid_reception_service' } }
     if (
       input.receptionService &&
       (config.type !== 'reception' ||

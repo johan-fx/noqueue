@@ -246,3 +246,48 @@ it.each(['called', 'arrived', 'expired', 'cancelled'] as const)(
     expect(screen.queryByText('Has pasado turno')).not.toBeInTheDocument()
   },
 )
+
+it.each(['reception', 'pool'] as const)(
+  'offers direct yield and shared feedback for %s without modification',
+  (type) => {
+    const turn = entry('waiting')
+    turn.customer!.service = { ...service, type, spaces: [] }
+    turn.customer!.actions = ['cancel', 'yield']
+    const action = vi.fn()
+    const { rerender } = render(
+      <MemoryRouter>
+        <TurnView
+          entry={turn}
+          locale="es"
+          now={1000}
+          updatedAt={1000}
+          yielded
+          onAction={action}
+        />
+      </MemoryRouter>,
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Modificar' }),
+    ).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Pasar turno' }))
+    expect(action).toHaveBeenCalledWith('yield')
+    expect(screen.getByText('Has pasado turno')).toBeVisible()
+    turn.customer!.phase = 'cancelled'
+    rerender(
+      <MemoryRouter>
+        <TurnView
+          entry={turn}
+          locale="es"
+          now={1000}
+          updatedAt={1000}
+          onAction={action}
+        />
+      </MemoryRouter>,
+    )
+    expect(
+      screen.getByRole('heading', {
+        name: 'Ya no estás en la lista de espera',
+      }),
+    ).toBeVisible()
+  },
+)

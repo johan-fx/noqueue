@@ -94,7 +94,10 @@ export async function runCustomerCommand(
   if (entry.status !== 'waiting')
     throw new HTTPException(409, { message: 'invalid_transition' })
   const state = await loadQueueState(env, queueId, now)
-  if (state.config?.type !== 'restaurant')
+  if (
+    !state.config ||
+    (input.action === 'update' && state.config.type !== 'restaurant')
+  )
     throw new HTTPException(409, { message: 'unsupported_service' })
   const statements: D1PreparedStatement[] = []
   let metadata: Record<string, unknown> = {}

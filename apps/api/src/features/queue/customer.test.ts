@@ -221,7 +221,7 @@ it('runs the durable alarm without a browser and repairs a missing alarm on coor
   expect(await runDurableObjectAlarm(stub)).toBe(false)
 })
 
-it('projects yield for waiting restaurants, but no actions for called or other services', async () => {
+it('projects service-specific waiting actions and no actions for called turns', async () => {
   const context = await import('./public-context')
   const service = {
     id: 'restaurant',
@@ -257,6 +257,76 @@ it('projects yield for waiting restaurants, but no actions for called or other s
   service.type = 'pool'
   expect(
     (await readEntrySnapshot(env, entries[1]!.token))?.customer?.actions,
-  ).toEqual([])
+  ).toEqual(['cancel', 'yield'])
   publicService.mockRestore()
 })
+
+it.each(['reception', 'pool'])(
+  'supports %s cancellation and synthetic-resource yield, but not editing',
+  async (type) => {
+    const { queueId, entries } = await fixture()
+    await env.DB.prepare(
+      "UPDATE queue SET config=json_set(config,'$.type',?,'$.spaces',json('[]'),'$.receptionServices',json('[\"check_in\"]')) WHERE id=?",
+    )
+      .bind(type, queueId)
+      .run()
+    await env.DB.prepare(
+      'UPDATE queue_entry SET preferred_space_id=NULL WHERE queue_id=?',
+    )
+      .bind(queueId)
+      .run()
+    const token = entries[0]!.token
+    await expect(
+      runCustomerCommand(env, queueId, token, crypto.randomUUID(), {
+        action: 'update',
+        version: 0,
+        displayName: 'Guest',
+        partySize: 1,
+        preferredSpaceId: 'fastest',
+        locale: 'en',
+      }),
+    ).rejects.toThrow('unsupported_service')
+    const key = crypto.randomUUID()
+    await runCustomerCommand(env, queueId, token, key, {
+      action: 'yield',
+      version: 0,
+    })
+    await runCustomerCommand(env, queueId, token, key, {
+      action: 'yield',
+      version: 0,
+    })
+    expect(
+      await env.DB.prepare(
+        'SELECT sequence,version,party_size FROM queue_entry WHERE id=?',
+      )
+        .bind(entries[0]!.id)
+        .first(),
+    ).toEqual({ sequence: 2, version: 1, party_size: 2 })
+    await expect(
+      runCustomerCommand(env, queueId, token, crypto.randomUUID(), {
+        action: 'cancel',
+        version: 0,
+      }),
+    ).rejects.toThrow('version_conflict')
+    const cancelKey = crypto.randomUUID()
+    await runCustomerCommand(env, queueId, token, cancelKey, {
+      action: 'cancel',
+      version: 1,
+    })
+    await runCustomerCommand(env, queueId, token, cancelKey, {
+      action: 'cancel',
+      version: 1,
+    })
+    expect(
+      await env.DB.prepare('SELECT status,version FROM queue_entry WHERE id=?')
+        .bind(entries[0]!.id)
+        .first(),
+    ).toEqual({ status: 'cancelled', version: 2 })
+    await expect(
+      runCustomerCommand(env, queueId, entries[2]!.token, crypto.randomUUID(), {
+        action: 'yield',
+        version: 0,
+      }),
+    ).rejects.toThrow('no_compatible_successor')
+  },
+)

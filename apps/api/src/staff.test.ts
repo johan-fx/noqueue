@@ -671,17 +671,18 @@ describe('service lifecycle and public access', () => {
       joinPath,
       '',
       'POST',
-      { partySize: 2, locale: 'es' },
+      { displayName: 'Guest', partySize: 1, locale: 'es' },
       crypto.randomUUID(),
     )
     expect(joined.status).toBe(201)
+    expect((await request(joinPath, '', 'POST', { displayName: 'Second', partySize: 1, locale: 'es' }, crypto.randomUUID())).status).toBe(201)
     expect(
       (
         await request(
           joinPath,
           '',
           'POST',
-          { partySize: 1, locale: 'es' },
+          { displayName: 'Guest', partySize: 1, locale: 'es' },
           crypto.randomUUID(),
         )
       ).status,
@@ -2723,3 +2724,152 @@ it('rejects an exclusive venue grant whose organization membership belongs to an
     ).status,
   ).toBe(403)
 })
+
+it.each(['reception', 'pool'] as const)(
+  'validates public %s admission while retaining single-person recovery',
+  async (type) => {
+    await env.DB.prepare('DELETE FROM staff_rate').run()
+    const t = await tenant()
+    const config = {
+      ...input().services[0]!,
+      type,
+      capacity: 2,
+      spaces: [],
+      receptionServices: ['check_in' as const],
+    }
+    const created = await request(
+      `/staff/venues/${t.venueId}/queues`,
+      t.owner.cookie,
+      'POST',
+      config,
+      crypto.randomUUID(),
+    )
+    expect(created.status).toBe(201)
+    const { id } = (await created.json()) as { id: string }
+    await configureAndOpen(t, id, config)
+    const path = `/public/services/${id}/entries`
+    const valid = {
+      displayName: 'Guest',
+      partySize: 1,
+      locale: 'en',
+      ...(type === 'reception' ? { receptionService: 'check_in' } : {}),
+    }
+    for (const body of [
+      { ...valid, displayName: undefined },
+      { ...valid, displayName: '   ' },
+      ...(type === 'pool'
+        ? [{ ...valid, partySize: 2 }]
+        : [
+            { ...valid, receptionService: undefined },
+            { ...valid, receptionService: 'check_out' },
+          ]),
+    ]) {
+      expect(
+        (await request(path, '', 'POST', body, crypto.randomUUID())).status,
+      ).toBe(400)
+    }
+    const key = crypto.randomUUID()
+    const joined = await request(path, '', 'POST', valid, key)
+    expect(joined.status).toBe(201)
+    const body = (await joined.json()) as {
+      recoveryToken: string
+      customer: { partySize: number; actions: string[] }
+    }
+    expect(body.customer.partySize).toBe(1)
+    expect(body.customer.actions).toEqual(['cancel', 'yield'])
+    expect((await request(path, '', 'POST', valid, key)).status).toBe(200)
+    expect(
+      (await request(path, '', 'POST', valid, crypto.randomUUID())).status,
+    ).toBe(201)
+    if (type === 'pool')
+      expect(
+        (await request(path, '', 'POST', valid, crypto.randomUUID())).status,
+      ).toBe(409)
+    await env.DB.prepare(
+      "UPDATE queue SET config=json_set(config,'$.receptionServices',json('[\"check_out\"]')) WHERE id=?",
+    )
+      .bind(id)
+      .run()
+    expect((await request(path, '', 'POST', valid, key)).status).toBe(200)
+  },
+)
+
+it.each(['reception', 'pool'] as const)(
+  'recovers a committed nameless %s request before enforcing new public admission',
+  async (type) => {
+    await env.DB.prepare('DELETE FROM staff_rate').run()
+    const t = await tenant()
+    const config = {
+      ...input().services[0]!,
+      type,
+      spaces: [],
+      receptionServices: ['check_in' as const],
+    }
+    const created = await request(
+      `/staff/venues/${t.venueId}/queues`,
+      t.owner.cookie,
+      'POST',
+      config,
+      crypto.randomUUID(),
+    )
+    expect(created.status).toBe(201)
+    const { id } = (await created.json()) as { id: string }
+    await configureAndOpen(t, id, config)
+    const { serviceJoinSchema } = await import('@noqueue/contracts/queue')
+    const { joinQueue } = await import('./features/queue/entries')
+    const payload = serviceJoinSchema.parse({
+      partySize: type === 'pool' ? 2 : 1,
+      locale: 'en',
+    })
+    const key = crypto.randomUUID()
+    // The old public route forwarded exactly this normalized input, without a name.
+    const committed = await joinQueue(env, id, key, {
+      ...payload,
+      whatsapp: { consent: false },
+    })
+    expect(committed.status).toBe(201)
+    const original = await env.DB.prepare(
+      'SELECT id,request_hash,recovery_hash,party_size,display_name_cipher FROM queue_entry WHERE queue_id=? AND idempotency_key=?',
+    )
+      .bind(id, key)
+      .first()
+    expect(original).toMatchObject({
+      party_size: type === 'pool' ? 2 : 1,
+      display_name_cipher: null,
+    })
+    const path = `/public/services/${id}/entries`
+    const replay = await request(path, '', 'POST', payload, key)
+    expect(replay.status).toBe(200)
+    expect(
+      ((await replay.json()) as { recoveryToken: string }).recoveryToken,
+    ).toBe((committed.body as { recoveryToken: string }).recoveryToken)
+    expect(
+      await env.DB.prepare(
+        'SELECT id,request_hash,recovery_hash,party_size,display_name_cipher FROM queue_entry WHERE queue_id=? AND idempotency_key=?',
+      )
+        .bind(id, key)
+        .first(),
+    ).toEqual(original)
+    expect(
+      await env.DB.prepare(
+        'SELECT COUNT(*) AS count FROM queue_entry WHERE queue_id=?',
+      )
+        .bind(id)
+        .first(),
+    ).toEqual({ count: 1 })
+    expect(
+      (await request(path, '', 'POST', payload, crypto.randomUUID())).status,
+    ).toBe(400)
+    expect(
+      (
+        await request(
+          path,
+          '',
+          'POST',
+          { ...payload, displayName: 'Changed' },
+          key,
+        )
+      ).status,
+    ).toBe(409)
+  },
+)

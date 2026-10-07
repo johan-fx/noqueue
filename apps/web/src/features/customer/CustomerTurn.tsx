@@ -59,8 +59,12 @@ function CustomerTurnContent({
       throw new CustomerCommandError(
         body.error === 'no_compatible_successor'
           ? es
-            ? 'No hay otro grupo compatible al que ceder el turno.'
-            : 'There is no compatible group to yield to.'
+            ? entry?.customer?.service.type === 'restaurant'
+              ? 'No hay otro grupo compatible al que ceder el turno.'
+              : 'No hay otro turno compatible al que ceder el turno.'
+            : entry?.customer?.service.type === 'restaurant'
+            ? 'There is no compatible group to yield to.'
+            : 'There is no compatible turn to yield to.'
           : body.error === 'version_conflict' ||
             body.error === 'invalid_transition'
           ? es

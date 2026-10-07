@@ -13,7 +13,7 @@ import type { JoinQueue } from '@noqueue/contracts/queue'
 import { app } from './app'
 import { confirmationExperimentEnabled } from './features/queue/confirmation'
 import { changeExperiment } from './features/queue/experiment'
-import { joinQueue, readEntrySnapshot } from './features/queue/entries'
+import { joinQueue, readEntrySnapshot, type JoinSource } from './features/queue/entries'
 import {
   dispatchNotification,
   dispatchNotificationSerialized,
@@ -151,12 +151,20 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       }
     })
   }
-  join(queueId: string, key: string, input: JoinQueue, experiment = false) {
+  join(
+    queueId: string,
+    key: string,
+    input: JoinQueue,
+    experiment = false,
+    source: JoinSource = 'legacy',
+  ) {
     if (experiment && !confirmationExperimentEnabled(this.env))
       return Promise.resolve({ status: 404, body: { error: 'not_found' } })
     // D1 awaits permit interleaving. Chain entire joins, not individual database calls.
     return this.serialize(() =>
-      this.withQueue(queueId, () => joinQueue(this.env, queueId, key, input, experiment)),
+      this.withQueue(queueId, () =>
+        joinQueue(this.env, queueId, key, input, experiment, undefined, source),
+      ),
     )
   }
 }

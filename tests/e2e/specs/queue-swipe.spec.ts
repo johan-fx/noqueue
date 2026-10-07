@@ -127,9 +127,14 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await mouseSwipe(page, row, 180)
   await expect.poll(() => offset(row)).toBe(144)
   await expect(row.getByRole('button', { name: 'Asignar turno' })).toBeVisible()
-  await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveClass(
-    /bg-yellow-400/,
-  )
+  const assignment = row.getByRole('button', { name: 'Asignar turno' })
+  await expect(assignment).toHaveCSS('background-color', 'rgb(38, 173, 97)')
+  await expect(assignment).toHaveCSS('color', 'rgb(255, 255, 255)')
+  await expect(assignment.locator('img')).toHaveAttribute('aria-hidden', 'true')
+  const iconBox = await assignment.locator('img').boundingBox()
+  expect(iconBox!.width).toBeCloseTo(19.9984, 1)
+  expect(iconBox!.height).toBeCloseTo(19.9984, 1)
+  await row.screenshot({ path: '/tmp/noqueue-restaurant-assignment-swipe.png' })
   await mouseSwipe(page, row, -110)
   await expect.poll(() => offset(row)).toBe(0)
   await mouseSwipe(page, row, -280)
@@ -268,4 +273,19 @@ test('quick waiting swipes and keyboard expose only cancellation; footer assigns
   await expect(
     page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
   ).toHaveCount(0)
+})
+
+test('restaurant assignment swipe opens the existing sheet without dispatching', async ({
+  page,
+}) => {
+  const { drawer, commands } = await openQueue(page)
+  const row = drawer.locator('[data-entry-code="T0"]')
+  await mouseSwipe(page, row, 180)
+  await expect.poll(() => offset(row)).toBe(144)
+  expect(commands()).toBe(0)
+  await row.getByRole('button', { name: 'Asignar turno' }).click()
+  await expect(
+    page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
+  ).toBeVisible()
+  expect(commands()).toBe(0)
 })

@@ -941,11 +941,32 @@ it.each([false, true])(
     fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
     const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
     expect(
-      within(sheet).getByLabelText('Cliente ya presente'),
+      within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
     ).not.toBeChecked()
+    expect(
+      within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
+    ).toHaveAttribute('data-slot', 'checkbox')
     const submit = within(sheet).getByRole('button', { name: 'Confirmar' })
-    if (available) expect(submit).toBeEnabled()
-    else expect(submit).toBeDisabled()
+    const present = within(sheet).getByRole('checkbox', {
+      name: 'Cliente ya presente',
+    })
+    fireEvent.click(present)
+    expect(present).toBeChecked()
+    fireEvent.click(present)
+    expect(present).not.toBeChecked()
+    if (available) {
+      expect(submit).toBeEnabled()
+      fireEvent.click(present)
+      fireEvent.click(submit)
+      await waitFor(() =>
+        expect(api).toHaveBeenCalledWith(
+          '/queues/restaurant/commands',
+          'POST',
+          expect.objectContaining({ action: 'call', arrivalMode: 'present' }),
+          expect.any(String),
+        ),
+      )
+    } else expect(submit).toBeDisabled()
   },
 )
 

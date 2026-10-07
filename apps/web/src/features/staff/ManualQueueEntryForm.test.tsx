@@ -98,7 +98,9 @@ it.each(['reception', 'pool'] as const)(
   },
 )
 it('guards duplicate submission while awaiting the response', async () => {
-  const submit = vi.fn(() => new Promise<void>(() => {}))
+  const submit = vi.fn<
+    (input: import('@noqueue/contracts/queue').ManualJoin) => Promise<void>
+  >(() => new Promise<void>(() => {}))
   render(
     <ManualQueueEntryForm
       service={restaurant}
@@ -114,4 +116,40 @@ it('guards duplicate submission while awaiting the response', async () => {
   fireEvent.submit(button.closest('form')!)
   expect(submit).toHaveBeenCalledOnce()
   expect(button).toBeDisabled()
+})
+
+it('maps international prefix selection to an empty prefix and disables the trigger while saving', async () => {
+  const submit = vi.fn<
+    (input: import('@noqueue/contracts/queue').ManualJoin) => Promise<void>
+  >(() => new Promise<void>(() => {}))
+  render(
+    <ManualQueueEntryForm
+      service={restaurant}
+      whatsappRequired
+      onSubmit={submit}
+    />,
+  )
+  const trigger = screen.getByRole('combobox', { name: 'Prefijo telefónico' })
+  expect(trigger).toHaveAttribute('data-slot', 'select-trigger')
+  fireEvent.click(trigger)
+  {
+    const option = await screen.findByRole('option', {
+      name: /Otro: introduce/,
+    })
+    fireEvent.pointerDown(option, { pointerType: 'mouse' })
+    fireEvent.click(option, { detail: 1 })
+  }
+  fireEvent.change(screen.getByLabelText('Nombre', { exact: true }), {
+    target: { value: 'Guest' },
+  })
+  fireEvent.change(screen.getByLabelText('Nº de teléfono', { exact: true }), {
+    target: { value: '+33600000000' },
+  })
+  fireEvent.click(screen.getByRole('switch'))
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir turno' }))
+  expect(submit.mock.calls[0]![0].whatsapp).toMatchObject({
+    consent: true,
+    phone: '+33600000000',
+  })
+  expect(trigger).toBeDisabled()
 })

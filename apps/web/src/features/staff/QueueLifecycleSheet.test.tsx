@@ -356,3 +356,53 @@ it('allows confirming inventory in advanced settings without activating an inact
     screen.getByRole('button', { name: 'Confirmar ocupación' }),
   ).toBeEnabled()
 })
+
+it('selects a second release group without closing its sheet and sends the group tuple', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('opening-context')
+      ? {
+          ...context,
+          groups: context.groups.map((g) => ({ ...g, occupied: 1 })),
+        }
+      : { ok: true },
+  )
+  const close = vi.fn()
+  render(
+    <QueueLifecycleSheet
+      queueId="q"
+      name="Restaurant"
+      action="release_unit"
+      onClose={close}
+      onSaved={vi.fn()}
+    />,
+  )
+  const trigger = await screen.findByRole('combobox', {
+    name: 'Grupo de mesas',
+  })
+  expect(trigger).toHaveAttribute('data-slot', 'select-trigger')
+  expect(trigger).toHaveTextContent('Terraza · 4 plazas')
+  fireEvent.click(trigger)
+  {
+    const option = await screen.findByRole('option', {
+      name: 'Salón · 4 plazas',
+    })
+    fireEvent.pointerDown(option, { pointerType: 'mouse' })
+    fireEvent.click(option, { detail: 1 })
+  }
+  expect(close).not.toHaveBeenCalled()
+  expect(screen.getByRole('dialog')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Liberar una mesa' }))
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith(
+      '/queues/q/lifecycle',
+      'POST',
+      {
+        action: 'release_unit',
+        contextToken: 'token',
+        spaceId: 'salon',
+        seats: 4,
+      },
+      expect.any(String),
+    ),
+  )
+})

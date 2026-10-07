@@ -677,7 +677,10 @@ test('space-specific durations and an availability delay survive browser save an
   await adjustment
     .getByRole('button', { name: 'Añadir ajuste', exact: true })
     .click()
-  await adjustment.getByLabel('Tipo de ajuste').selectOption('availability')
+  await adjustment.getByRole('combobox', { name: 'Tipo de ajuste' }).click()
+  await page
+    .getByRole('option', { name: 'Bloquear disponibilidad hasta caducidad' })
+    .click()
   await adjustment
     .getByLabel('Motivo', { exact: true })
     .fill('Terrace cleaning')
@@ -762,7 +765,8 @@ test('space-specific durations and an availability delay survive browser save an
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
   await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
-  await guest.getByLabel('Espacio', { exact: true }).selectOption('terrace')
+  await guest.getByRole('combobox', { name: 'Espacio', exact: true }).click()
+  await guest.getByRole('option', { name: 'Terraza', exact: true }).click()
   await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await expect(guest.getByText(/Espera aproximada: (59|60) min/)).toBeVisible()

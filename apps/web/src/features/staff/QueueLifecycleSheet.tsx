@@ -1,3 +1,10 @@
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { useEffect, useRef, useState } from 'react'
 import type {
   QueueLifecycleCommand,
@@ -207,19 +214,31 @@ export function QueueLifecycleSheet({
                   <FieldLabel htmlFor="release-group">
                     Grupo de mesas
                   </FieldLabel>
-                  <select
-                    id="release-group"
-                    className="h-12 w-full rounded-md border px-3"
+                  <Select
+                    items={context.groups.map((g) => ({
+                      value: groupKey(g),
+                      label: `${g.spaceName} · ${g.seats} plazas`,
+                    }))}
                     value={selected}
-                    disabled={busy}
-                    onChange={(e) => setSelected(e.target.value)}
+                    onValueChange={(value) => {
+                      if (value !== null) setSelected(value)
+                    }}
                   >
-                    {context.groups.map((g) => (
-                      <option key={groupKey(g)} value={groupKey(g)}>
-                        {g.spaceName} · {g.seats} plazas
-                      </option>
-                    ))}
-                  </select>
+                    <SelectTrigger
+                      id="release-group"
+                      disabled={busy}
+                      className="h-12"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {context.groups.map((g) => (
+                        <SelectItem key={groupKey(g)} value={groupKey(g)}>
+                          {g.spaceName} · {g.seats} plazas
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </Field>
               )}
             {action === 'declare_full' &&

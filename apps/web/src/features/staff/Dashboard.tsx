@@ -1,3 +1,4 @@
+import { Checkbox } from '@/components/ui/checkbox'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { ServiceCard } from './ServiceCard'
 import { VenueLocationEditor } from './VenueLocationEditor'
@@ -831,19 +832,19 @@ export function Dashboard(props: DashboardProps) {
                             : ''
                         }. El sistema asignará la mesa.`}
                   </p>
-                  <label className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="assignment-present"
                       checked={arrivalMode === 'present'}
                       disabled={busy}
-                      onChange={(event) =>
-                        setArrivalMode(
-                          event.target.checked ? 'present' : 'notify',
-                        )
+                      onCheckedChange={(checked) =>
+                        setArrivalMode(checked ? 'present' : 'notify')
                       }
                     />
-                    Cliente ya presente
-                  </label>
+                    <label htmlFor="assignment-present">
+                      Cliente ya presente
+                    </label>
+                  </div>
                   {pending.entry.assignment?.priorityRequired && (
                     <label className="space-y-2 text-sm">
                       Motivo de prioridad (obligatorio)

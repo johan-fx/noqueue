@@ -1,5 +1,12 @@
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { useId, useRef, useState } from 'react'
-import { Check, ChevronDown, Minus, Plus } from 'lucide-react'
+import { Check, Minus, Plus } from 'lucide-react'
 import {
   consentVersion,
   manualJoinSchema,
@@ -171,28 +178,35 @@ export function ManualQueueEntryForm({
               Nº de teléfono{whatsappRequired || consent ? '*' : ''}
             </FieldLabel>
             <div className="flex gap-2">
-              <div className="relative w-20 shrink-0 rounded-md focus-within:ring-2 focus-within:ring-ring">
-                <select
+              <Select
+                items={countryCodes.map(([code, flag, name]) => ({
+                  value: code || 'international',
+                  label: `${flag} ${name} ${code}`,
+                }))}
+                value={prefix || 'international'}
+                onValueChange={(value) => {
+                  if (value !== null)
+                    setPrefix(value === 'international' ? '' : value)
+                }}
+              >
+                <SelectTrigger
                   aria-label="Prefijo telefónico"
                   title={prefix || 'Internacional'}
-                  className="absolute inset-0 z-10 h-11 w-full cursor-pointer opacity-0"
-                  value={prefix}
-                  onChange={(e) => setPrefix(e.target.value)}
+                  disabled={busy}
+                  className="h-11 w-20 shrink-0"
                 >
+                  <SelectValue>
+                    {countryCodes.find(([code]) => code === prefix)?.[1]}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
                   {countryCodes.map(([code, flag, name]) => (
-                    <option key={code} value={code}>
+                    <SelectItem key={code} value={code || 'international'}>
                       {flag} {name} {code}
-                    </option>
+                    </SelectItem>
                   ))}
-                </select>
-                <div
-                  aria-hidden="true"
-                  className="flex h-11 items-center justify-center gap-2 rounded-md border border-input bg-background text-xl shadow-xs"
-                >
-                  {countryCodes.find(([code]) => code === prefix)?.[1]}
-                  <ChevronDown className="size-5" />
-                </div>
-              </div>
+                </SelectContent>
+              </Select>
               <Input
                 id={`${id}-phone`}
                 aria-label="Nº de teléfono"
@@ -320,8 +334,7 @@ export function ManualQueueEntryForm({
         </fieldset>
         {!whatsappRequired && (
           <p className="mt-4 text-xs text-muted-foreground">
-            Modo local: puedes crear un turno de prueba sin teléfono ni
-            avisos.
+            Modo local: puedes crear un turno de prueba sin teléfono ni avisos.
           </p>
         )}
         {error && (
@@ -331,11 +344,7 @@ export function ManualQueueEntryForm({
         )}
       </div>
       <DrawerFooter className="border-t bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <Button
-          className="h-12 w-full"
-          type="submit"
-          disabled={busy || !ready}
-        >
+        <Button className="h-12 w-full" type="submit" disabled={busy || !ready}>
           {busy ? 'Guardando…' : 'Añadir turno'}
         </Button>
       </DrawerFooter>

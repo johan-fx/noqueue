@@ -23,6 +23,7 @@ import type {
 } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import assignmentCheck from '@/assets/queue-actions/queue-assignment-check.svg'
 import {
   queueActionLabels,
   receptionLabels,
@@ -175,10 +176,18 @@ export function QueueEntryCard({
           >
             {actions.includes('call') ? (
               <Button
-                className="h-full w-36 rounded-none bg-yellow-400 text-yellow-950 hover:bg-yellow-500"
+                className="h-full w-36 rounded-none bg-[#26ad61] font-semibold text-white hover:bg-[#26ad61]/90"
                 disabled={callDisabled}
                 onClick={() => act('call')}
               >
+                <img
+                  src={assignmentCheck}
+                  alt=""
+                  aria-hidden="true"
+                  width="19.9984"
+                  height="19.9984"
+                  className="pointer-events-none shrink-0"
+                />
                 Asignar turno
               </Button>
             ) : actions.includes('complete') ? (

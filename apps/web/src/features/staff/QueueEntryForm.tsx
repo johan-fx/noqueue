@@ -1,3 +1,10 @@
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { useId, useRef, useState } from 'react'
 import {
   serviceJoinSchema,
@@ -108,50 +115,75 @@ export function QueueEntryForm({
             <FieldLabel htmlFor={`${id}-reception`}>
               {locale === 'es' ? 'Tipo de gestión' : 'Service type'}
             </FieldLabel>
-            <select
-              id={`${id}-reception`}
-              className="h-10 w-full rounded-lg border bg-background px-3"
-              value={receptionService}
-              onChange={(event) =>
-                setReceptionService(
-                  event.target.value as typeof receptionService,
-                )
-              }
-            >
-              {service.receptionServices.map((type) => (
-                <option key={type} value={type}>
-                  {locale === 'es'
+            <Select
+              items={service.receptionServices.map((type) => ({
+                value: type,
+                label:
+                  locale === 'es'
                     ? receptionLabels[type]
                     : {
                         check_in: 'Check-in',
                         check_out: 'Check-out',
                         other: 'Other',
-                      }[type]}
-                </option>
-              ))}
-            </select>
+                      }[type],
+              }))}
+              value={receptionService}
+              onValueChange={(value) => {
+                if (value !== null)
+                  setReceptionService(value as typeof receptionService)
+              }}
+            >
+              <SelectTrigger id={`${id}-reception`} disabled={busy || disabled}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {service.receptionServices.map((type) => (
+                  <SelectItem key={type} value={type}>
+                    {locale === 'es'
+                      ? receptionLabels[type]
+                      : {
+                          check_in: 'Check-in',
+                          check_out: 'Check-out',
+                          other: 'Other',
+                        }[type]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </Field>
         )}
         {service.type === 'restaurant' && (
           <Field>
             <FieldLabel htmlFor={`${id}-space`}>Espacio</FieldLabel>
-            <select
-              id={`${id}-space`}
-              className="h-10 w-full rounded-lg border bg-background px-3"
+            <Select
+              items={[
+                { value: 'fastest', label: 'El más rápido' },
+                ...service.spaces.map((space) => ({
+                  value: space.id,
+                  label: space.name,
+                })),
+              ]}
               value={preferredSpaceId}
-              onChange={(event) => setPreferredSpaceId(event.target.value)}
+              onValueChange={(value) => {
+                if (value !== null) setPreferredSpaceId(value)
+              }}
             >
-              <option value="fastest">El más rápido</option>
-              {service.spaces.map((space) => (
-                <option
-                  key={space.id}
-                  value={space.id}
-                  disabled={partySize > space.maxPartySize}
-                >
-                  {space.name}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger id={`${id}-space`} disabled={busy || disabled}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="fastest">El más rápido</SelectItem>
+                {service.spaces.map((space) => (
+                  <SelectItem
+                    key={space.id}
+                    value={space.id}
+                    disabled={partySize > space.maxPartySize}
+                  >
+                    {space.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <p className="text-xs text-muted-foreground">
               Si eliges un espacio, el turno esperará a que haya sitio en él.
             </p>

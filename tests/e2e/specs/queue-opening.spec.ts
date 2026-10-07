@@ -137,9 +137,9 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
       await page.request.get(`/api/v1/staff/queues/${queueId}/opening-context`)
     ).json()) as { groups: { spaceId: string; occupied: number }[] }
   expect((await context()).groups.map((g) => g.occupied)).toEqual([2, 1])
-  await sheet
-    .getByLabel('Grupo de mesas')
-    .selectOption({ label: 'Terraza · 4 plazas' })
+  await sheet.getByRole('combobox', { name: 'Grupo de mesas' }).click()
+  await page.getByRole('option', { name: 'Terraza · 4 plazas' }).click()
+  await expect(sheet).toBeVisible()
   await sheet
     .getByRole('button', { name: 'Liberar una mesa', exact: true })
     .click()

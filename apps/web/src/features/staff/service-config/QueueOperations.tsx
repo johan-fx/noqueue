@@ -1,3 +1,11 @@
+import { useId } from 'react'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import type { UseFormReturn } from 'react-hook-form'
 import type { ServiceInput } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
@@ -11,6 +19,7 @@ export function QueueOperations({
   form: UseFormReturn<ServiceInput>
   spaceId?: string
 }) {
+  const id = useId()
   const type = form.watch('type')
   const spaces = form
     .watch('spaces')
@@ -74,43 +83,62 @@ export function QueueOperations({
               {adjustment ? (
                 <>
                   <Field>
-                    <FieldLabel>
+                    <FieldLabel
+                      htmlFor={`${id}-${group.spaceId}-${group.seats}`}
+                    >
                       Tipo de ajuste
-                      <select
-                        className="rounded border p-2"
-                        value={adjustment.kind ?? 'duration'}
-                        onChange={(event) =>
-                          form.setValue(
-                            'adjustments',
-                            adjustments.map((a) =>
-                              a !== adjustment
-                                ? a
-                                : event.target.value === 'availability'
-                                ? {
-                                    kind: 'availability',
-                                    spaceId: a.spaceId,
-                                    seats: a.seats,
-                                    reason: a.reason,
-                                    expiresAt: a.expiresAt,
-                                  }
-                                : {
-                                    kind: 'duration',
-                                    spaceId: a.spaceId,
-                                    seats: a.seats,
-                                    reason: a.reason,
-                                    expiresAt: a.expiresAt,
-                                    minutes: form.getValues('averageMinutes'),
-                                  },
-                            ),
-                          )
-                        }
-                      >
-                        <option value="duration">Duración estimada</option>
-                        <option value="availability">
-                          Bloquear disponibilidad hasta caducidad
-                        </option>
-                      </select>
                     </FieldLabel>
+                    <Select
+                      items={[
+                        { value: 'duration', label: 'Duración estimada' },
+                        {
+                          value: 'availability',
+                          label: 'Bloquear disponibilidad hasta caducidad',
+                        },
+                      ]}
+                      value={adjustment.kind ?? 'duration'}
+                      onValueChange={(value) => {
+                        if (value === null) return
+                        form.setValue(
+                          'adjustments',
+                          adjustments.map((a) =>
+                            a !== adjustment
+                              ? a
+                              : value === 'availability'
+                              ? {
+                                  kind: 'availability',
+                                  spaceId: a.spaceId,
+                                  seats: a.seats,
+                                  reason: a.reason,
+                                  expiresAt: a.expiresAt,
+                                }
+                              : {
+                                  kind: 'duration',
+                                  spaceId: a.spaceId,
+                                  seats: a.seats,
+                                  reason: a.reason,
+                                  expiresAt: a.expiresAt,
+                                  minutes: form.getValues('averageMinutes'),
+                                },
+                          ),
+                        )
+                      }}
+                    >
+                      <SelectTrigger
+                        id={`${id}-${group.spaceId}-${group.seats}`}
+                        disabled={form.formState.isSubmitting}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="duration">
+                          Duración estimada
+                        </SelectItem>
+                        <SelectItem value="availability">
+                          Bloquear disponibilidad hasta caducidad
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
                   </Field>
                   {adjustment.kind !== 'availability' && (
                     <Field>

@@ -1,4 +1,12 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import {
   consentCopy,
@@ -10,6 +18,7 @@ import {
 import { Button } from '@/components/ui/button'
 
 export function DemoQueue() {
+  const id = useId()
   const navigate = useNavigate()
   const [locale, setLocale] = useState<'es' | 'en'>('es')
   const [consent, setConsent] = useState(false)
@@ -62,18 +71,27 @@ export function DemoQueue() {
       <h1 className="text-2xl font-semibold">
         {es ? 'Lista de demostración' : 'Demo waiting list'}
       </h1>
-      <label>
-        {es ? 'Idioma' : 'Language'}{' '}
-        <select
+      <div>
+        <label htmlFor={`${id}-locale`}>{es ? 'Idioma' : 'Language'}</label>
+        <Select
+          items={[
+            { value: 'es', label: 'Español' },
+            { value: 'en', label: 'English' },
+          ]}
           value={locale}
-          onChange={(event) =>
-            setLocale(event.target.value === 'en' ? 'en' : 'es')
-          }
+          onValueChange={(value) => {
+            if (value !== null) setLocale(value === 'en' ? 'en' : 'es')
+          }}
         >
-          <option value="es">Español</option>
-          <option value="en">English</option>
-        </select>
-      </label>
+          <SelectTrigger id={`${id}-locale`} disabled={busy}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="es">Español</SelectItem>
+            <SelectItem value="en">English</SelectItem>
+          </SelectContent>
+        </Select>
+      </div>
       <form onSubmit={submit} className="space-y-4">
         <label className="block">
           {es ? 'Comensales' : 'Party size'}
@@ -99,15 +117,15 @@ export function DemoQueue() {
             disabled={busy}
           />
         </label>
-        <label className="flex gap-2">
-          <input
-            type="checkbox"
+        <div className="flex gap-2">
+          <Checkbox
+            id={`${id}-consent`}
             checked={consent}
-            onChange={(event) => setConsent(event.target.checked)}
+            onCheckedChange={(checked) => setConsent(checked)}
             disabled={busy}
           />
-          {consentCopy[locale]}
-        </label>
+          <label htmlFor={`${id}-consent`}>{consentCopy[locale]}</label>
+        </div>
         {consent && (
           <label className="block">
             {es

@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ComponentProps } from 'react'
 import { QueueEntryCard } from './QueueEntryCard'
+import assignmentCheck from '@/assets/queue-actions/queue-assignment-check.svg'
 
 afterEach(cleanup)
 const props: ComponentProps<typeof QueueEntryCard> = {
@@ -53,10 +54,16 @@ it('keeps both trays mounted but inaccessible while closed', () => {
   ).not.toBeInTheDocument()
   expect(container.querySelector('li')).toHaveClass('select-none')
 })
-it('reveals a yellow call action on the right and closes before dispatch', () => {
+it('reveals the Figma green assignment action with a check and closes before dispatch', () => {
   render(<QueueEntryCard {...props} revealed="right" />)
   const call = screen.getByRole('button', { name: 'Asignar turno' })
-  expect(call).toHaveClass('bg-yellow-400', 'text-yellow-950')
+  expect(call).toHaveClass('bg-[#26ad61]', 'text-white')
+  const check = call.querySelector('img')
+  expect(check).toHaveAttribute('src', assignmentCheck)
+  expect(check).toHaveAttribute('alt', '')
+  expect(check).toHaveAttribute('aria-hidden', 'true')
+  expect(check).toHaveAttribute('width', '19.9984')
+  expect(check).toHaveAttribute('height', '19.9984')
   fireEvent.click(call)
   expect(props.onReveal).toHaveBeenCalledWith(null)
   expect(props.onAction).toHaveBeenCalledWith(props.entry, 'call')

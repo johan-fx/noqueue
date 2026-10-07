@@ -31,7 +31,8 @@ import pencil from '@/assets/member-actions/pencil.svg'
 import key from '@/assets/member-actions/key.svg'
 import prohibit from '@/assets/member-actions/prohibit.svg'
 import type { MemberAction } from './MemberActionDrawer'
-import { memberRoleLabels } from './member-model'
+import { roleInformation } from './member-model'
+import { RoleHelpPopover } from './RoleHelpPopover'
 export function Members({
   name,
   members,
@@ -93,14 +94,23 @@ export function Members({
                   )}
                 </TableCell>
                 <TableCell className="whitespace-normal sm:whitespace-nowrap">
-                  <Badge
-                    className="h-auto min-h-5 max-w-full whitespace-normal [overflow-wrap:anywhere] sm:h-5 sm:max-w-none sm:whitespace-nowrap sm:[overflow-wrap:normal]"
-                    variant={member.role === 'owner' ? 'default' : 'secondary'}
-                  >
-                    {member.role === 'owner'
-                      ? 'Administrador'
-                      : memberRoleLabels[member.role]}
-                  </Badge>
+                  <div className="flex min-w-0 flex-col items-start gap-1 sm:flex-row sm:items-center">
+                    <Badge
+                      className="h-auto min-h-5 max-w-full whitespace-normal [overflow-wrap:anywhere] sm:h-5 sm:max-w-none sm:whitespace-nowrap sm:[overflow-wrap:normal]"
+                      variant={
+                        member.role === 'owner' ? 'default' : 'secondary'
+                      }
+                    >
+                      {roleInformation[member.role].label}
+                    </Badge>
+                    <RoleHelpPopover
+                      role={member.role}
+                      trigger="icon"
+                      label={`Ver permisos de ${member.name}`}
+                      disabled={busy || loading}
+                      revoked={!member.active}
+                    />
+                  </div>
                 </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>

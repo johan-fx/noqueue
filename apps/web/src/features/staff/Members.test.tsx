@@ -95,3 +95,54 @@ it('keeps semantic action columns within the narrow fixed table and wraps long i
   expect(screen.getByText(name)).toBeVisible()
   expect(screen.getByText('Administrador')).toBeVisible()
 })
+
+it('keeps badges and separate owner/staff help controls, without invoking member actions', async () => {
+  const onAction = vi.fn(),
+    onToggle = vi.fn()
+  const owner = {
+    id: 'owner',
+    name: 'Owner',
+    username: 'owner',
+    role: 'owner' as const,
+    active: 0,
+    canEditDetails: false,
+  }
+  const { rerender } = render(
+    <Members
+      name="Hotel"
+      members={[owner]}
+      busy={false}
+      loading={false}
+      actionOpen={false}
+      trigger={{ current: null }}
+      onAction={onAction}
+      onToggle={onToggle}
+    />,
+  )
+  expect(screen.getByText('Administrador')).toHaveAttribute(
+    'data-slot',
+    'badge',
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Ver permisos de Owner' }))
+  expect(
+    await screen.findByRole('dialog', { name: 'Permisos · Administrador' }),
+  ).toHaveTextContent('Acceso revocado')
+  expect(onAction).not.toHaveBeenCalled()
+  expect(onToggle).not.toHaveBeenCalled()
+  rerender(
+    <Members
+      name="Hotel"
+      members={[owner]}
+      busy
+      loading={false}
+      actionOpen
+      trigger={{ current: null }}
+      onAction={onAction}
+      onToggle={onToggle}
+    />,
+  )
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Ver permisos de Owner' }),
+  ).toBeDisabled()
+})

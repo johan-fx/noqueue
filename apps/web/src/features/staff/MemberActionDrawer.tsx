@@ -1,4 +1,4 @@
-import { useState, type RefObject, type FormEvent } from 'react'
+import { useState, useId, type RefObject, type FormEvent } from 'react'
 import { z } from 'zod'
 import {
   inviteSchema,
@@ -26,7 +26,8 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select'
-import { memberRoleLabels } from './member-model'
+import { memberRoleLabels, roleInformation } from './member-model'
+import { RoleHelpPopover } from './RoleHelpPopover'
 export type MemberAction =
   | { kind: 'create' }
   | { kind: 'edit'; member: StaffMember }
@@ -61,6 +62,8 @@ export function MemberActionDrawer({
         : ('queue_staff' as MemberDetailsInput['role']),
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
+  const roleSummaryId = useId()
+  const selectedRoleInformation = roleInformation[draft.role]
   const errorAttributes = (field: string) => ({
     'aria-invalid': !!errors[field],
     'aria-describedby': errors[field] ? `member-${field}-error` : undefined,
@@ -186,6 +189,12 @@ export function MemberActionDrawer({
                     <SelectTrigger
                       id="member-role"
                       {...errorAttributes('role')}
+                      aria-describedby={[
+                        roleSummaryId,
+                        errors.role ? 'member-role-error' : undefined,
+                      ]
+                        .filter(Boolean)
+                        .join(' ')}
                       className="w-full"
                     >
                       <SelectValue>{memberRoleLabels[draft.role]}</SelectValue>
@@ -200,6 +209,16 @@ export function MemberActionDrawer({
                       )}
                     </SelectContent>
                   </Select>
+                  <p
+                    id={roleSummaryId}
+                    className="text-sm text-muted-foreground"
+                  >
+                    {selectedRoleInformation?.summary ??
+                      'Selecciona un rol válido para ver sus permisos.'}
+                  </p>
+                  {selectedRoleInformation && (
+                    <RoleHelpPopover role={draft.role} disabled={busy} />
+                  )}
                   <FieldError
                     id="member-role-error"
                     errors={errors.role ? [{ message: errors.role }] : []}

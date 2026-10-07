@@ -93,6 +93,102 @@ it('associates role validation errors and initializes nullable usernames as an e
   const role = screen.getByRole('combobox', { name: 'Rol' })
   expect(role).toHaveAttribute('aria-invalid', 'true')
   expect(
-    document.getElementById(role.getAttribute('aria-describedby')!),
+    document.getElementById(
+      role
+        .getAttribute('aria-describedby')!
+        .split(' ')
+        .find((id) => id === 'member-role-error')!,
+    ),
   ).toHaveAttribute('role', 'alert')
+})
+
+it('updates selected role summary, excludes owner and keeps help separate from form submission', async () => {
+  const onSubmit = vi.fn(),
+    onClose = vi.fn()
+  const { rerender } = render(
+    <MemberActionDrawer
+      action={{ kind: 'create' }}
+      busy={false}
+      error=""
+      finalFocus={{ current: null }}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />,
+  )
+  const child = screen.getByRole('dialog', { name: 'Crear usuario' })
+  const role = screen.getByRole('combobox', { name: 'Rol' })
+  const summaryId = role.getAttribute('aria-describedby')!
+  expect(document.getElementById(summaryId)).toHaveTextContent(
+    'Atiende las listas',
+  )
+  fireEvent.click(role)
+  expect(
+    screen.queryByRole('option', { name: 'Administrador' }),
+  ).not.toBeInTheDocument()
+  const option = await screen.findByRole('option', { name: 'Solo lectura' })
+  fireEvent.pointerDown(option, { pointerType: 'mouse' })
+  fireEvent.click(option)
+  expect(document.getElementById(summaryId)).toHaveTextContent(
+    'Consulta los servicios y las listas',
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Ver permisos de Solo lectura' }),
+  )
+  const help = await screen.findByRole('dialog', {
+    name: 'Permisos · Solo lectura',
+  })
+  fireEvent.keyDown(help, { key: 'Escape' })
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Permisos · Solo lectura' }),
+    ).not.toBeInTheDocument(),
+  )
+  expect(child).toBeVisible()
+  expect(onClose).not.toHaveBeenCalled()
+  expect(onSubmit).not.toHaveBeenCalled()
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Ver permisos de Solo lectura' }),
+  )
+  rerender(
+    <MemberActionDrawer
+      action={{ kind: 'create' }}
+      busy
+      error=""
+      finalFocus={{ current: null }}
+      onClose={onClose}
+      onSubmit={onSubmit}
+    />,
+  )
+  expect(
+    screen.queryByRole('dialog', { name: 'Permisos · Solo lectura' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.getByRole('button', { name: 'Ver permisos de Solo lectura' }),
+  ).toBeDisabled()
+})
+
+it('does not show role help in password mode', () => {
+  render(
+    <MemberActionDrawer
+      action={{
+        kind: 'password',
+        member: {
+          id: 'staff',
+          name: 'Ana',
+          username: 'ana',
+          role: 'viewer',
+          active: 1,
+          canEditDetails: true,
+        },
+      }}
+      busy={false}
+      error=""
+      finalFocus={{ current: null }}
+      onClose={vi.fn()}
+      onSubmit={vi.fn()}
+    />,
+  )
+  expect(
+    screen.queryByRole('button', { name: /Ver permisos/ }),
+  ).not.toBeInTheDocument()
 })

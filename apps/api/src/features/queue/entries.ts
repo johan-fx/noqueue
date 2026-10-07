@@ -8,6 +8,7 @@ import { admissionState, serviceDeadline } from '../staff/availability'
 import {
   entrySchema,
   type JoinQueue,
+  type ManualJoin,
   type Entry,
 } from '@noqueue/contracts/queue'
 import { readConfirmation } from './confirmation'
@@ -158,7 +159,7 @@ export async function joinQueue(
   env: CloudflareBindings,
   queueId: string,
   key: string,
-  input: JoinQueue,
+  input: JoinQueue | ManualJoin,
   experiment = false,
   actor?: string,
   source: JoinSource = 'legacy',

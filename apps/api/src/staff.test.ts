@@ -1693,7 +1693,7 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
   ).toBe(200)
 })
 
-it('manual consent passes through the coordinator and durably queues encrypted contact exactly once', async () => {
+it.each(['whatsapp-queue-updates-v1', 'whatsapp-manual-queue-updates-v2'])('manual consent %s passes through the coordinator and durably queues encrypted contact exactly once', async (version) => {
   const t = await tenant()
   await declareRestaurant(t)
   const list = (await (
@@ -1703,11 +1703,11 @@ it('manual consent passes through the coordinator and durably queues encrypted c
   const payload = {
     displayName: 'Consented Client',
     partySize: 1,
-    locale: 'es',
+    locale: 'en',
     whatsapp: {
       consent: true,
       phone: '+34600000000',
-      version: 'whatsapp-queue-updates-v1',
+      version,
     },
   }
   const key = crypto.randomUUID()
@@ -1722,11 +1722,12 @@ it('manual consent passes through the coordinator and durably queues encrypted c
   expect((await create()).status).toBe(201)
   expect((await create()).status).toBe(200)
   const rows = await env.DB.prepare(
-    `SELECT e.id,p.phone_cipher,c.version,c.purpose,n.status FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN consent c ON c.entry_id=e.id JOIN notification_outbox n ON n.entry_id=e.id WHERE e.queue_id=? AND n.kind='queue_joined'`,
+    `SELECT e.id,e.locale,p.phone_cipher,c.version,c.purpose,n.status FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN consent c ON c.entry_id=e.id JOIN notification_outbox n ON n.entry_id=e.id WHERE e.queue_id=? AND n.kind='queue_joined'`,
   )
     .bind(t.queueId)
     .all<{
       id: string
+      locale: string
       phone_cipher: string
       version: string
       purpose: string
@@ -1734,7 +1735,8 @@ it('manual consent passes through the coordinator and durably queues encrypted c
     }>()
   expect(rows.results).toHaveLength(1)
   expect(rows.results[0]).toMatchObject({
-    version: 'whatsapp-queue-updates-v1',
+    version,
+    locale: 'en',
     purpose: 'queue_updates',
     status: 'pending',
   })

@@ -9,7 +9,7 @@ import { HTTPException } from 'hono/http-exception'
 import type { QueueCommand } from '@noqueue/contracts/staff'
 import { runQueueCommand, configureQueue } from './features/staff/commands'
 import { DurableObject } from 'cloudflare:workers'
-import type { JoinQueue } from '@noqueue/contracts/queue'
+import type { JoinQueue, ManualJoin } from '@noqueue/contracts/queue'
 import { app } from './app'
 import { confirmationExperimentEnabled } from './features/queue/confirmation'
 import { changeExperiment } from './features/queue/experiment'
@@ -139,7 +139,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     })
   }
 
-  staffJoin(actor: string, queueId: string, key: string, input: JoinQueue) {
+  staffJoin(actor: string, queueId: string, key: string, input: ManualJoin) {
     return this.serialize(async () => {
       try {
         return await this.withQueue(queueId, () => joinQueue(this.env, queueId, key, input, false, actor))

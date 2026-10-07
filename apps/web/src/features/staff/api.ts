@@ -1,10 +1,12 @@
 export class ApiError extends Error {
   status: number
   retryAfter: number
-  constructor(status: number, message: string, retryAfter = 0) {
+  readonly code: string | undefined
+  constructor(status: number, message: string, retryAfter = 0, code?: string) {
     super(message)
     this.status = status
     this.retryAfter = retryAfter
+    this.code = code
   }
 }
 const messages: Record<string, string> = {
@@ -113,6 +115,7 @@ export async function api<T>(
       messages[data.error as string] ??
         'No se ha podido completar la operación.',
       Math.max(0, Number(response.headers.get('Retry-After')) || 0),
+      typeof data.error === 'string' ? data.error : undefined,
     )
   return data as T
 }

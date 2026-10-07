@@ -12,7 +12,12 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { ManualQueueEntryForm } from './ManualQueueEntryForm'
-import { api, errorMessage } from './api'
+import { api } from './api'
+import {
+  manualQueueCopy,
+  manualQueueError,
+  type ManualLocale,
+} from './manual-queue-copy'
 export function AddQueueEntryDrawer({
   queue,
   onClose,
@@ -24,14 +29,20 @@ export function AddQueueEntryDrawer({
   onSaved: () => Promise<void>
   returnFocus: HTMLElement | null
 }) {
+  const [locale, setLocale] = useState<ManualLocale>('es')
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState<{
     code: string
     recoveryToken: string
+    locale: ManualLocale
   } | null>(null)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState<
+    'copied' | 'copyFailed' | { error: unknown } | null
+  >(null)
+  const activeLocale = result?.locale ?? locale
+  const copy = manualQueueCopy[activeLocale]
   const url = result
-    ? `${window.location.origin}/t/${result.recoveryToken}?lang=es`
+    ? `${window.location.origin}/t/${result.recoveryToken}?lang=${result.locale}`
     : ''
   return (
     <Drawer
@@ -42,6 +53,7 @@ export function AddQueueEntryDrawer({
       }}
     >
       <DrawerContent
+        lang={activeLocale}
         finalFocus={() => returnFocus}
         className="w-full sm:w-[28rem]"
       >
@@ -51,7 +63,7 @@ export function AddQueueEntryDrawer({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="Volver"
+              aria-label={copy.back}
               disabled={busy}
               onClick={onClose}
             >
@@ -63,15 +75,36 @@ export function AddQueueEntryDrawer({
             <span aria-hidden="true" className="w-9" />
           </div>
           <DrawerDescription className="sr-only">
-            {result ? 'Turno añadido' : 'Añadir a la lista'}
+            {result ? copy.added : copy.addDescription}
           </DrawerDescription>
+          <div
+            role="group"
+            aria-label={copy.language}
+            className="flex justify-end gap-1 pt-2"
+          >
+            {(['es', 'en'] as const).map((language) => (
+              <Button
+                key={language}
+                type="button"
+                variant="ghost"
+                size="sm"
+                aria-pressed={activeLocale === language}
+                disabled={busy || result !== null}
+                onClick={() => setLocale(language)}
+              >
+                {language.toUpperCase()}
+              </Button>
+            ))}
+          </div>
         </DrawerHeader>
         {result ? (
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-            <h2 className="text-2xl font-medium">Turno añadido</h2>
-            <p className="text-xl font-medium">Turno: {result.code}</p>
+            <h2 className="text-2xl font-medium">{copy.added}</h2>
+            <p className="text-xl font-medium">
+              {copy.code}: {result.code}
+            </p>
             <label className="block space-y-2">
-              Enlace del turno
+              {copy.link}
               <Input readOnly value={url} onFocus={(e) => e.target.select()} />
             </label>
             <Button
@@ -80,15 +113,11 @@ export function AddQueueEntryDrawer({
               onClick={() => {
                 void navigator.clipboard
                   .writeText(url)
-                  .then(() => setNotice('Enlace copiado.'))
-                  .catch(() =>
-                    setNotice(
-                      'No se pudo copiar. Selecciona y copia el enlace.',
-                    ),
-                  )
+                  .then(() => setNotice('copied'))
+                  .catch(() => setNotice('copyFailed'))
               }}
             >
-              Copiar enlace
+              {copy.copy}
             </Button>
             <a
               href={url}
@@ -96,14 +125,15 @@ export function AddQueueEntryDrawer({
               rel="noreferrer"
               className="block text-center underline"
             >
-              Abrir turno
+              {copy.open}
             </a>
             <Button className="w-full" onClick={onClose}>
-              Cerrar
+              {copy.close}
             </Button>
           </div>
         ) : (
           <ManualQueueEntryForm
+            locale={locale}
             service={{
               type: queue.config.type,
               receptionServices: queue.config.receptionServices,
@@ -121,18 +151,23 @@ export function AddQueueEntryDrawer({
               const entry = joinedEntrySchema.parse(
                 await api(`/queues/${queue.id}/entries`, 'POST', input, key),
               )
-              setResult(entry)
+              setResult({ ...entry, locale: input.locale })
               try {
                 await onSaved()
               } catch (e) {
-                setNotice(`El turno está creado. ${errorMessage(e)}`)
+                setNotice({ error: e })
               }
             }}
           />
         )}
         {notice && (
           <p role="status" className="px-4 pb-4">
-            {notice}
+            {typeof notice === 'string'
+              ? copy[notice]
+              : `${copy.created} ${manualQueueError(
+                  notice.error,
+                  activeLocale,
+                )}`}
           </p>
         )}
       </DrawerContent>

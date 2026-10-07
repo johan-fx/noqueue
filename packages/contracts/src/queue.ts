@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const consentVersion = 'whatsapp-queue-updates-v1'
+export const manualConsentVersion = 'whatsapp-manual-queue-updates-v2'
 export const phoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/)
 export const receptionServiceSchema = z.enum(['check_in', 'check_out', 'other'])
 export const serviceJoinSchema = z.strictObject({
@@ -59,7 +60,16 @@ export const joinQueueSchema = serviceJoinSchema.extend({
 })
 export const manualJoinSchema = joinQueueSchema.extend({
   displayName: z.string().trim().min(1).max(100),
-  whatsapp: joinQueueSchema.shape.whatsapp.default({ consent: false }),
+  whatsapp: z
+    .discriminatedUnion('consent', [
+      z.strictObject({ consent: z.literal(false) }),
+      z.strictObject({
+        consent: z.literal(true),
+        phone: phoneSchema,
+        version: z.enum([consentVersion, manualConsentVersion]),
+      }),
+    ])
+    .default({ consent: false }),
 })
 export type ManualJoin = z.infer<typeof manualJoinSchema>
 export const confirmationJoinSchema = z.strictObject({

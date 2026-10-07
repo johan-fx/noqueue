@@ -87,7 +87,33 @@ it('validates explicit manual WhatsApp consent without accepting a request-side 
       false,
     )
   expect(
-    manualJoinSchema.safeParse({ ...base, allowWithoutWhatsapp: true })
-      .success,
+    manualJoinSchema.safeParse({ ...base, allowWithoutWhatsapp: true }).success,
+  ).toBe(false)
+})
+
+it('accepts manual v1/v2 while keeping the public contract on v1', () => {
+  const input = {
+    displayName: 'Client',
+    partySize: 1,
+    locale: 'en',
+    whatsapp: {
+      consent: true,
+      phone: '+34600000000',
+      version: 'whatsapp-manual-queue-updates-v2',
+    },
+  }
+  expect(manualJoinSchema.safeParse(input).success).toBe(true)
+  expect(joinQueueSchema.safeParse(input).success).toBe(false)
+  expect(
+    manualJoinSchema.safeParse({
+      ...input,
+      whatsapp: { ...input.whatsapp, version: consentVersion },
+    }).success,
+  ).toBe(true)
+  expect(
+    manualJoinSchema.safeParse({
+      ...input,
+      whatsapp: { ...input.whatsapp, version: 'unknown' },
+    }).success,
   ).toBe(false)
 })

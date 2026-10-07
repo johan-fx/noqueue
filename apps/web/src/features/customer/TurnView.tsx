@@ -2,6 +2,7 @@ import { Link } from 'react-router'
 import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
 import type { Entry } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import {
   Stepper,
   StepperItem,
@@ -15,6 +16,7 @@ export function TurnView({
   now,
   updatedAt,
   joined = false,
+  yielded = false,
   onAction,
 }: {
   entry: Entry
@@ -22,6 +24,7 @@ export function TurnView({
   now: number
   updatedAt: number
   joined?: boolean
+  yielded?: boolean
   onAction: (action: 'update' | 'cancel' | 'yield') => void
 }) {
   const c = entry.customer!,
@@ -110,6 +113,26 @@ export function TurnView({
           : 'On your way',
         'Your turn!',
       ]
+  if (restaurant && cancelled && !serviceEnded) {
+    return (
+      <>
+        <div className="flex flex-1 flex-col items-center justify-center px-4 py-8 text-center font-sans">
+          <CheckCheck aria-hidden="true" className="mb-6 size-8 text-black" />
+          <h1 className="max-w-64 text-2xl leading-8 font-semibold">
+            {es ? 'Ya no estás en la lista de espera' : 'You are no longer on the waiting list'}
+          </h1>
+          <p className="mt-8 text-base leading-6 text-gray-500">
+            {es ? 'Si aún quieres venir, puedes volver a unirte.' : 'If you still want to visit, you can join again.'}
+          </p>
+        </div>
+        <CustomerFooter>
+          <Button render={<Link to={`/v/${c.service.venueId}?lang=${locale}`} />}>
+            {es ? 'Seleccionar lista de espera' : 'Choose a waiting list'}
+          </Button>
+        </CustomerFooter>
+      </>
+    )
+  }
   return (
     <>
       <div className="flex flex-1 flex-col gap-6 px-4 pt-2 pb-6">
@@ -324,7 +347,14 @@ export function TurnView({
               : 'Checking your turn status…'}
           </p>
         )}
-        {joined && phase === 'waiting' && (
+        {yielded && restaurant && (phase === 'waiting' || approaching) && (
+          <Alert role="status" className="mt-auto gap-y-1 border-green-600 px-4 py-3 font-sans leading-5 has-[>svg]:gap-x-3">
+            <CircleCheck aria-hidden="true" className="size-4 text-green-600!" />
+            <AlertTitle>{es ? 'Has pasado turno' : 'You have yielded your turn'}</AlertTitle>
+            <AlertDescription className="leading-5">{es ? 'Consulta tu posición y tiempo de espera actualizados.' : 'Check your updated position and waiting time.'}</AlertDescription>
+          </Alert>
+        )}
+        {joined && !yielded && phase === 'waiting' && (
           <div
             role="status"
             className="mt-auto flex gap-3 rounded-lg border border-green-600 p-4 text-sm"

@@ -1,9 +1,10 @@
 import { useRef, useState, type FormEvent } from 'react'
 import type { PublicService, ServiceJoin } from '@noqueue/contracts/queue'
-import { Check, Minus, Plus } from 'lucide-react'
+import { Minus, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CustomerFooter, type Locale } from './shared'
+import { SpaceSelector } from './SpaceSelector'
 
 export function RestaurantForm({
   service,
@@ -144,49 +145,14 @@ export function RestaurantForm({
               </Button>
             </div>
           </div>
-          <fieldset disabled={busy || disabled}>
-            <legend className="mb-4 font-medium">
-              {es
-                ? '¿Dónde quieres tu mesa?'
-                : 'Where would you like your table?'}
-            </legend>
-            <div className="grid grid-cols-2 gap-4">
-              {[
-                ...service.spaces,
-                {
-                  id: 'fastest',
-                  name: es ? 'Opción más rápida' : 'Fastest option',
-                  maxPartySize: Math.max(
-                    0,
-                    ...service.spaces.map((s) => s.maxPartySize),
-                  ),
-                },
-              ].map((item) => (
-                <label
-                  key={item.id}
-                  className={`relative flex min-h-12 cursor-pointer items-center justify-between gap-1 rounded-lg border px-4 py-2 has-focus-visible:ring-2 has-disabled:cursor-not-allowed has-disabled:opacity-40 ${
-                    space === item.id ? 'border-gray-800' : 'border-input'
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-                    name="customer-space"
-                    value={item.id}
-                    checked={space === item.id}
-                    onChange={() => setSpace(item.id)}
-                    disabled={item.maxPartySize < size}
-                  />
-                  <span className="text-base leading-5 tracking-tight">
-                    {item.name}
-                  </span>
-                  {space === item.id && (
-                    <Check aria-hidden="true" className="size-5 shrink-0" />
-                  )}
-                </label>
-              ))}
-            </div>
-          </fieldset>
+          <SpaceSelector
+            service={service}
+            locale={locale}
+            size={size}
+            value={space}
+            disabled={busy || disabled}
+            onChange={setSpace}
+          />
           {!compatible && (
             <p role="status">
               {es

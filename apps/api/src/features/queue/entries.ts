@@ -122,9 +122,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         actions:
           service.type !== 'restaurant'
             ? []
-            : phase === 'waiting'
-            ? ['update', 'cancel']
-            : phase === 'approaching'
+            : phase === 'waiting' || phase === 'approaching'
             ? ['update', 'cancel', 'yield']
             : [],
       }

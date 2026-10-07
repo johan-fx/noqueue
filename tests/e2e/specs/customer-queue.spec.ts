@@ -68,16 +68,20 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
     await client.reload()
     await expect(client.getByText('4 turnos')).toBeVisible()
     await client.getByRole('button', { name: 'Modificar', exact: true }).click()
-    await client.getByLabel('Nombre', { exact: true }).fill('María Editada')
+    await client
+      .getByRole('button', { name: 'Modificar número de comensales' })
+      .click()
     await client.getByRole('button', { name: 'Más comensales' }).click()
-    await client.getByRole('button', { name: 'Guardar cambios' }).click()
+    await client.getByRole('button', { name: 'Continuar', exact: true }).click()
+    await client.getByRole('button', { name: 'Confirmar', exact: true }).click()
+    await expect(client.getByRole('dialog')).not.toBeVisible()
     await expect(client.getByText('4 turnos')).toBeVisible()
     const token = new URL(recoveryUrl).pathname.split('/').at(-1)!
     let snapshot = (await (
       await guest.request.get(`/api/v1/public/entries/${token}`)
     ).json()) as Entry
     expect(snapshot.customer).toMatchObject({
-      displayName: 'María Editada',
+      displayName: 'María Cliente',
       partySize: 2,
       version: 1,
     })
@@ -121,8 +125,12 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
     await client.getByRole('button', { name: 'Sí, pasar turno' }).click()
     await expect(client.getByText('5 turnos')).toBeVisible()
     await client.getByRole('button', { name: 'Abandonar la lista' }).click()
-    await client.getByRole('button', { name: 'Sí, abandonar' }).click()
-    await expect(client.getByText('Has abandonado la lista')).toBeVisible()
+    await client
+      .getByRole('button', { name: 'Sí, abandonar la lista de espera' })
+      .click()
+    await expect(
+      client.getByText('Ya no estás en la lista de espera'),
+    ).toBeVisible()
     snapshot = (await (
       await guest.request.get(`/api/v1/public/entries/${token}`)
     ).json()) as Entry
@@ -179,7 +187,9 @@ test('a lost command response retries the same browser intent without applying i
       },
     )
     await client.getByRole('button', { name: 'Abandonar la lista' }).click()
-    await client.getByRole('button', { name: 'Sí, abandonar' }).click()
+    await client
+      .getByRole('button', { name: 'Sí, abandonar la lista de espera' })
+      .click()
     await expect(client.getByRole('dialog').getByRole('alert')).toBeVisible()
     expect(attempts).toHaveLength(1)
     expect(attempts[0]!.status).toBe(200)
@@ -192,9 +202,13 @@ test('a lost command response retries the same browser intent without applying i
     })
     // Losing the response must not dismiss the sheet or invent a successful confirmation.
     await expect(client.getByRole('dialog')).toBeVisible()
-    await client.getByRole('button', { name: 'Sí, abandonar' }).click()
+    await client
+      .getByRole('button', { name: 'Sí, abandonar la lista de espera' })
+      .click()
     await expect(client.getByRole('dialog')).not.toBeVisible()
-    await expect(client.getByText('Has abandonado la lista')).toBeVisible()
+    await expect(
+      client.getByText('Ya no estás en la lista de espera'),
+    ).toBeVisible()
     expect(attempts).toHaveLength(2)
     expect(attempts[1]).toEqual(attempts[0])
     expect(attempts[0]!.key).toMatch(/^[a-f0-9-]{36}$/)
@@ -217,6 +231,9 @@ const service: PublicService = {
   venueName: 'Hotel Miramar',
   type: 'restaurant',
   open: 1,
+  canJoin: true,
+  serviceOpen: true,
+  queueState: 'active',
   receptionServices: [],
   spaces: [
     { id: 'terrace', name: 'Terraza', maxPartySize: 8 },
@@ -230,6 +247,7 @@ test.describe('visual customer states', () => {
   test('visual fixtures cover all diner states at 390px, modal keyboard interaction and refresh recovery', async ({
     page,
   }, info) => {
+    test.setTimeout(60000)
     await page.setViewportSize({ width: 390, height: 844 })
     const token = 'a'.repeat(64)
     let phase: NonNullable<Entry['customer']>['phase'] = 'waiting'
@@ -293,13 +311,18 @@ test.describe('visual customer states', () => {
                 arrivalDeadlineAt: Date.now() + 300000,
                 arrivedAt: new Date('2026-09-30T19:35:00').getTime(),
                 phase,
-                actions: ['cancel', 'update', 'yield'],
+                actions:
+                  phase === 'waiting' || phase === 'approaching'
+                    ? ['update', 'cancel', 'yield']
+                    : [],
               },
             },
           }),
     )
     const capture = async (name: string) => {
+      await page.mouse.move(0, 0)
       await page.evaluate(async () => {
+        await document.fonts.ready
         await Promise.all(
           document
             .getAnimations()
@@ -337,6 +360,45 @@ test.describe('visual customer states', () => {
       await expect(page.getByRole('heading').first()).toBeVisible()
       await expect(page.getByText('Cargando…')).toHaveCount(0)
       await capture(next)
+      if (phase === 'waiting') {
+        const modify = page.getByRole('button', {
+          name: 'Modificar',
+          exact: true,
+        })
+        await modify.click()
+        await expect(page.getByRole('dialog')).toBeVisible()
+        await capture('modify-menu')
+        await page
+          .getByRole('button', { name: 'Modificar número de comensales' })
+          .click()
+        await expect(
+          page.getByRole('button', { name: 'Continuar', exact: true }),
+        ).toBeDisabled()
+        await capture('guest-zero')
+        await page.getByRole('button', { name: 'Más comensales' }).click()
+        await page.getByRole('button', { name: 'Más comensales' }).click()
+        await capture('guest-add')
+        await page
+          .getByRole('button', { name: 'Continuar', exact: true })
+          .click()
+        await capture('guest-confirm')
+        await page.keyboard.press('Escape')
+        await expect(page.getByRole('dialog')).toHaveCount(0)
+        await expect(modify).toBeFocused()
+        await modify.click()
+        await page.getByRole('button', { name: 'Modificar sala' }).click()
+        await capture('room')
+        await page.getByRole('button', { name: 'Anular' }).click()
+        await expect(modify).toBeFocused()
+        await page
+          .getByRole('button', { name: 'Abandonar la lista', exact: true })
+          .click()
+        await capture('abandon-sheet')
+        await page.keyboard.press('Escape')
+        await expect(
+          page.getByRole('button', { name: 'Abandonar la lista', exact: true }),
+        ).toBeFocused()
+      }
       if (phase === 'approaching') {
         await page
           .getByRole('button', { name: 'Pasar turno', exact: true })
@@ -348,6 +410,42 @@ test.describe('visual customer states', () => {
         await expect(page.getByRole('dialog')).toHaveCount(0)
       }
     }
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await capture('cancelled-desktop')
+    phase = 'waiting'
+    await page.goto(`/t/${token}`)
+    await page.getByRole('button', { name: 'Modificar', exact: true }).click()
+    await capture('modify-menu-desktop')
+    await page
+      .getByRole('button', { name: 'Modificar número de comensales' })
+      .click()
+    await capture('guest-zero-desktop')
+    await page.getByRole('button', { name: 'Más comensales' }).click()
+    await page.getByRole('button', { name: 'Más comensales' }).click()
+    await capture('guest-add-desktop')
+    await page.getByRole('button', { name: 'Continuar', exact: true }).click()
+    await capture('guest-confirm-desktop')
+    await page.keyboard.press('Escape')
+    await page
+      .getByRole('button', { name: 'Abandonar la lista', exact: true })
+      .click()
+    await capture('abandon-sheet-desktop')
+    for (let i = 0; i < 5; i++) {
+      await page.keyboard.press('Tab')
+      await expect(page.getByRole('dialog')).toContainText(
+        '¿Quieres continuar?',
+      )
+      await expect
+        .poll(
+          async () =>
+            await page
+              .getByRole('dialog')
+              .evaluate((dialog) => dialog.contains(document.activeElement)),
+        )
+        .toBe(true)
+    }
+    await page.keyboard.press('Escape')
+    await page.setViewportSize({ width: 390, height: 844 })
     phase = 'waiting'
     await page.goto(`/t/${token}`)
     await expect(page.getByText('5 turnos')).toBeVisible()
@@ -357,5 +455,94 @@ test.describe('visual customer states', () => {
     offline = false
     await page.getByRole('button', { name: 'Reintentar' }).click()
     await expect(page.getByRole('alert')).toHaveCount(0)
+  })
+  test('yield confirmation keeps the server position and phase with responsive feedback', async ({
+    page,
+  }, info) => {
+    test.setTimeout(60000)
+    const token = 'b'.repeat(64)
+    let yielded = false
+    let phase: 'waiting' | 'approaching' | 'called' = 'approaching'
+    await page.route(`**/api/v1/public/entries/${token}`, (route) =>
+      route.fulfill({
+        json: {
+          code: 'XP03',
+          position: yielded ? 7 : 3,
+          etaMinutes: yielded ? 35 : 10,
+          estimateQuality: 'estimated',
+          status: phase === 'called' ? 'called' : 'waiting',
+          notification: 'disabled',
+          customer: {
+            service,
+            displayName: 'María López',
+            partySize: 4,
+            preferredSpaceId: 'terrace',
+            locale: 'es',
+            version: yielded ? 1 : 0,
+            serverNow: Date.now(),
+            createdAt: Date.now(),
+            calledAt: phase === 'called' ? Date.now() : null,
+            arrivalDeadlineAt: phase === 'called' ? Date.now() + 300000 : null,
+            arrivedAt: null,
+            phase,
+            actions: phase === 'called' ? [] : ['update', 'cancel', 'yield'],
+          },
+        },
+      }),
+    )
+    await page.route(`**/api/v1/public/entries/${token}/commands`, (route) => {
+      expect(route.request().postDataJSON()).toEqual({
+        action: 'yield',
+        version: 0,
+      })
+      yielded = true
+      phase = 'waiting'
+      return route.fulfill({ json: { ok: true } })
+    })
+    const capture = async (name: string) => {
+      await page.mouse.move(0, 0)
+      await page.evaluate(async () => {
+        await document.fonts.ready
+        await Promise.all(
+          document
+            .getAnimations()
+            .map((animation) => animation.finished.catch(() => {})),
+        )
+      })
+      await page.screenshot({
+        path: info.outputPath(`${name}.png`),
+        fullPage: true,
+      })
+      await info.attach(name, {
+        path: info.outputPath(`${name}.png`),
+        contentType: 'image/png',
+      })
+    }
+    for (const width of [390, 1280]) {
+      yielded = false
+      phase = 'approaching'
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 900 })
+      await page.goto(`/t/${token}`)
+      await page
+        .getByRole('button', { name: 'Pasar turno', exact: true })
+        .click()
+      await expect(page.getByRole('dialog')).toBeVisible()
+      await capture(`yield-sheet-${width}`)
+      await page.getByRole('button', { name: 'Sí, pasar turno' }).click()
+      await expect(page.getByRole('dialog')).not.toBeVisible()
+      await expect(page.getByText('6 turnos')).toBeVisible()
+      await capture(`yield-confirmed-${width}`)
+      await expect(page.getByText('Has pasado turno')).toBeVisible()
+      const notice = await page
+        .getByRole('status')
+        .filter({ hasText: 'Has pasado turno' })
+        .boundingBox()
+      const footer = await page.locator('footer').boundingBox()
+      expect(notice!.y + notice!.height).toBeLessThanOrEqual(footer!.y)
+      await expect(page).toHaveURL(new RegExp(`/t/${token}$`))
+      await page.reload()
+      await expect(page.getByText('6 turnos')).toBeVisible()
+      await expect(page.getByText('Has pasado turno')).toHaveCount(0)
+    }
   })
 })

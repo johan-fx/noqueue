@@ -1,5 +1,5 @@
 import { env } from 'cloudflare:workers'
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { runCustomerCommand, customerPhase, expireArrivals } from './customer'
 import { hash } from './crypto'
 
@@ -219,4 +219,44 @@ it('runs the durable alarm without a browser and repairs a missing alarm on coor
     )?.status,
   ).toBe('expired')
   expect(await runDurableObjectAlarm(stub)).toBe(false)
+})
+
+it('projects yield for waiting restaurants, but no actions for called or other services', async () => {
+  const context = await import('./public-context')
+  const service = {
+    id: 'restaurant',
+    name: 'Restaurant',
+    venueId: 'demo-venue',
+    venueName: 'Hotel',
+    timezone: 'Europe/Madrid',
+    open: 1,
+    type: 'restaurant' as 'restaurant' | 'pool',
+    receptionServices: [],
+    spaces: [],
+    averageWaitMinutes: null,
+  }
+  const publicService = vi
+    .spyOn(context, 'publicService')
+    .mockImplementation(async () => service)
+  const { readEntrySnapshot } = await import('./entries')
+  const { queueId, entries } = await fixture()
+  await env.DB.prepare(
+    "UPDATE queue SET config=json_set(config,'$.approachTurns',0,'$.approachMinutes',0) WHERE id=?",
+  )
+    .bind(queueId)
+    .run()
+  const waiting = await readEntrySnapshot(env, entries[2]!.token)
+  expect(waiting?.customer?.phase).toBe('waiting')
+  expect(waiting?.customer?.actions).toEqual(['update', 'cancel', 'yield'])
+  await env.DB.prepare("UPDATE queue_entry SET status='called' WHERE id=?")
+    .bind(entries[2]!.id)
+    .run()
+  expect(
+    (await readEntrySnapshot(env, entries[2]!.token))?.customer?.actions,
+  ).toEqual([])
+  service.type = 'pool'
+  expect(
+    (await readEntrySnapshot(env, entries[1]!.token))?.customer?.actions,
+  ).toEqual([])
+  publicService.mockRestore()
 })

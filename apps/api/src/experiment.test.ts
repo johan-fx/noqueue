@@ -580,3 +580,29 @@ it('dispatches open-recipient position updates only after actual correlated conf
   await dispatchNotificationSerialized(staging, position.id)
   expect(outbound).toEqual(['template', 'text'])
 })
+
+it('uses waiting-list terminology in customer WhatsApp updates and the embedded landing', async () => {
+  const payloads: unknown[] = []
+  const sender = createWhatsAppSender(
+    { ...env, APP_ENV: 'local' },
+    async (_url, init) => {
+      payloads.push(JSON.parse(String(init?.body)))
+      return Response.json({ messages: [{ id: 'mock-list-copy' }] })
+    },
+  )
+  expect(
+    (
+      await sender.send({
+        phone: input.phone,
+        locale: 'es',
+        venue: 'Demo',
+        code: 'ABCDEF',
+        token: 'test',
+        position: 1,
+      })
+    ).kind,
+  ).toBe('accepted')
+  expect(JSON.stringify(payloads[0])).toContain('en la lista')
+  const page = await app.request(`http://localhost${prefix}`, {}, env)
+  expect(await page.text()).toContain('Prueba la lista, de principio a fin.')
+})

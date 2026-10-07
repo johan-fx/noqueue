@@ -1,3 +1,4 @@
+import type { AdmissionStatus } from './queue'
 import { z } from 'zod'
 export const staffRoleSchema = z.enum([
   'owner',
@@ -87,6 +88,25 @@ export const serviceSchema = z
     cutoffMinutes: z.number().int().min(0).max(240),
     twentyFourHours: z.boolean(),
     schedules: z.array(scheduleSchema).max(28),
+    reminder: z
+      .object({
+        enabled: z.boolean(),
+        dailyAt: z
+          .string()
+          .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+          .optional(),
+        intervals: z
+          .array(
+            z.object({
+              day: z.number().int().min(0).max(6),
+              from: z.string(),
+              to: z.string(),
+              at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+            }),
+          )
+          .max(28),
+      })
+      .optional(),
     spaces: z.array(spaceSchema).max(30),
     intelligencePolicy: z.enum(['automatic', 'disabled']).optional(),
     estimationMode: z.enum(['shadow', 'active']).optional(),
@@ -139,6 +159,39 @@ export const serviceSchema = z
         path: ['schedules'],
         message: 'Add opening hours',
       })
+    if (v.reminder?.enabled) {
+      const time = (value: string) =>
+        Number(value.slice(0, 2)) * 60 + Number(value.slice(3))
+      if (v.type !== 'restaurant' || (v.twentyFourHours && !v.reminder.dailyAt))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['reminder'],
+          message: 'Restaurant reminder requires a valid time',
+        })
+      const keys = new Set<string>()
+      for (const reminder of v.reminder.intervals) {
+        const interval = v.schedules.find(
+          (s) =>
+            s.day === reminder.day &&
+            s.from === reminder.from &&
+            s.to === reminder.to,
+        )
+        const key = JSON.stringify([reminder.day, reminder.from, reminder.to])
+        if (
+          !interval ||
+          keys.has(key) ||
+          time(reminder.at) < time(interval.from) ||
+          time(reminder.at) >= time(interval.to) - v.cutoffMinutes
+        )
+          ctx.addIssue({
+            code: 'custom',
+            path: ['reminder'],
+            message:
+              'Reminder must belong to one opening interval before cutoff',
+          })
+        keys.add(key)
+      }
+    }
     for (let i = 0; i < v.schedules.length; i++)
       for (let j = 0; j < i; j++) {
         const a = v.schedules[i]!,
@@ -257,7 +310,9 @@ export type VenueSummary = {
   organizationName: string
   role: StaffRole
 }
-export type QueueSummary = {
+export type QueueSummary = Partial<AdmissionStatus> & {
+  reminderDue?: boolean
+  reminderId?: string | null
   manualJoinWhatsappRequired?: boolean
   id: string
   name: string
@@ -302,6 +357,28 @@ const occupancyAnswerSchema = z.object({
 })
 export const queueLifecycleSchema = z
   .discriminatedUnion('action', [
+    z.object({
+      action: z.literal('declare_full'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('pause'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('resume'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('dismiss_reminder'),
+      contextToken: z.string().min(1).max(200),
+    }),
+    z.object({
+      action: z.literal('release_unit'),
+      contextToken: z.string().min(1).max(200),
+      spaceId: z.string().min(1).max(100),
+      seats: z.number().int().min(1).max(100),
+    }),
     z.object({
       action: z.literal('open'),
       contextToken: z.string().min(1).max(200),
@@ -353,7 +430,11 @@ export type QueueReadiness = {
     | 'legacy_occupancy'
   )[]
 }
-export type QueueOpeningContext = {
+export type QueueOpeningContext = Partial<AdmissionStatus> & {
+  windowId?: string | null
+  activatedAt?: number | null
+  reminderDue?: boolean
+  reminderId?: string | null
   open: boolean
   version: number
   contextToken: string

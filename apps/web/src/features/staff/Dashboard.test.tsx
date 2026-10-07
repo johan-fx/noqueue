@@ -28,6 +28,9 @@ const service: QueueSummary = {
   capacity: 20,
   averageMinutes: 30,
   open: 0,
+  serviceOpen: true,
+  queueState: 'inactive',
+  canJoin: false,
   version: 1,
   config: {
     name: 'Restaurante',
@@ -89,16 +92,23 @@ describe('establishment list permissions', () => {
       expect(
         within(
           within(list).getByRole('article', { name: 'Servicio Restaurante' }),
-        ).getByRole('button', { name: 'Gestionar cola' }),
+        ).getByRole('button', { name: 'Ver lista' }),
       ).toBeVisible()
       expect(
         screen.queryByRole('button', { name: 'Añadir servicio' }) !== null,
       ).toBe(configure)
-      expect(
-        within(
-          within(list).getByRole('article', { name: 'Servicio Restaurante' }),
-        ).queryByRole('button', { name: 'Configurar servicio' }) !== null,
-      ).toBe(configure)
+      const gear = screen.queryByRole('button', {
+        name: 'Opciones del servicio',
+      })
+      expect(gear !== null).toBe(role !== 'viewer')
+      if (gear) {
+        fireEvent.click(gear)
+        expect(
+          screen.queryByRole('menuitem', { name: 'Configurar servicio' }) !==
+            null,
+        ).toBe(configure)
+        fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+      }
       expect(screen.queryByRole('button', { name: 'Accesos' }) !== null).toBe(
         members,
       )
@@ -136,12 +146,11 @@ it('commercial management permits configuration and access but only reads queues
       }}
     />,
   )
-  expect(await screen.findByRole('button', { name: 'Ver cola' })).toBeVisible()
+  expect(await screen.findByRole('button', { name: 'Ver lista' })).toBeVisible()
+  expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Opciones del servicio' }))
   expect(
-    screen.queryByRole('button', { name: 'Gestionar cola' }),
-  ).not.toBeInTheDocument()
-  expect(
-    screen.getByRole('button', { name: 'Configurar servicio' }),
+    await screen.findByRole('menuitem', { name: 'Configurar servicio' }),
   ).toBeVisible()
   expect(screen.getByRole('button', { name: 'Accesos' })).toBeVisible()
 })
@@ -183,7 +192,7 @@ it('does not advance a known but exhausted shadow queue', async () => {
       }}
     />,
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   expect(
     await screen.findByRole('button', { name: 'Avanzar un turno' }),
   ).toBeDisabled()
@@ -228,8 +237,10 @@ it('blocks advance and explains how to resurvey invalidated managed inventory', 
       }}
     />,
   )
+  await openCardAdvanced()
   expect(await screen.findByText(/La distribución ha cambiado/)).toBeVisible()
-  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Atrás' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   expect(
     await screen.findByRole('button', { name: 'Avanzar un turno' }),
   ).toBeDisabled()
@@ -262,23 +273,23 @@ it.each(['pending', 'active'] as const)(
     const card = await screen.findByRole('article', {
       name: 'Servicio Restaurante',
     })
-    if (state === 'pending') {
-      const alert = within(card).getByRole('alert')
-      expect(alert).toHaveAttribute('data-slot', 'alert')
-      expect(
-        within(alert).getByText('Gestión inteligente pendiente'),
-      ).toHaveAttribute('data-slot', 'alert-title')
-      const description = alert.querySelector('[data-slot="alert-description"]')
-      expect(description).toHaveTextContent(
+    expect(within(card).queryByRole('alert')).not.toBeInTheDocument()
+    expect(
+      within(card).queryByText('Gestión inteligente pendiente'),
+    ).not.toBeInTheDocument()
+    await openCardAdvanced()
+    expect(
+      await screen.findByText(
+        state === 'pending'
+          ? 'Gestión inteligente pendiente'
+          : 'Gestión inteligente activa',
+      ),
+    ).toBeVisible()
+    expect(
+      screen.getByText(
         'Falta configurar los tipos de mesa o grupos de plazas.',
-      )
-    } else {
-      expect(within(card).queryByRole('alert')).not.toBeInTheDocument()
-      expect(within(card).getByText('Gestión inteligente activa')).toBeVisible()
-      expect(
-        within(card).queryByText('Gestión inteligente pendiente'),
-      ).not.toBeInTheDocument()
-    }
+      ),
+    ).toBeVisible()
   },
 )
 it.each([false, true])(
@@ -290,8 +301,10 @@ it.each([false, true])(
             {
               ...service,
               open: 1,
+              queueState: 'active',
               inventoryConfirmed: confirmed,
               outsideSchedule: true,
+              serviceOpen: false,
               readiness: {
                 state: confirmed ? 'active' : 'pending',
                 reasons: confirmed ? [] : ['inventory_required'],
@@ -311,23 +324,16 @@ it.each([false, true])(
         }}
       />,
     )
-    expect(await screen.findByText('Cola habilitada')).toBeVisible()
-    expect(screen.getByText('Fuera de horario')).toBeVisible()
-    if (!confirmed)
-      expect(
-        within(screen.getByRole('alert')).getByRole('button', {
-          name: 'Confirmar ocupación',
-        }),
-      ).toBeVisible()
-    else
-      expect(
-        screen.queryByRole('button', { name: 'Actualizar ocupación' }),
-      ).not.toBeInTheDocument()
+    expect(await screen.findByText('Servicio cerrado')).toBeVisible()
+    expect(screen.getByText('Lista activa')).toBeVisible()
+    expect(screen.getByRole('switch', { name: 'Cerrar lista' })).toBeDisabled()
     expect(
-      screen.getByText(
-        confirmed
-          ? 'Gestión inteligente activa'
-          : 'La cola está abierta, pero todavía no sabemos cuántas mesas están ocupadas.',
+      screen.queryByRole('button', { name: 'Confirmar ocupación' }),
+    ).not.toBeInTheDocument()
+    await openCardAdvanced()
+    expect(
+      await screen.findByText(
+        confirmed ? 'Gestión inteligente activa' : 'Confirma la ocupación',
       ),
     ).toBeVisible()
   },
@@ -339,6 +345,7 @@ it('offers configuration instead of inventory confirmation when table groups are
           {
             ...service,
             open: 1,
+            queueState: 'active',
             outsideSchedule: false,
             readiness: {
               state: 'pending',
@@ -359,8 +366,11 @@ it('offers configuration instead of inventory confirmation when table groups are
       }}
     />,
   )
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Opciones del servicio' }),
+  )
   expect(
-    await screen.findByRole('button', { name: 'Configurar servicio' }),
+    await screen.findByRole('menuitem', { name: 'Configurar servicio' }),
   ).toBeVisible()
   expect(
     screen.queryByRole('button', { name: 'Confirmar ocupación' }),
@@ -417,14 +427,19 @@ it('keeps corrections reachable for retained external occupancy in a closed inva
       }}
     />,
   )
-  const manage = await screen.findByRole('button', { name: 'Gestionar cola' })
-  const toggle = screen.getByRole('switch', { name: 'Abrir cola' })
+  const manage = await screen.findByRole('button', { name: 'Ver lista' })
+  expect(screen.getByText('Lista inactiva')).toBeVisible()
   fireEvent.click(manage)
   fireEvent.click(
-    await screen.findByRole('button', { name: 'Opciones de la cola' }),
+    await screen.findByRole('button', { name: 'Opciones de la lista' }),
   )
   fireEvent.click(
-    await screen.findByRole('menuitem', { name: 'Actualizar ocupación' }),
+    await screen.findByRole('menuitem', { name: 'Configuración avanzada' }),
+  )
+  fireEvent.click(
+    await screen.findByRole('button', {
+      name: 'Desglose y correcciones de ocupación',
+    }),
   )
   expect(
     await screen.findByRole('dialog', {
@@ -434,7 +449,9 @@ it('keeps corrections reachable for retained external occupancy in a closed inva
   expect(
     screen.queryByRole('button', { name: 'Confirmar ocupación' }),
   ).not.toBeInTheDocument()
-  expect(toggle).not.toBeChecked()
+  expect(
+    screen.queryByRole('switch', { name: 'Abrir lista' }),
+  ).not.toBeInTheDocument()
 })
 it.each(['queue_staff', 'viewer'] as const)(
   'shows persistent disabled policy and operational-only restore control (%s)',
@@ -464,21 +481,21 @@ it.each(['queue_staff', 'viewer'] as const)(
         }}
       />,
     )
-    expect(await screen.findByText('Desactivada manualmente')).toBeVisible()
+    expect(await screen.findByText('Servicio abierto')).toBeVisible()
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Gestionar cola' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ver lista' }))
     if (role === 'queue_staff') {
       fireEvent.click(
-        await screen.findByRole('button', { name: 'Opciones de la cola' }),
+        await screen.findByRole('button', { name: 'Opciones de la lista' }),
       )
       expect(
         await screen.findByRole('menuitem', {
-          name: 'Volver a gestión automática',
+          name: 'Configuración avanzada',
         }),
       ).toBeVisible()
     } else
       expect(
-        screen.queryByRole('button', { name: 'Opciones de la cola' }),
+        screen.queryByRole('button', { name: 'Opciones de la lista' }),
       ).not.toBeInTheDocument()
   },
 )
@@ -489,6 +506,7 @@ it('keeps service Card actions minimal and moves operations into the queue heade
           {
             ...service,
             open: 1,
+            queueState: 'active',
             inventoryConfirmed: true,
             readiness: { state: 'active', reasons: [] },
           },
@@ -518,19 +536,19 @@ it('keeps service Card actions minimal and moves operations into the queue heade
     }),
   ).not.toBeInTheDocument()
   expect(card.querySelector('[data-slot="card-footer"]')?.textContent).toBe(
-    'Gestionar colaConfigurar servicio',
+    'Cerrar listaVer lista',
   )
-  fireEvent.click(within(card).getByRole('button', { name: 'Gestionar cola' }))
-  const drawer = await screen.findByRole('dialog', { name: 'Gestionar cola' })
+  fireEvent.click(within(card).getByRole('button', { name: 'Ver lista' }))
+  const drawer = await screen.findByRole('dialog', { name: 'Gestionar lista' })
   expect(
     within(drawer).queryByRole('button', { name: 'Cerrar' }),
   ).not.toBeInTheDocument()
   fireEvent.click(
-    within(drawer).getByRole('button', { name: 'Opciones de la cola' }),
+    within(drawer).getByRole('button', { name: 'Opciones de la lista' }),
   )
   expect(
     (await screen.findAllByRole('menuitem')).map((item) => item.textContent),
-  ).toEqual(['Actualizar ocupación', 'Desactivar gestión inteligente'])
+  ).toEqual(['Configuración avanzada', 'Mesa libre'])
 })
 it('returns nested operation sheets to the queue menu trigger after cancel and save, then back closes only the drawer', async () => {
   let disabled = false
@@ -540,6 +558,7 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
         {
           ...service,
           open: 1,
+          queueState: 'active',
           inventoryConfirmed: true,
           config: {
             ...service.config,
@@ -576,31 +595,30 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
       }}
     />,
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   const trigger = await screen.findByRole('button', {
-    name: 'Opciones de la cola',
+    name: 'Opciones de la lista',
   })
   fireEvent.click(trigger)
   fireEvent.click(
-    await screen.findByRole('menuitem', {
-      name: 'Desactivar gestión inteligente',
-    }),
+    await screen.findByRole('menuitem', { name: 'Configuración avanzada' }),
   )
+  let policy = await screen.findByRole('button', {
+    name: 'Desactivar gestión inteligente',
+  })
+  fireEvent.click(policy)
   let sheet = await screen.findByRole('dialog', {
     name: 'Desactivar gestión inteligente · Restaurante',
   })
   fireEvent.click(within(sheet).getByRole('button', { name: 'Cancelar' }))
-  await waitFor(() => expect(trigger).toHaveFocus())
-  expect(screen.getByRole('dialog', { name: 'Gestionar cola' })).toBeVisible()
+  await waitFor(() => expect(policy).toHaveFocus())
+  expect(
+    screen.getByRole('dialog', { name: 'Configuración avanzada' }),
+  ).toBeVisible()
   expect(
     vi.mocked(api).mock.calls.filter(([, method]) => method === 'POST'),
   ).toHaveLength(0)
-  fireEvent.click(trigger)
-  fireEvent.click(
-    await screen.findByRole('menuitem', {
-      name: 'Desactivar gestión inteligente',
-    }),
-  )
+  fireEvent.click(policy)
   sheet = await screen.findByRole('dialog', {
     name: 'Desactivar gestión inteligente · Restaurante',
   })
@@ -609,14 +627,13 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
   })
   await waitFor(() => expect(confirm).toBeEnabled())
   fireEvent.click(confirm)
+  policy = await screen.findByRole('button', {
+    name: 'Volver a gestión automática',
+  })
+  await waitFor(() => expect(policy).toHaveFocus())
+  fireEvent.click(screen.getByRole('button', { name: 'Atrás' }))
   await waitFor(() => expect(trigger).toHaveFocus())
-  fireEvent.click(trigger)
-  expect(
-    await screen.findByRole('menuitem', {
-      name: 'Volver a gestión automática',
-    }),
-  ).toBeVisible()
-  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+  expect(screen.getByRole('dialog', { name: 'Gestionar lista' })).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: 'Volver' }))
   await waitFor(() =>
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
@@ -625,6 +642,7 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
     vi.mocked(api).mock.calls.filter(([, method]) => method === 'POST'),
   ).toHaveLength(1)
 })
+
 it('keeps the members close button and omits operations and empty queue footer in commercial mode', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
@@ -644,10 +662,10 @@ it('keeps the members close button and omits operations and empty queue footer i
       }}
     />,
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Ver cola' }))
-  const drawer = await screen.findByRole('dialog', { name: 'Ver cola' })
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  const drawer = await screen.findByRole('dialog', { name: 'Ver lista' })
   expect(
-    within(drawer).queryByRole('button', { name: 'Opciones de la cola' }),
+    within(drawer).queryByRole('button', { name: 'Opciones de la lista' }),
   ).not.toBeInTheDocument()
   expect(drawer.querySelector('[data-slot="drawer-footer"]')).toBeNull()
   fireEvent.click(within(drawer).getByRole('button', { name: 'Volver' }))
@@ -669,6 +687,7 @@ it('keeps the initial occupancy CTA visible even when intelligence is manually d
           {
             ...service,
             open: 1,
+            queueState: 'active',
             config: { ...service.config, intelligencePolicy: 'disabled' },
             readiness: { state: 'disabled', reasons: ['inventory_required'] },
           },
@@ -686,9 +705,14 @@ it('keeps the initial occupancy CTA visible even when intelligence is manually d
       }}
     />,
   )
+  expect(await screen.findByText('Servicio abierto')).toBeVisible()
   expect(
-    within(await screen.findByRole('alert')).getByRole('button', {
-      name: 'Confirmar ocupación',
+    screen.queryByRole('button', { name: 'Confirmar ocupación' }),
+  ).not.toBeInTheDocument()
+  await openCardAdvanced()
+  expect(
+    await screen.findByRole('button', {
+      name: 'Desglose y correcciones de ocupación',
     }),
   ).toBeVisible()
   expect(screen.getByText('Desactivada manualmente')).toBeVisible()
@@ -720,8 +744,8 @@ it('omits queue footer in non-active tabs and keeps advance connected to the exi
       }}
     />,
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
-  const drawer = await screen.findByRole('dialog', { name: 'Gestionar cola' })
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  const drawer = await screen.findByRole('dialog', { name: 'Gestionar lista' })
   for (const tab of ['Completados', 'Cancelados']) {
     fireEvent.click(within(drawer).getByRole('tab', { name: tab }))
     expect(drawer.querySelector('[data-slot="drawer-footer"]')).toBeNull()
@@ -776,7 +800,7 @@ it('refreshes an entry after 409 and requires another confirmation using the fre
       }}
     />,
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   fireEvent.click(
     await screen.findByRole('button', { name: 'Acciones del turno T1' }),
   )
@@ -850,9 +874,7 @@ it.each([
         }}
       />,
     )
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Gestionar cola' }),
-    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
     const advance = await screen.findByRole('button', {
       name: 'Avanzar un turno',
     })
@@ -894,9 +916,7 @@ it.each([false, true])(
         }}
       />,
     )
-    fireEvent.click(
-      await screen.findByRole('button', { name: 'Gestionar cola' }),
-    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
     await screen.findByText('Turno:', { exact: true })
     const advance = await screen.findByRole('button', {
       name: 'Avanzar un turno',
@@ -936,7 +956,7 @@ it('returns cancelled entry confirmation focus to its persistent action trigger'
       }}
     />,
   )
-  fireEvent.click(await screen.findByRole('button', { name: 'Gestionar cola' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   const trigger = await screen.findByRole('button', {
     name: 'Acciones del turno F1',
   })
@@ -1003,4 +1023,206 @@ it('incomplete staff location is read-only and does not invite unauthorized comp
   expect(
     screen.queryByRole('button', { name: 'Editar ubicación' }),
   ).not.toBeInTheDocument()
+})
+it('keeps everyday restaurant operation simple and hides advanced occupancy fields', async () => {
+  const current = {
+    ...service,
+    serviceOpen: true,
+    queueState: 'inactive' as const,
+    canJoin: false,
+    readiness: { state: 'pending' as const, reasons: [] },
+    config: {
+      ...service.config,
+      spaces: [
+        {
+          id: 'main',
+          name: 'Interior',
+          tables: 1,
+          tableTypes: [{ seats: 4, count: 1 }],
+        },
+      ],
+    },
+  }
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues') ? [current] : [],
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Company',
+        role: 'owner',
+      }}
+    />,
+  )
+  expect(
+    await screen.findByRole('switch', { name: 'Activar lista' }),
+  ).toBeVisible()
+  expect(
+    screen.queryByRole('switch', { name: 'Abrir lista' }),
+  ).not.toBeInTheDocument()
+  expect(
+    screen.queryByText('Desactivar gestión inteligente'),
+  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+})
+
+it('renders the Figma list footer and real waiting-turn count without the public marker', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [
+          {
+            ...service,
+            queueState: 'active',
+            initialWaitingMarker: true,
+            waitingPeople: 0,
+          },
+        ]
+      : [],
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'owner',
+      }}
+    />,
+  )
+  const card = await screen.findByRole('article', {
+    name: 'Servicio Restaurante',
+  })
+  expect(
+    within(card).getByRole('switch', { name: 'Cerrar lista' }),
+  ).toBeChecked()
+  await waitFor(() =>
+    expect(
+      within(card).getByText('Turnos en lista de espera').nextElementSibling,
+    ).toHaveTextContent('0'),
+  )
+  expect(within(card).getByText('Servicio abierto')).toHaveClass(
+    'bg-green-100',
+    'text-green-600',
+  )
+  expect(within(card).getByText('Lista activa')).toHaveClass(
+    'bg-green-100',
+    'text-green-600',
+  )
+  expect(within(card).getByRole('button', { name: 'Ver lista' })).toBeVisible()
+  expect(
+    within(card).queryByRole('button', { name: 'Configuración avanzada' }),
+  ).not.toBeInTheDocument()
+  expect(
+    within(card).getByRole('button', { name: 'Opciones del servicio' }),
+  ).toBeVisible()
+})
+it('uses a non-destructive closing AlertDialog and cancelling makes no lifecycle request', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues') ? [{ ...service, queueState: 'active' }] : [],
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'owner',
+      }}
+    />,
+  )
+  const control = await screen.findByRole('switch', { name: 'Cerrar lista' })
+  fireEvent.click(control)
+  const confirm = await screen.findByRole('alertdialog', {
+    name: 'Vas a cerrar la lista',
+  })
+  expect(
+    within(confirm).getByText(
+      'Se deshabilitará la opción de añadir nuevos turnos y los clientes no podrán inscribirse. Los turnos existentes se conservarán y podrán seguir atendiéndose.',
+    ),
+  ).toBeVisible()
+  expect(
+    screen.queryByText('Esta acción no se puede deshacer'),
+  ).not.toBeInTheDocument()
+  fireEvent.click(within(confirm).getByRole('button', { name: 'Cancelar' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument(),
+  )
+  expect(control).toBeChecked()
+  expect(
+    vi.mocked(api).mock.calls.some(([, method]) => method === 'POST'),
+  ).toBe(false)
+})
+
+async function openCardAdvanced() {
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Opciones del servicio' }),
+  )
+  fireEvent.click(
+    await screen.findByRole('menuitem', { name: 'Configuración avanzada' }),
+  )
+}
+
+it('does not invent an initial count or allow an older poll to overwrite a confirmed admission refresh', async () => {
+  let release!: (rows: unknown[]) => void
+  let reads = 0,
+    active = false
+  vi.mocked(api).mockImplementation(async (path, method) => {
+    if (path.endsWith('opening-context'))
+      return {
+        contextToken: 'new',
+        readiness: { state: 'pending', reasons: [] },
+      }
+    if (method === 'POST') {
+      active = true
+      return { ok: true }
+    }
+    if (path.endsWith('/queues'))
+      return [{ ...service, queueState: active ? 'active' : 'inactive' }]
+    if (path.endsWith('/entries'))
+      return ++reads === 1
+        ? new Promise((resolve) => {
+            release = resolve
+          })
+        : [{ id: 'real', status: 'waiting' }]
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'owner',
+      }}
+    />,
+  )
+  const card = await screen.findByRole('article', {
+    name: 'Servicio Restaurante',
+  })
+  expect(
+    within(card).getByText('Turnos en lista de espera').nextElementSibling,
+  ).toHaveTextContent('—')
+  await waitFor(() => expect(reads).toBe(1))
+  fireEvent.click(within(card).getByRole('switch', { name: 'Activar lista' }))
+  await waitFor(() =>
+    expect(
+      within(card).getByText('Turnos en lista de espera').nextElementSibling,
+    ).toHaveTextContent('1'),
+  )
+  release([])
+  await waitFor(() =>
+    expect(
+      within(card).getByRole('switch', { name: 'Cerrar lista' }),
+    ).toBeEnabled(),
+  )
+  await new Promise((resolve) => setTimeout(resolve, 30))
+  expect(
+    within(card).getByText('Turnos en lista de espera').nextElementSibling,
+  ).toHaveTextContent('1')
 })

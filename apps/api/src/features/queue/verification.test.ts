@@ -63,10 +63,16 @@ async function setup() {
     .first<{ id: string }>())!.id
   const context = await openingContext(env, queue)
   await runLifecycleCommand(env, tenant.userId, queue, crypto.randomUUID(), {
-    action: 'open',
+    action: 'declare_full',
     contextToken: context.contextToken,
-    groups: context.groups.map((g) => ({ ...g, occupied: 0 })),
   })
+  for (const group of context.groups)
+    await runLifecycleCommand(env, tenant.userId, queue, crypto.randomUUID(), {
+      action: 'occupancy',
+      contextToken: (await openingContext(env, queue)).contextToken,
+      group: { spaceId: group.spaceId, seats: group.seats, occupied: 0 },
+      reason: 'Fixture physical capacity update',
+    })
   return { queue, actor: tenant.userId }
 }
 async function entry(queue: string, now: number, size = 4, space = 'terrace') {

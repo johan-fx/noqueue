@@ -11,7 +11,7 @@ export const serviceTitles: Record<ServiceInput['type'], string> = {
 export const stepLabels: Record<StepId, string> = {
   general: 'Datos generales',
   capacity: 'Capacidad',
-  queue: 'Gestión de cola',
+  queue: 'Gestión de lista',
   preference: 'Preferencias',
   summary: 'Resumen',
 }

@@ -998,11 +998,44 @@ it('requires operational authority for initialization and refuses an unsafe empt
   ).toBe(409)
 })
 
+async function declareRestaurant(
+  t: Awaited<ReturnType<typeof tenant>>,
+  existingConfig?: Record<string, unknown>,
+) {
+  const stored = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+    .bind(t.queueId)
+    .first<{ config: string }>()
+  const config = existingConfig ?? {
+    ...JSON.parse(stored!.config),
+    intelligencePolicy: 'disabled',
+    spaces: [
+      {
+        id: 'legacy-0',
+        name: 'Interior',
+        tables: 10,
+        tableTypes: [{ seats: 20, count: 10 }],
+      },
+    ],
+  }
+  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+    .bind(JSON.stringify(config), t.queueId)
+    .run()
+  const context = (await (
+    await request(`/staff/queues/${t.queueId}/opening-context`, t.owner.cookie)
+  ).json()) as { contextToken: string }
+  const result = await request(
+    `/staff/queues/${t.queueId}/lifecycle`,
+    t.owner.cookie,
+    'POST',
+    { action: 'declare_full', contextToken: context.contextToken },
+    crypto.randomUUID(),
+  )
+  expect(result.status, await result.clone().text()).toBe(200)
+}
+
 it('shares honest unknown projections across shadow joins, token reads and staff reads', async () => {
   const t = await tenant()
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queueId)
-    .run()
+  await declareRestaurant(t)
   const coordinator = env.QUEUE_COORDINATOR.getByName(t.queueId)
   const joined = await coordinator.join(t.queueId, crypto.randomUUID(), {
     partySize: 2,
@@ -1071,12 +1104,17 @@ it('does not activate enforcement over untracked shadow occupancy', async () => 
     ).toBe(200)
   }
   await configureAndOpen(t, t.queueId, config)
+  const context = await request(
+    `/staff/queues/${t.queueId}/opening-context`,
+    t.owner.cookie,
+  )
+  const current = (await context.json()) as { version: number }
   expect(
     (
       await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
         ...config,
         estimationMode: 'active',
-        version: 2,
+        version: current.version,
         open: true,
       })
     ).status,
@@ -1114,12 +1152,30 @@ async function configureAndOpen(
       groups: context.groups.map((g) => ({
         spaceId: g.spaceId,
         seats: g.seats,
-        occupied: 0,
+        occupied: g.count - g.allocated,
       })),
     },
     crypto.randomUUID(),
   )
   expect(opened.status, await opened.clone().text()).toBe(200)
+  for (const group of context.groups) {
+    const current = (await (
+      await request(`/staff/queues/${queueId}/opening-context`, t.owner.cookie)
+    ).json()) as import('@noqueue/contracts/staff').QueueOpeningContext
+    const freed = await request(
+      `/staff/queues/${queueId}/lifecycle`,
+      t.owner.cookie,
+      'POST',
+      {
+        action: 'occupancy',
+        contextToken: current.contextToken,
+        group: { spaceId: group.spaceId, seats: group.seats, occupied: 0 },
+        reason: 'Fixture physical capacity update',
+      },
+      crypto.randomUUID(),
+    )
+    expect(freed.status, await freed.clone().text()).toBe(200)
+  }
 }
 
 async function resourceFixture(
@@ -1312,10 +1368,8 @@ it('expires an availability block on read and then permits a real call without a
   expect((await t.command(second, 'call')).status).toBe(200)
 })
 
-it('reports server admission schedule separately from the manual queue switch', async () => {
-  const t = await tenant(),
-    availability = await import('./features/staff/availability'),
-    original = availability.serviceAcceptsEntries
+it('reports physical schedule independently of cutoff and legacy switch', async () => {
+  const t = await tenant()
   const config = {
     ...input().services[0]!,
     twentyFourHours: false,
@@ -1325,14 +1379,14 @@ it('reports server admission schedule separately from the manual queue switch', 
   await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
     .bind(JSON.stringify(config), t.queueId)
     .run()
-  for (const [at, outside] of [
-    ['2026-09-21T10:00:00Z', false],
-    ['2026-09-21T12:45:00Z', true],
-    ['2026-09-22T10:00:00Z', true],
+  for (const [at, serviceOpen, blockReason] of [
+    ['2026-09-21T10:00:00Z', true, 'inactive'],
+    ['2026-09-21T12:45:00Z', true, 'cutoff'],
+    ['2026-09-22T10:00:00Z', false, 'closed'],
   ] as const) {
-    const spy = vi
-      .spyOn(availability, 'serviceAcceptsEntries')
-      .mockImplementation((cfg, tz) => original(cfg, tz, new Date(at)))
+    vi.spyOn(Date, 'now').mockReturnValue(Date.parse(at))
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date(at))
     try {
       for (const enabled of [0, 1]) {
         await env.DB.prepare('UPDATE queue SET open=? WHERE id=?')
@@ -1343,24 +1397,22 @@ it('reports server admission schedule separately from the manual queue switch', 
           t.owner.cookie,
         )
         expect(result.status).toBe(200)
-        const rows = (await result.json()) as {
-          open: number
-          outsideSchedule: boolean
-        }[]
-        expect(rows[0]).toMatchObject({
+        expect(((await result.json()) as unknown[])[0]).toMatchObject({
           open: enabled,
-          outsideSchedule: outside,
+          serviceOpen,
+          outsideSchedule: !serviceOpen,
+          queueState: 'inactive',
+          canJoin: false,
+          blockReason,
         })
-        expect(spy).toHaveBeenCalledWith(
-          expect.objectContaining({ cutoffMinutes: 15 }),
-          'Europe/Madrid',
-        )
       }
     } finally {
-      spy.mockRestore()
+      vi.useRealTimers()
+      vi.restoreAllMocks()
     }
   }
 })
+
 it('does not allow configuration-only creation to establish a manual operational opt-out', async () => {
   const t = await tenant(),
     service = { ...input().services[0]!, intelligencePolicy: 'disabled' }
@@ -1433,9 +1485,7 @@ it('recalculates an already-confirmed formerly gated queue on the normal staff s
 it('exposes safe service metadata and handles scoped manual/public detailed joins', async () => {
   const t = await tenant(),
     viewer = await member(t, 'viewer')
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queueId)
-    .run()
+  await declareRestaurant(t)
   const metadata = (await (
     await request(`/public/services/${t.queueId}`)
   ).json()) as { type: string; spaces: { id: string; name: string }[] }
@@ -1574,9 +1624,26 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
       },
     ],
   }
-  await env.DB.prepare('UPDATE queue SET open=1,config=? WHERE id=?')
-    .bind(JSON.stringify(config), t.queueId)
-    .run()
+  await declareRestaurant(t, config)
+  const context = (await (
+    await request(`/staff/queues/${t.queueId}/opening-context`, t.owner.cookie)
+  ).json()) as { contextToken: string }
+  expect(
+    (
+      await request(
+        `/staff/queues/${t.queueId}/lifecycle`,
+        t.owner.cookie,
+        'POST',
+        {
+          action: 'release_unit',
+          spaceId: 'a:extra',
+          seats: 4,
+          contextToken: context.contextToken,
+        },
+        crypto.randomUUID(),
+      )
+    ).status,
+  ).toBe(200)
   const r = await request(
     `/public/services/${t.queueId}/entries`,
     '',
@@ -1623,9 +1690,7 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
 
 it('manual consent passes through the coordinator and durably queues encrypted contact exactly once', async () => {
   const t = await tenant()
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queueId)
-    .run()
+  await declareRestaurant(t)
   const list = (await (
     await request(`/staff/venues/${t.venueId}/queues`, t.owner.cookie)
   ).json()) as Record<string, unknown>[]
@@ -1677,9 +1742,7 @@ it('manual consent passes through the coordinator and durably queues encrypted c
 
 it('serves anonymous venue aggregates and protects token-bound commands, retries and suspension', async () => {
   const t = await tenant()
-  await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
-    .bind(t.queueId)
-    .run()
+  await declareRestaurant(t)
   await env.DB.prepare('DELETE FROM staff_rate').run()
   const joined = await request(
     `/public/services/${t.queueId}/entries`,

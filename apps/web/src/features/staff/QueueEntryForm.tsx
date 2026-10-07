@@ -16,9 +16,11 @@ export function QueueEntryForm({
   submitLabel = 'Añadir turno',
   disabled = false,
   onBusyChange,
+  locale = 'es',
 }: {
   service: Pick<PublicService, 'type' | 'receptionServices' | 'spaces'>
   onSubmit: (input: ServiceJoin, key: string) => Promise<void>
+  locale?: 'es' | 'en'
   submitLabel?: string
   disabled?: boolean
   onBusyChange?: (busy: boolean) => void
@@ -32,17 +34,18 @@ export function QueueEntryForm({
     service.receptionServices[0] ?? 'other',
   )
   const [preferredSpaceId, setPreferredSpaceId] = useState('fastest')
+  const [hasAttempt, setHasAttempt] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const lock = useRef(false)
   const attempt = useRef<{ body: string; key: string } | null>(null)
   async function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (lock.current || disabled) return
+    if (lock.current || (disabled && !attempt.current)) return
     const input = serviceJoinSchema.safeParse({
       displayName: displayName.trim(),
       partySize,
-      locale: 'es',
+      locale,
       ...(service.type === 'reception' ? { receptionService } : {}),
       ...(service.type === 'restaurant' ? { preferredSpaceId } : {}),
     })
@@ -50,6 +53,7 @@ export function QueueEntryForm({
       setError('Revisa el nombre y el número de personas.')
       return
     }
+    setHasAttempt(true)
     lock.current = true
     setBusy(true)
     onBusyChange?.(true)
@@ -71,7 +75,9 @@ export function QueueEntryForm({
     <form className="space-y-5" onSubmit={(event) => void submit(event)}>
       <fieldset disabled={busy || disabled} className="space-y-5">
         <Field>
-          <FieldLabel htmlFor={`${id}-name`}>Nombre</FieldLabel>
+          <FieldLabel htmlFor={`${id}-name`}>
+            {locale === 'es' ? 'Nombre' : 'Name'}
+          </FieldLabel>
           <Input
             id={`${id}-name`}
             required
@@ -83,7 +89,9 @@ export function QueueEntryForm({
         </Field>
         {service.type !== 'reception' && (
           <Field>
-            <FieldLabel htmlFor={`${id}-size`}>Número de personas</FieldLabel>
+            <FieldLabel htmlFor={`${id}-size`}>
+              {locale === 'es' ? 'Número de personas' : 'Number of guests'}
+            </FieldLabel>
             <Input
               id={`${id}-size`}
               type="number"
@@ -98,7 +106,7 @@ export function QueueEntryForm({
         {service.type === 'reception' && (
           <Field>
             <FieldLabel htmlFor={`${id}-reception`}>
-              Tipo de gestión
+              {locale === 'es' ? 'Tipo de gestión' : 'Service type'}
             </FieldLabel>
             <select
               id={`${id}-reception`}
@@ -112,7 +120,13 @@ export function QueueEntryForm({
             >
               {service.receptionServices.map((type) => (
                 <option key={type} value={type}>
-                  {receptionLabels[type]}
+                  {locale === 'es'
+                    ? receptionLabels[type]
+                    : {
+                        check_in: 'Check-in',
+                        check_out: 'Check-out',
+                        other: 'Other',
+                      }[type]}
                 </option>
               ))}
             </select>
@@ -152,9 +166,9 @@ export function QueueEntryForm({
       <Button
         className="h-12 w-full"
         type="submit"
-        disabled={busy || disabled}
+        disabled={busy || (disabled && !hasAttempt)}
       >
-        {busy ? 'Guardando…' : submitLabel}
+        {busy ? (locale === 'es' ? 'Guardando…' : 'Saving…') : submitLabel}
       </Button>
     </form>
   )

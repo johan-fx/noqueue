@@ -1,4 +1,6 @@
-import { useEffect } from 'react'
+import { useLocale, usePublicResource } from './public-resource'
+import { availabilityText, visualWaitingPeople } from './availability'
+import { useEffect, useState } from 'react'
 import { visitService } from './discovery-state'
 import { useLocation, useNavigate, useParams } from 'react-router'
 import {
@@ -7,16 +9,12 @@ import {
 } from '@noqueue/contracts/queue'
 import { PublicQueue as LegacyPublicQueue } from '@/features/staff/PublicQueue'
 import { RestaurantForm } from './RestaurantForm'
-import {
-  CustomerShell,
-  LoadError,
-  useLocale,
-  usePublicResource,
-} from './shared'
+import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => publicServiceSchema.parse(value)
 export function PublicQueue() {
   const { queueId } = useParams()
   const navigate = useNavigate()
+  const [attemptedQueue, setAttemptedQueue] = useState<string | undefined>()
   const route = useLocation()
   const returnTo =
     typeof route.state?.discoveryReturn === 'string' &&
@@ -41,7 +39,7 @@ export function PublicQueue() {
         setLocale={setLocale}
       >
         <div className="p-4">
-          <LegacyPublicQueue />
+          <LegacyPublicQueue providedService={service} locale={locale} />
         </div>
       </CustomerShell>
     )
@@ -62,36 +60,53 @@ export function PublicQueue() {
         </p>
       )}
       {service && (
-        <RestaurantForm
-          key={queueId}
-          service={service}
-          locale={locale}
-          disabled={!service.open}
-          onSubmit={async (input, key) => {
-            const response = await fetch(
-              `/api/v1/public/services/${queueId}/entries`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Idempotency-Key': key,
-                },
-                body: JSON.stringify(input),
-              },
-            )
-            if (!response.ok)
-              throw new Error(
-                locale === 'es'
-                  ? 'No se pudo añadir el turno. Revisa los datos y la disponibilidad del servicio.'
-                  : 'Could not join. Check your details and service availability.',
-              )
-            const joined = joinedEntrySchema.parse(await response.json())
-            navigate(`/t/${joined.recoveryToken}?lang=${locale}`, {
-              state: { joined: true },
-            })
-          }}
-        />
+        <div className="space-y-2 px-4 pt-4">
+          <p role="status">
+            {availabilityText(
+              service,
+              locale,
+              service.averageWaitMinutes ?? null,
+            )}
+          </p>
+          <p>
+            {visualWaitingPeople(service)}{' '}
+            {locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
+          </p>
+        </div>
       )}
+      {service &&
+        (service.queueState !== 'inactive' || attemptedQueue === queueId) && (
+          <RestaurantForm
+            key={queueId}
+            service={service}
+            locale={locale}
+            disabled={!service.canJoin}
+            onSubmit={async (input, key) => {
+              setAttemptedQueue(queueId)
+              const response = await fetch(
+                `/api/v1/public/services/${queueId}/entries`,
+                {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    'Idempotency-Key': key,
+                  },
+                  body: JSON.stringify(input),
+                },
+              )
+              if (!response.ok)
+                throw new Error(
+                  locale === 'es'
+                    ? 'No se pudo añadir el turno. Revisa los datos y la disponibilidad del servicio.'
+                    : 'Could not join. Check your details and service availability.',
+                )
+              const joined = joinedEntrySchema.parse(await response.json())
+              navigate(`/t/${joined.recoveryToken}?lang=${locale}`, {
+                state: { joined: true },
+              })
+            }}
+          />
+        )}
     </CustomerShell>
   )
 }

@@ -155,7 +155,9 @@ export function GeneralStep({
                   onClick={() =>
                     applyHours(
                       hours.days,
-                      hours.ranges.filter((_, itemIndex) => itemIndex !== index),
+                      hours.ranges.filter(
+                        (_, itemIndex) => itemIndex !== index,
+                      ),
                     )
                   }
                 >
@@ -201,8 +203,8 @@ export function GeneralStep({
         />
         <p className="text-sm text-muted-foreground">
           {values.cutoffMinutes === 0
-            ? 'Se podrá apuntar a la cola hasta la hora de cierre.'
-            : `No será posible apuntarse a la cola ${values.cutoffMinutes} minutos antes de la hora de cierre.`}
+            ? 'Se podrá apuntar a la lista hasta la hora de cierre.'
+            : `No será posible apuntarse a la lista ${values.cutoffMinutes} minutos antes de la hora de cierre.`}
         </p>
         <FieldError errors={[form.formState.errors.cutoffMinutes]} />
       </Field>

@@ -195,7 +195,10 @@ it('stores normalized schema semantics without rewriting source bytes', async ()
   expect(JSON.parse(row!.normalized_config)).not.toHaveProperty('ignored')
   expect((await search({ recentIds: [id] })).body.items[0]).toMatchObject({
     id,
-    open: true,
+    open: false,
+    serviceOpen: true,
+    queueState: 'inactive',
+    canJoin: false,
   })
 })
 it('scheduled compatibility backfill is bounded and invalid markers prevent starvation', async () => {

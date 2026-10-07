@@ -32,7 +32,42 @@ it('accepts initial in-place confirmation without a correction reason', () => {
 it('accepts explicit operational intelligence policy commands', () => {
   for (const action of ['disable_intelligence', 'enable_intelligence'])
     expect(
-      queueLifecycleSchema.safeParse({ action, contextToken: 'token' })
-        .success,
+      queueLifecycleSchema.safeParse({ action, contextToken: 'token' }).success,
     ).toBe(true)
+})
+it('validates optional reminders independently from opening, before each interval cutoff', async () => {
+  const { serviceSchema } = await import('./staff')
+  const config = {
+    name: 'Lunch',
+    type: 'restaurant',
+    capacity: 20,
+    averageMinutes: 30,
+    graceMinutes: 5,
+    cutoffMinutes: 15,
+    twentyFourHours: false,
+    schedules: [{ day: 1, from: '12:00', to: '15:00' }],
+    spaces: [{ name: 'Main', tables: 2 }],
+    receptionServices: [],
+  }
+  const reminder = {
+    enabled: true,
+    intervals: [{ day: 1, from: '12:00', to: '15:00', at: '14:45' }],
+  }
+  expect(serviceSchema.safeParse({ ...config, reminder }).success).toBe(false)
+  expect(
+    serviceSchema.safeParse({
+      ...config,
+      reminder: {
+        ...reminder,
+        intervals: [{ ...reminder.intervals[0], at: '13:00' }],
+      },
+    }).success,
+  ).toBe(true)
+  expect(
+    serviceSchema.safeParse({
+      ...config,
+      twentyFourHours: true,
+      reminder: { enabled: true, intervals: [] },
+    }).success,
+  ).toBe(false)
 })

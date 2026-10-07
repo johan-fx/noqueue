@@ -1,0 +1,67 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "noqueue-test-only",
+  "main": "../src/index.ts",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "noqueue-local",
+      "database_id": "00000000-0000-0000-0000-000000000000",
+      "migrations_dir": "../migrations"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "QUEUE_COORDINATOR",
+        "class_name": "QueueCoordinator"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "QueueCoordinator"
+      ]
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "NOTIFICATIONS",
+        "queue": "noqueue-whatsapp-local"
+      },
+      {
+        "binding": "NOTIFICATIONS_DLQ",
+        "queue": "noqueue-whatsapp-local-dlq"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "noqueue-whatsapp-local",
+        "dead_letter_queue": "noqueue-whatsapp-local-dlq",
+        "max_retries": 3,
+        "max_batch_size": 10
+      }
+    ]
+  },
+  "vars": {
+    "WHATSAPP_MODE": "sandbox",
+    "WHATSAPP_ENABLED": "false",
+    "CONFIRMATION_EXPERIMENT_ENABLED": "false",
+    "STAGING_EXPERIMENT_APPROVED": "false",
+    "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
+    "PUBLIC_APP_ORIGIN": "http://localhost:5173",
+    "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
+    "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
+    "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
+    "STAGING_CONSENT_APPROVED": "false",
+    "APP_ENV": "local",
+    "D360DIALOG_PHONE_NUMBER_ID": "123456789012345"
+  }
+}

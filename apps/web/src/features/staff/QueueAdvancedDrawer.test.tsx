@@ -1,0 +1,89 @@
+import '@testing-library/jest-dom/vitest'
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react'
+import { afterEach, expect, it, vi } from 'vitest'
+import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
+import { api } from './api'
+import type { QueueSummary } from '@noqueue/contracts/staff'
+vi.mock('./api', async (original) => ({
+  ...(await original<typeof import('./api')>()),
+  api: vi.fn(),
+}))
+afterEach(() => {
+  cleanup()
+  vi.resetAllMocks()
+})
+const queue: QueueSummary = {
+  id: 'q',
+  venueId: 'v',
+  name: 'Restaurant',
+  capacity: 10,
+  averageMinutes: 20,
+  version: 1,
+  open: 0,
+  serviceOpen: true,
+  queueState: 'inactive',
+  config: {
+    name: 'Restaurant',
+    type: 'restaurant',
+    capacity: 10,
+    averageMinutes: 20,
+    graceMinutes: 5,
+    cutoffMinutes: 0,
+    twentyFourHours: true,
+    schedules: [],
+    spaces: [
+      {
+        id: 'main',
+        name: 'Main',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1 }],
+      },
+    ],
+    receptionServices: [],
+  },
+}
+it('keeps reminder settings in a nested draft and protects navigation while saving', async () => {
+  let complete!: () => void
+  vi.mocked(api).mockImplementation(
+    () =>
+      new Promise<void>((resolve) => {
+        complete = resolve
+      }),
+  )
+  const close = vi.fn(),
+    saved = vi.fn()
+  render(
+    <QueueAdvancedDrawer
+      queue={queue}
+      canOperate
+      canConfigure
+      returnFocus={null}
+      onClose={close}
+      onSaved={saved}
+    />,
+  )
+  expect(screen.queryByLabelText('Hora diaria')).not.toBeInTheDocument()
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Recordatorio de llenado habitual' }),
+  )
+  fireEvent.click(screen.getByRole('switch', { name: 'Activar recordatorio' }))
+  fireEvent.change(screen.getByLabelText('Hora diaria'), {
+    target: { value: '13:00' },
+  })
+  expect(api).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar recordatorio' }))
+  expect(screen.getByRole('button', { name: 'Guardando…' })).toBeDisabled()
+  expect(
+    screen.getByRole('button', { name: 'Volver', hidden: false }),
+  ).toBeDisabled()
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(1))
+  complete()
+  await waitFor(() => expect(saved).toHaveBeenCalled())
+  expect(close).not.toHaveBeenCalled()
+})

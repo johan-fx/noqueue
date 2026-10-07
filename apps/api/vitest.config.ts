@@ -4,7 +4,8 @@ import { defineConfig } from 'vitest/config'
 export default defineConfig({
   plugins: [
     cloudflareTest({
-      wrangler: { configPath: './wrangler.jsonc' },
+      remoteBindings: false,
+      wrangler: { configPath: './test/wrangler.json' },
       miniflare: {
         bindings: {
           GEOAPIFY_API_KEY: 'test-only-geocode-key',

@@ -1,3 +1,4 @@
+import { admissionState } from './availability'
 import { directoryConfigStatement } from '../discovery/configuration'
 import { expireArrivals } from '../queue/customer'
 import { topology } from '../queue/opening-state'
@@ -304,11 +305,12 @@ export async function configureQueue(
     !!config.resourceStateKnown !== !!old.config?.resourceStateKnown
   )
     throw new HTTPException(409, { message: 'lifecycle_command_required' })
+  const admission = await admissionState(env, queueId)
   const topologyChanged =
     !!old.config && topology(config) !== topology(old.config)
   if (
     topologyChanged &&
-    current.open &&
+    admission?.queueState === 'active' &&
     old.config?.estimationMode === 'active'
   )
     throw new HTTPException(409, { message: 'close_before_topology_change' })

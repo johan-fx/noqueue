@@ -64,11 +64,9 @@ async function openQueue(
     await route.fulfill({ json: body })
   })
   await page.goto('/staff')
-  await page
-    .getByRole('button', { name: 'Gestionar cola', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   const drawer = page.getByRole('dialog', {
-    name: 'Gestionar cola',
+    name: 'Gestionar lista',
     exact: true,
   })
   await expect(drawer.locator('[data-entry-code="T0"]')).toBeVisible()
@@ -113,9 +111,7 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await expect.poll(() => offset(row)).toBeGreaterThan(20)
   await expect.poll(() => offset(row)).toBeLessThan(60)
   // Polling replaces entry objects without snapping an active drag.
-  await page.waitForResponse((response) =>
-    response.url().endsWith('/entries'),
-  )
+  await page.waitForResponse((response) => response.url().endsWith('/entries'))
   await expect.poll(() => offset(row)).toBeGreaterThan(20)
   await page.mouse.up()
   await expect.poll(() => offset(row)).toBe(0)

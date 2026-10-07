@@ -128,15 +128,19 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
     const alice = await guest.newPage()
     await join(alice, t.queue, 'Alice')
     await page.getByRole('button', { name: 'Volver', exact: true }).click()
-    await page.getByRole('switch', { name: 'Abrir cola' }).click()
     await page
-      .getByRole('dialog')
-      .getByRole('button', { name: 'Cerrar cola', exact: true })
+      .getByRole('switch', { name: 'Cerrar lista', exact: true })
+      .click()
+    await page
+      .getByRole('alertdialog')
+      .getByRole('button', { name: 'Cerrar lista', exact: true })
       .click()
     const form = await guest.newPage()
     await form.goto(`/q/${t.queue}`)
     await expect(
-      form.getByText('La cola está cerrada.', { exact: true }),
+      form.getByText('Lista pausada', {
+        exact: true,
+      }),
     ).toBeVisible()
     await expect(
       form.getByRole('button', { name: 'Ponerme en lista' }),
@@ -254,7 +258,7 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
         }),
       ).toBeVisible()
       const row = page
-        .getByRole('dialog', { name: 'Gestionar cola', exact: true })
+        .getByRole('dialog', { name: 'Gestionar lista', exact: true })
         .locator('li')
         .filter({ hasText: 'Second' })
       await expect(

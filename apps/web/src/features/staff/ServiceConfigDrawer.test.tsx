@@ -277,9 +277,9 @@ it('labels pool queue capacity in people rather than turns', async () => {
   )
   await next()
   await next()
-  expect(screen.getByLabelText('Nº máximo de personas en cola')).toBeVisible()
+  expect(screen.getByLabelText('Nº máximo de personas en lista')).toBeVisible()
   expect(
-    screen.queryByLabelText('Nº máximo de turnos en cola'),
+    screen.queryByLabelText('Nº máximo de turnos en lista'),
   ).not.toBeInTheDocument()
 })
 it('a lost or expired location confirmation disables only final save without losing wizard data', async () => {

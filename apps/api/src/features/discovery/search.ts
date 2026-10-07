@@ -1,3 +1,9 @@
+import {
+  publicAdmission,
+  resolveAdmission,
+  type AdmissionRecord,
+} from '../staff/availability'
+import type { ServiceInput } from '@noqueue/contracts/staff'
 import type {
   PublicSearchInput,
   PublicSearchResult,
@@ -11,35 +17,12 @@ function matchExpression(text: string) {
     .map((word) => `"${word}"*`)
     .join(' AND ')
 }
-function localTime(timezone: string, now: number) {
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    weekday: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(now)
-  const get = (key: string) => parts.find((p) => p.type === key)?.value ?? ''
-  return [
-    ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(get('weekday')),
-    Number(get('hour')) * 60 + Number(get('minute')),
-  ]
-}
 export async function searchServices(
   env: CloudflareBindings,
   input: PublicSearchInput,
   now = Date.now(),
 ) {
-  const timezones = await env.DB.prepare(
-    'SELECT DISTINCT timezone FROM venue',
-  ).all<{ timezone: string }>()
   const values: (string | number)[] = []
-  const timezoneRows = timezones.results.map(({ timezone }) => {
-    values.push(timezone, ...localTime(timezone, now))
-    return '(?,?,?)'
-  })
-  if (!timezoneRows.length)
-    return { items: [], page: input.page, hasMore: false }
   const filters = [
     "t.status='active'",
     'v.location_confirmed_at IS NOT NULL',
@@ -99,60 +82,92 @@ export async function searchServices(
   }
   const within =
     input.scope === 'nearby' && !input.text ? 'distanceMeters<=5000' : '1'
-  let order =
-    input.sort === 'distance'
-      ? 'distanceMeters,id'
-      : 'CASE WHEN open=0 THEN 2 WHEN waitMinutes IS NULL THEN 1 ELSE 0 END,waitMinutes,id'
-  if (input.recentIds) {
-    order = `CASE id ${input.recentIds
-      .map((_, i) => `WHEN ? THEN ${i}`)
-      .join(' ')} END,id`
-    values.push(...input.recentIds)
-  }
-  values.push(input.pageSize + 1, (input.page - 1) * input.pageSize)
   const result = await env.DB.prepare(
     `
-    WITH local_time(timezone,day,minute) AS (VALUES ${timezoneRows.join(',')}),
-    candidates AS (
+    WITH candidates AS (
       SELECT q.id,v.id venueId,q.name,v.name venueName,json_extract(d.normalized_config,'$.type') type,
-        v.address_formatted address,v.location_attribution attribution,
+        v.address_formatted address,v.location_attribution attribution,v.timezone,d.normalized_config config,
+        a.window_id,a.override_state,a.activated_at,a.reminder_ack,a.legacy_paused_at,a.legacy_config,a.legacy_timezone,
+        (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND status='waiting') waitingPeople,
+        (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND status='waiting') waitingCount,
         ${distanceSql} distanceMeters,
-        CASE WHEN q.open=1 AND (
-          json_extract(d.normalized_config,'$.twentyFourHours')=1 OR EXISTS(
-            SELECT 1 FROM json_each(d.normalized_config,'$.schedules') s
-            WHERE json_extract(s.value,'$.day')=lt.day
-              AND lt.minute >= CAST(substr(json_extract(s.value,'$.from'),1,2) AS INTEGER)*60+CAST(substr(json_extract(s.value,'$.from'),4,2) AS INTEGER)
-              AND lt.minute < CAST(substr(json_extract(s.value,'$.to'),1,2) AS INTEGER)*60+CAST(substr(json_extract(s.value,'$.to'),4,2) AS INTEGER)-COALESCE(json_extract(d.normalized_config,'$.cutoffMinutes'),0)
-          )) THEN 1 ELSE 0 END open,
         (SELECT ROUND(AVG(max(0,(p.predicted_at-?)/60000.0))) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
           WHERE e.queue_id=q.id AND e.status='waiting' AND p.quality IN ('estimated','provisional')
             AND p.predicted_at IS NOT NULL AND p.updated_at>=? AND p.updated_at<=?) predictedWait
       FROM venue v JOIN queue q ON q.venue_id=v.id
         JOIN service_directory_config d ON d.queue_id=q.id AND d.source_config=q.config AND d.normalized_config IS NOT NULL
         JOIN tenant_account t ON t.organization_id=v.organization_id
-        JOIN local_time lt ON lt.timezone=v.timezone
+        LEFT JOIN queue_admission a ON a.queue_id=q.id
       WHERE ${filters.join(' AND ')}
-    ), services AS (SELECT *,CASE WHEN open=1 THEN predictedWait ELSE NULL END waitMinutes FROM candidates)
-    SELECT id,venueId,name,venueName,type,address,attribution,distanceMeters,open,waitMinutes FROM services
-    WHERE ${within} ORDER BY ${order} LIMIT ? OFFSET ?
+    ) SELECT * FROM candidates WHERE ${within}
   `,
   )
     .bind(...values)
     .all<
-      Omit<PublicSearchResult, 'open' | 'attribution'> & {
-        open: number
-        attribution: string
-      }
+      Omit<PublicSearchResult, 'open' | 'attribution'> &
+        AdmissionRecord & {
+          config: string
+          timezone: string
+          predictedWait: number | null
+          attribution: string
+          waitingPeople: number
+          waitingCount: number
+        }
     >()
-  return {
-    items: result.results.slice(0, input.pageSize).map((row) => ({
-      ...row,
-      open: !!row.open,
+  const items = result.results.map((row) => {
+    const config = JSON.parse(row.config) as ServiceInput
+    const admission = resolveAdmission(
+      config,
+      row.timezone,
+      row,
+      row.waitingPeople,
+      new Date(now),
+      row.waitingCount,
+    )
+    const direct =
+      admission.serviceOpen &&
+      admission.queueState === 'inactive' &&
+      row.waitingPeople === 0
+    return {
+      id: row.id,
+      venueId: row.venueId,
+      name: row.name,
+      venueName: row.venueName,
+      type: row.type,
+      address: row.address,
+      distanceMeters: row.distanceMeters,
       attribution: JSON.parse(
         row.attribution,
       ) as PublicSearchResult['attribution'],
-    })),
+      ...publicAdmission(admission),
+      open: admission.canJoin,
+      waitMinutes: direct
+        ? 0
+        : admission.serviceOpen && admission.queueState !== 'paused'
+        ? row.predictedWait
+        : null,
+    }
+  })
+  const rank = (i: (typeof items)[number]) =>
+    !i.serviceOpen || i.queueState === 'paused'
+      ? 2
+      : i.waitMinutes === null
+      ? 1
+      : 0
+  items.sort((a, b) =>
+    input.recentIds
+      ? input.recentIds.indexOf(a.id) - input.recentIds.indexOf(b.id)
+      : input.sort === 'distance'
+      ? (a.distanceMeters ?? Infinity) - (b.distanceMeters ?? Infinity) ||
+        a.id.localeCompare(b.id)
+      : rank(a) - rank(b) ||
+        (a.waitMinutes ?? Infinity) - (b.waitMinutes ?? Infinity) ||
+        a.id.localeCompare(b.id),
+  )
+  const offset = (input.page - 1) * input.pageSize
+  return {
+    items: items.slice(offset, offset + input.pageSize),
     page: input.page,
-    hasMore: result.results.length > input.pageSize,
+    hasMore: items.length > offset + input.pageSize,
   }
 }

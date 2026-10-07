@@ -76,7 +76,7 @@ export function createWhatsAppSender(
             text: {
               body:
                 message.position === 1
-                  ? `Experimento NoQueue · ${message.code}: eres el siguiente en la cola. Esto no significa que tu mesa esté lista. Envía BAJA para dejar de recibir avisos.`
+                  ? `Experimento NoQueue · ${message.code}: eres el siguiente en la lista. Esto no significa que tu mesa esté lista. Envía BAJA para dejar de recibir avisos.`
                   : `Experimento NoQueue · ${message.code}: ${
                       message.position === 2
                         ? 'queda 1 turno'
@@ -120,7 +120,7 @@ export function createWhatsAppSender(
               body:
                 message.locale === 'es'
                   ? `${message.venue}: tu turno es ${message.code}. ${link}`
-                  : `${message.venue}: your queue code is ${message.code}. ${link}`,
+                  : `${message.venue}: your waiting list code is ${message.code}. ${link}`,
             },
           }
         : {

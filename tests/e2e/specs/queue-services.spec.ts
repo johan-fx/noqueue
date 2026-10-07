@@ -132,13 +132,36 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
       {
         headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
         data: {
-          action: 'open',
+          ...(q.config.type === 'restaurant'
+            ? { action: 'declare_full' }
+            : {
+                action: 'open',
+                groups: context.groups.map((g) => ({ ...g, occupied: 0 })),
+              }),
           contextToken: context.contextToken,
-          groups: context.groups.map((g) => ({ ...g, occupied: 0 })),
         },
       },
     )
     expect(response.ok(), await response.text()).toBeTruthy()
+    if (q.config.type === 'restaurant')
+      for (const group of context.groups) {
+        const current = (await (
+          await page.request.get(`/api/v1/staff/queues/${q.id}/opening-context`)
+        ).json()) as { contextToken: string }
+        const freed = await page.request.post(
+          `/api/v1/staff/queues/${q.id}/lifecycle`,
+          {
+            headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+            data: {
+              action: 'occupancy',
+              contextToken: current.contextToken,
+              group: { ...group, occupied: 0 },
+              reason: 'Fixture physical capacity update',
+            },
+          },
+        )
+        expect(freed.ok(), await freed.text()).toBeTruthy()
+      }
   }
   await page.reload()
   const restaurant = queues.find((q) => q.config.type === 'restaurant')!,
@@ -154,10 +177,10 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await expect(guest).toHaveURL(/\/t\//)
   await page
     .getByRole('article', { name: 'Servicio Restaurante', exact: true })
-    .getByRole('button', { name: 'Gestionar cola' })
+    .getByRole('button', { name: 'Ver lista' })
     .click()
   const drawer = page.getByRole('dialog', {
-    name: 'Gestionar cola',
+    name: 'Gestionar lista',
     exact: true,
   })
   await expect(drawer.getByText('María López')).toBeVisible()
@@ -299,11 +322,11 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await guest.getByLabel('Nombre', { exact: true }).fill('Ana Recepción')
   await guest.getByLabel('Tipo de gestión').selectOption('check_out')
   await expect(guest.getByLabel('Espacio', { exact: true })).toHaveCount(0)
-  await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
+  await guest.getByRole('button', { name: 'Unirme a la lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await page
     .getByRole('article', { name: 'Servicio Recepción', exact: true })
-    .getByRole('button', { name: 'Gestionar cola' })
+    .getByRole('button', { name: 'Ver lista' })
     .click()
   await expect(drawer.getByText('Ana Recepción')).toBeVisible()
   await drawer.getByRole('button', { name: 'Añadir', exact: true }).click()
@@ -354,11 +377,11 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await drawer.getByRole('button', { name: 'Volver', exact: true }).click()
   await guest.goto(`/q/${pool.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('Piscina Cliente')
-  await guest.getByRole('button', { name: 'Unirme a la cola' }).click()
+  await guest.getByRole('button', { name: 'Unirme a la lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await page
     .getByRole('article', { name: 'Servicio Bar piscina', exact: true })
-    .getByRole('button', { name: 'Gestionar cola' })
+    .getByRole('button', { name: 'Ver lista' })
     .click()
   await expect(drawer.getByText('Piscina Cliente')).toBeVisible()
   await drawer.getByRole('button', { name: 'Añadir', exact: true }).click()
@@ -405,7 +428,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   ).toBeVisible()
   await poolAdd.getByRole('button', { name: 'Cerrar', exact: true }).click()
   await expect(
-    drawer.getByRole('group', { name: 'Filtros de la cola' }),
+    drawer.getByRole('group', { name: 'Filtros de la lista' }),
   ).toHaveCount(0)
   const poolRow = drawer.locator('li').filter({ hasText: 'Piscina Cliente' })
   await expect(drawer.getByRole('tab', { name: 'Lista' })).toHaveAttribute(

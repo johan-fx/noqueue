@@ -89,8 +89,7 @@ export async function readiness(
   const reasons: QueueReadiness['reasons'] = []
   if (safety.requiresSurvey) reasons.push('inventory_refresh_required')
   if (!configurationComplete(config)) reasons.push('configuration_missing')
-  if (!row?.open || row.topology !== topology(config))
-    reasons.push('inventory_required')
+  if (row?.topology !== topology(config)) reasons.push('inventory_required')
   if (row?.untracked) reasons.push('legacy_occupancy')
   return {
     state:

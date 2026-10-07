@@ -24,8 +24,8 @@ export function QueueStep({
     [
       'capacity',
       type === 'pool'
-        ? 'Nº máximo de personas en cola'
-        : 'Nº máximo de turnos en cola',
+        ? 'Nº máximo de personas en lista'
+        : 'Nº máximo de turnos en lista',
     ],
   ] as const
   return (

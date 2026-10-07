@@ -227,9 +227,9 @@ export function TurnView({
                       {es ? 'aprox.' : 'approx.'}
                     </>
                   ) : es ? (
-                    'Espera pendiente de datos'
+                    'Sin estimación'
                   ) : (
-                    'Wait estimate not yet available'
+                    'No estimate'
                   )}
                 </p>
               </div>

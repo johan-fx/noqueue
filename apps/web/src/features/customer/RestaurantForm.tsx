@@ -24,6 +24,7 @@ export function RestaurantForm({
   const [name, setName] = useState(initial?.displayName ?? '')
   const [size, setSize] = useState(initial?.partySize ?? 1)
   const [space, setSpace] = useState(initial?.preferredSpaceId ?? 'fastest')
+  const [hasAttempt, setHasAttempt] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const request = useRef<{ payload: string; key: string } | null>(null)
@@ -42,7 +43,14 @@ export function RestaurantForm({
   }
   async function submit(event: FormEvent) {
     event.preventDefault()
-    if (lock.current || disabled || !name.trim() || !compatible) return
+    if (
+      lock.current ||
+      (disabled && !request.current) ||
+      !name.trim() ||
+      !compatible
+    )
+      return
+    setHasAttempt(true)
     lock.current = true
     setBusy(true)
     setError('')
@@ -190,8 +198,8 @@ export function RestaurantForm({
             <p role="status">
               {!service.open
                 ? es
-                  ? 'La cola está cerrada.'
-                  : 'The queue is closed.'
+                  ? 'La lista está cerrada.'
+                  : 'The waiting list is closed.'
                 : es
                 ? 'El turno ya no permite esta operación.'
                 : 'This entry no longer allows this action.'}
@@ -215,7 +223,10 @@ export function RestaurantForm({
             {es ? 'Volver' : 'Back'}
           </Button>
         )}
-        <Button type="submit" disabled={busy || disabled || !compatible}>
+        <Button
+          type="submit"
+          disabled={busy || (disabled && !hasAttempt) || !compatible}
+        >
           {busy
             ? es
               ? 'Guardando…'

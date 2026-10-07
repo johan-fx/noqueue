@@ -1,3 +1,4 @@
+import { useLocale } from './public-resource'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { ArrowRight, Clock, MapPin, QrCode, Search } from 'lucide-react'
@@ -15,7 +16,7 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select'
-import { CustomerShell, useLocale } from './shared'
+import { CustomerShell } from './shared'
 import {
   discoveryScroll,
   recentServiceIds,
@@ -132,39 +133,54 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
   useEffect(() => {
     if (!shouldSearch) return
     const controller = new AbortController()
-    const timer = setTimeout(
-      () => {
-        void (async () => {
-          try {
-            const response = await fetch('/api/v1/public/search', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: bodyKey,
-              cache: 'no-store',
-              signal: controller.signal,
-            })
-            if (!response.ok) throw new Error('unavailable')
-            const result = publicSearchResponseSchema.parse(
-              await response.json(),
-            )
-            if (!controller.signal.aborted) {
-              setLoaded({
-                key: bodyKey,
-                items: result.items,
-                hasMore: result.hasMore,
-              })
-              setFailure(null)
-            }
-          } catch {
-            if (!controller.signal.aborted) setFailure(bodyKey)
-          }
-        })()
-      },
-      search && text ? 300 : 0,
-    )
+    const isVisible = () => document.visibilityState !== 'hidden'
+    let pending = false
+    let timer: ReturnType<typeof setTimeout>
+    async function refresh() {
+      if (pending || controller.signal.aborted || !isVisible()) return
+      clearTimeout(timer)
+      pending = true
+      try {
+        const response = await fetch('/api/v1/public/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyKey,
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error('unavailable')
+        const result = publicSearchResponseSchema.parse(await response.json())
+        if (!controller.signal.aborted) {
+          setLoaded({
+            key: bodyKey,
+            items: result.items,
+            hasMore: result.hasMore,
+          })
+          setFailure(null)
+        }
+      } catch {
+        if (!controller.signal.aborted) setFailure(bodyKey)
+      } finally {
+        pending = false
+        if (!controller.signal.aborted && isVisible())
+          timer = setTimeout(() => void refresh(), 5000)
+      }
+    }
+    const focus = () => {
+      void refresh()
+    }
+    const visibility = () => {
+      clearTimeout(timer)
+      if (document.visibilityState !== 'hidden') void refresh()
+    }
+    timer = setTimeout(() => void refresh(), search && text ? 300 : 0)
+    window.addEventListener('focus', focus)
+    document.addEventListener('visibilitychange', visibility)
     return () => {
       clearTimeout(timer)
       controller.abort()
+      window.removeEventListener('focus', focus)
+      document.removeEventListener('visibilitychange', visibility)
     }
   }, [bodyKey, revision, shouldSearch, search, text])
   useEffect(() => {

@@ -10,7 +10,7 @@ test('joins the demo queue and receives provider delivery through the real worke
   await page
     .getByLabel('Teléfono con prefijo internacional')
     .fill('+34600000000')
-  await page.getByRole('button', { name: 'Apuntarme a la cola' }).click()
+  await page.getByRole('button', { name: 'Apuntarme a la lista' }).click()
   await expect(page).toHaveURL(/\/t\/[a-f0-9]{64}/)
   await expect(page.getByRole('heading', { name: 'Tu turno' })).toBeVisible()
   await expect(page.getByText('WhatsApp: delivered')).toBeVisible({

@@ -21,8 +21,8 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
       {!values.twentyFourHours && <p>{formatRanges(hours.ranges)}</p>}
       <p>Tiempo medio: {values.averageMinutes} min</p>
       <p>
-        Nº máximo de {values.type === 'reception' ? 'personas' : seats} en cola:{' '}
-        {values.capacity}
+        Nº máximo de {values.type === 'reception' ? 'personas' : seats} en
+        lista: {values.capacity}
       </p>
       {values.spaces.flatMap((space) =>
         (space.tableTypes ?? []).map((group) => (

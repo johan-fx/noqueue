@@ -29,7 +29,7 @@ const messages: Record<string, string> = {
     'El espacio no existe o no tiene capacidad para este grupo.',
   preferred_space_in_use:
     'Hay turnos activos que han elegido ese espacio. Resuélvelos antes de cambiarlo.',
-  queue_unavailable: 'La cola está cerrada, completa o fuera de horario.',
+  queue_unavailable: 'La lista está cerrada, completa o fuera de horario.',
   inventory_refresh_required:
     'La distribución ha cambiado. Confirma de nuevo la ocupación antes de llamar más turnos. Las llegadas y liberaciones siguen disponibles.',
   inventory_already_confirmed:
@@ -40,14 +40,14 @@ const messages: Record<string, string> = {
   invalid_inventory:
     'Revisa los recuentos: no pueden superar los recursos disponibles.',
   lifecycle_command_required:
-    'Usa el control de apertura o cierre para cambiar el estado de la cola.',
+    'Usa el control de apertura o cierre para cambiar el estado de la lista.',
   close_before_topology_change:
-    'Cierra la cola antes de cambiar la distribución de recursos.',
+    'Cierra la lista antes de cambiar la distribución de recursos.',
   unauthorized: 'Tu sesión ha caducado. Vuelve a entrar.',
   forbidden: 'No tienes permiso para esta acción.',
   not_found: 'No se ha encontrado el recurso.',
   version_conflict:
-    'Otra persona ha modificado la cola. Actualiza antes de continuar.',
+    'Otra persona ha modificado la lista. Actualiza antes de continuar.',
   invalid_transition: 'El turno ya ha cambiado de estado.',
   no_free_compatible_resource:
     'No hay un recurso compatible libre. Confirma las liberaciones y actualiza.',

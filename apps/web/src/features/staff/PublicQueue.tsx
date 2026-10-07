@@ -1,62 +1,50 @@
-import { useEffect, useState } from 'react'
+import { usePublicResource } from '../customer/public-resource'
+
+import { availabilityText, visualWaitingPeople } from '../customer/availability'
 import { useNavigate, useParams } from 'react-router'
 import {
   joinedEntrySchema,
   publicServiceSchema,
   type PublicService,
 } from '@noqueue/contracts/queue'
-import {
-  Card,
-  CardHeader,
-  CardTitle,
-  CardContent,
-} from '@/components/ui/card'
+import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { QueueEntryForm } from './QueueEntryForm'
-export function PublicQueue() {
+const parse = (value: unknown) => publicServiceSchema.parse(value)
+export function PublicQueue({
+  providedService,
+  locale = 'es',
+}: { providedService?: PublicService; locale?: 'es' | 'en' } = {}) {
   const { queueId } = useParams()
   const navigate = useNavigate()
-  const [loaded, setLoaded] = useState<{
-    queueId: string
-    service: PublicService
-  } | null>(null)
-  const [error, setError] = useState('')
-  const service = loaded && loaded.queueId === queueId ? loaded.service : null
-  useEffect(() => {
-    let live = true
-    fetch(`/api/v1/public/services/${queueId}`, { cache: 'no-store' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error()
-        const service = publicServiceSchema.parse(await response.json())
-        if (live) {
-          setLoaded({ queueId: queueId!, service })
-          setError('')
-        }
-      })
-      .catch(() => {
-        if (live) setError('Este servicio no está disponible.')
-      })
-    return () => {
-      live = false
-    }
-  }, [queueId])
+  const { data, error, refresh } = usePublicResource(
+    providedService ? null : `/api/v1/public/services/${queueId}`,
+    parse,
+  )
+  const service = providedService ?? data
+
   return (
     <Card className="mx-auto max-w-md">
       <CardHeader>
         <p className="text-sm text-muted-foreground">{service?.venueName}</p>
-        <CardTitle>{service?.name ?? 'Cola'}</CardTitle>
+        <CardTitle>{service?.name ?? 'Lista'}</CardTitle>
       </CardHeader>
       <CardContent>
         {error && (
           <p role="alert" className="text-destructive">
-            {error}
+            {locale === 'es'
+              ? 'Este servicio no está disponible.'
+              : 'Service unavailable.'}
           </p>
         )}
         {service && (
           <QueueEntryForm
             key={queueId}
             service={service}
-            disabled={!service.open}
-            submitLabel="Unirme a la cola"
+            locale={locale}
+            disabled={!service.canJoin}
+            submitLabel={
+              locale === 'es' ? 'Unirme a la lista' : 'Join waiting list'
+            }
             onSubmit={async (input, key) => {
               const response = await fetch(
                 `/api/v1/public/services/${queueId}/entries`,
@@ -71,17 +59,34 @@ export function PublicQueue() {
               )
               if (!response.ok)
                 throw new Error(
-                  'No se pudo añadir el turno. Revisa los datos y que la cola esté abierta y tenga capacidad.',
+                  'No se pudo añadir el turno. Revisa los datos y que la lista esté abierta y tenga capacidad.',
                 )
               const entry = joinedEntrySchema.parse(await response.json())
-              navigate(`/t/${entry.recoveryToken}?lang=es`)
+              navigate(`/t/${entry.recoveryToken}?lang=${locale}`)
             }}
           />
         )}
-        {service && !service.open && (
-          <p role="status" className="mt-4 text-muted-foreground">
-            La cola está cerrada.
-          </p>
+        {service && (
+          <div className="mt-4 space-y-2">
+            <p role="status">
+              {availabilityText(
+                service,
+                locale,
+                service.averageWaitMinutes ?? null,
+              )}
+            </p>
+            <p>
+              {visualWaitingPeople(service)}{' '}
+              {locale === 'es'
+                ? 'personas en lista de espera'
+                : 'people waiting'}
+            </p>
+          </div>
+        )}
+        {error && (
+          <button onClick={() => void refresh()}>
+            {locale === 'es' ? 'Reintentar' : 'Retry'}
+          </button>
         )}
       </CardContent>
     </Card>

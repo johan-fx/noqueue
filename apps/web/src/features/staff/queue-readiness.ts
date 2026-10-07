@@ -15,6 +15,7 @@ export const readinessMessages: Record<
 
 export function readinessNotice(service: {
   open: number
+  queueState?: 'active' | 'inactive' | 'paused'
   inventoryConfirmed?: boolean
   readiness?: QueueReadiness
 }) {
@@ -23,13 +24,17 @@ export function readinessNotice(service: {
   const needsInventory = !service.inventoryConfirmed && !missing
   return {
     title:
-      needsInventory && service.open
+      service.readiness?.state === 'disabled'
+        ? 'Desactivada manualmente'
+        : service.readiness?.state === 'active'
+        ? 'Gestión inteligente activa'
+        : needsInventory && service.queueState === 'active'
         ? 'Confirma la ocupación'
         : 'Gestión inteligente pendiente',
     messages: [
-      ...(needsInventory && service.open
+      ...(needsInventory && service.queueState === 'active'
         ? [
-            'La cola está abierta, pero todavía no sabemos cuántas mesas están ocupadas.',
+            'La lista está abierta, pero todavía no sabemos cuántas mesas están ocupadas.',
           ]
         : []),
       ...reasons
@@ -37,7 +42,7 @@ export function readinessNotice(service: {
           (reason) =>
             !(
               needsInventory &&
-              service.open &&
+              service.queueState === 'active' &&
               reason === 'inventory_required'
             ),
         )
@@ -49,17 +54,18 @@ export function readinessNotice(service: {
 /** Retained holds remain correctable while closed; correction never confirms a fresh inventory. */
 export function occupancyAction(service: {
   open: number
+  queueState?: 'active' | 'inactive' | 'paused'
   inventoryConfirmed?: boolean
   readiness?: QueueReadiness
 }) {
   if (
     service.inventoryConfirmed ||
-    (!service.open &&
+    (service.queueState !== 'active' &&
       service.readiness?.reasons.includes('inventory_refresh_required'))
   )
     return 'occupancy' as const
   if (
-    service.open &&
+    service.queueState === 'active' &&
     !service.readiness?.reasons.includes('configuration_missing')
   )
     return 'confirm_inventory' as const

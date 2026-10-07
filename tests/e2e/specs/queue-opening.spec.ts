@@ -1,11 +1,13 @@
 import { resolveFixtureLocation } from '../helpers/location.js'
 import { test, expect } from '@playwright/test'
-test('mobile opening inventory, keyboard tabs, occupied release, and closing confirmation', async ({
+test('mobile full declaration, quick release, pause, nested advanced keyboard tabs and desktop layout', async ({
   page,
   request,
   baseURL,
 }, testInfo) => {
-  test.setTimeout(60000)
+  test.setTimeout(90000)
+  const serviceName =
+    'Restaurante EH Hotel Madrid · Terraza e interior para familias y grupos de visitantes'
   await page.setViewportSize({ width: 360, height: 844 })
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 16)
   const password = 'test-opening-password-long',
@@ -44,7 +46,7 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
       ownerPassword: password,
       services: [
         {
-          name: 'Restaurante',
+          name: serviceName,
           type: 'restaurant',
           capacity: 30,
           averageMinutes: 30,
@@ -73,156 +75,249 @@ test('mobile opening inventory, keyboard tabs, occupied release, and closing con
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { venueId } = (await created.json()) as { venueId: string }
-  expect(
-    (
-      await request.post('/api/v1/experiments/local/staff/legacy-open', {
-        headers: pilot,
-        data: { venueId },
-      })
-    ).ok(),
-  ).toBeTruthy()
   await page.goto('/login')
   await page.getByLabel('Usuario o email').fill(owner)
   await page.getByLabel('Contraseña', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Entrar', exact: true }).click()
-  const toggle = page.getByRole('switch', { name: 'Abrir cola' })
-  await expect(toggle).toBeVisible()
-  await expect(toggle).toBeChecked()
-  const initialCTA = page
-    .getByRole('alert')
-    .getByRole('button', { name: 'Confirmar ocupación', exact: true })
-  await expect(initialCTA).toBeInViewport()
-  const ctaBox = await initialCTA.boundingBox()
-  expect(ctaBox!.x).toBeGreaterThanOrEqual(0)
-  expect(ctaBox!.x + ctaBox!.width).toBeLessThanOrEqual(360)
-  await page.screenshot({
-    path: testInfo.outputPath('queue-card-mobile.png'),
-  })
-  await initialCTA.click()
-  const initial = page.getByRole('dialog', {
-    name: 'Confirmar ocupación · Restaurante',
-  })
-  await expect(initial).toHaveAttribute('data-side', 'bottom')
-  await expect(
-    initial.getByRole('button', { name: 'Confirmar ocupación', exact: true }),
-  ).toBeDisabled()
-  await initial
-    .getByRole('button', { name: 'Todas las mesas restantes están libres' })
-    .click()
-  await initial
-    .getByRole('button', { name: 'Confirmar ocupación', exact: true })
-    .click()
-  await expect(toggle).toBeChecked()
-  await expect(page.getByText('Gestión inteligente activa')).toBeVisible()
-  const queueDrawer = page.getByRole('dialog', {
-    name: 'Gestionar cola',
+  const card = page.getByRole('article', {
+    name: `Servicio ${serviceName}`,
     exact: true,
   })
-  const menuTrigger = queueDrawer.getByRole('button', {
-    name: 'Opciones de la cola',
+  const activate = card.getByRole('switch', {
+    name: 'Activar lista',
+    exact: true,
   })
-  async function operation(label: string) {
-    if (!(await queueDrawer.isVisible()))
-      await page
-        .getByRole('button', { name: 'Gestionar cola', exact: true })
-        .click()
-    await menuTrigger.click()
-    await expect(page.getByRole('menu')).toBeInViewport()
-    const menuBox = await page.getByRole('menu').boundingBox()
-    expect(menuBox!.x).toBeGreaterThanOrEqual(0)
-    expect(menuBox!.x + menuBox!.width).toBeLessThanOrEqual(360)
-    await page.getByRole('menuitem', { name: label, exact: true }).click()
-    return page.getByRole('dialog', {
-      name: label + ' · Restaurante',
+  await expect(activate).toBeInViewport()
+  await expect(
+    card.getByText('Servicio abierto', { exact: true }),
+  ).toBeVisible()
+  await expect(card.getByText('Lista inactiva', { exact: true })).toBeVisible()
+  await expect(
+    card.getByText('Actívala cuando el restaurante esté lleno.'),
+  ).toBeVisible()
+  await expect(page.getByRole('spinbutton')).toHaveCount(0)
+  await expect(card.locator('dd').first()).toHaveText('0')
+  await expect(card.locator('img')).toHaveCount(2)
+  for (const asset of await card.locator('img').all()) {
+    expect(
+      await asset.evaluate((element) => {
+        const box = element.getBoundingClientRect()
+        return [box.width, box.height]
+      }),
+    ).toEqual([16, 16])
+  }
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('service-card-mobile.png'),
+  })
+  await activate.click()
+  await expect(card.getByText('Lista activa', { exact: true })).toBeVisible()
+  const gear = card.getByRole('button', {
+    name: 'Opciones del servicio',
+    exact: true,
+  })
+  await gear.focus()
+  await page.keyboard.press('Enter')
+  await page.getByRole('menuitem', { name: 'Mesa libre', exact: true }).click()
+  let sheet = page.getByRole('dialog', {
+    name: `Mesa libre · ${serviceName}`,
+    exact: true,
+  })
+  const queues = (await (
+    await page.request.get(`/api/v1/staff/venues/${venueId}/queues`)
+  ).json()) as { id: string }[]
+  const queueId = queues[0]!.id
+  const context = async () =>
+    (await (
+      await page.request.get(`/api/v1/staff/queues/${queueId}/opening-context`)
+    ).json()) as { groups: { spaceId: string; occupied: number }[] }
+  expect((await context()).groups.map((g) => g.occupied)).toEqual([2, 1])
+  await sheet
+    .getByLabel('Grupo de mesas')
+    .selectOption({ label: 'Terraza · 4 plazas' })
+  await sheet
+    .getByRole('button', { name: 'Liberar una mesa', exact: true })
+    .click()
+  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 1])
+  await expect(gear).toBeFocused()
+  const added = await page.request.post(
+    `/api/v1/public/services/${queueId}/entries`,
+    {
+      headers: { Origin: baseURL!, 'Idempotency-Key': crypto.randomUUID() },
+      data: {
+        displayName: 'Card guest',
+        partySize: 4,
+        preferredSpaceId: 'fastest',
+        locale: 'es',
+      },
+    },
+  )
+  expect(added.status(), await added.text()).toBe(201)
+  const pending = (await added.json()) as { recoveryToken: string }
+  const close = card.getByRole('switch', { name: 'Cerrar lista', exact: true })
+  let closingRequests = 0
+  page.on('request', (req) => {
+    if (req.method() === 'POST' && req.url().endsWith(`/${queueId}/lifecycle`))
+      closingRequests++
+  })
+  await close.click()
+  const confirmation = page.getByRole('alertdialog', {
+    name: 'Vas a cerrar la lista',
+    exact: true,
+  })
+  await expect(
+    confirmation.getByText(
+      'Se deshabilitará la opción de añadir nuevos turnos y los clientes no podrán inscribirse. Los turnos existentes se conservarán y podrán seguir atendiéndose.',
+    ),
+  ).toBeVisible()
+  await expect(
+    confirmation.getByText('Esta acción no se puede deshacer'),
+  ).toHaveCount(0)
+  await expect(
+    confirmation.getByRole('button', { name: 'Cerrar lista', exact: true }),
+  ).toHaveCSS('color', 'rgb(255, 255, 255)')
+  await expect
+    .poll(() =>
+      confirmation.locator('img').evaluate((element) => {
+        const box = element.getBoundingClientRect()
+        return [box.width, box.height]
+      }),
+    )
+    .toEqual([16, 16])
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('service-card-confirm-mobile.png'),
+  })
+  await confirmation
+    .getByRole('button', { name: 'Cancelar', exact: true })
+    .click()
+  await expect(close).toBeFocused()
+  expect(closingRequests).toBe(0)
+  await expect(close).toBeChecked()
+  await close.click()
+  await confirmation
+    .getByRole('button', { name: 'Cerrar lista', exact: true })
+    .click()
+  await expect(card.getByText('Lista pausada', { exact: true })).toBeVisible()
+  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 1])
+  const retained = await page.request.get(
+    `/api/v1/public/entries/${pending.recoveryToken}`,
+  )
+  expect((await retained.json()).status).toBe('waiting')
+  await expect(card.locator('dd').first()).toHaveText('1')
+  await card
+    .getByRole('switch', { name: 'Reanudar lista', exact: true })
+    .click()
+  await expect(card.getByText('Lista activa', { exact: true })).toBeVisible()
+  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 1])
+  const advancedTrigger = gear
+  await advancedTrigger.click()
+  await page
+    .getByRole('menuitem', { name: 'Configuración avanzada', exact: true })
+    .click()
+  const advanced = page.getByRole('dialog', {
+    name: 'Configuración avanzada',
+    exact: true,
+  })
+  await expect(advanced).toHaveAttribute('data-swipe-direction', 'right')
+  const policy = advanced.getByRole('button', {
+    name: 'Desactivar gestión inteligente',
+    exact: true,
+  })
+  await policy.click()
+  sheet = page.getByRole('dialog', {
+    name: `Desactivar gestión inteligente · ${serviceName}`,
+    exact: true,
+  })
+  await page.keyboard.press('Escape')
+  await expect(policy).toBeFocused()
+  await policy.click()
+  await page
+    .getByRole('dialog', {
+      name: `Desactivar gestión inteligente · ${serviceName}`,
       exact: true,
     })
-  }
-  let policy = await operation('Desactivar gestión inteligente')
-  await expect(policy).toHaveAttribute('data-side', 'bottom')
-  await page.keyboard.press('Escape')
-  await expect(queueDrawer).toBeVisible()
-  await expect(menuTrigger).toBeFocused()
-  policy = await operation('Desactivar gestión inteligente')
-  await policy
     .getByRole('button', {
       name: 'Desactivar gestión inteligente',
       exact: true,
     })
     .click()
-  await expect(menuTrigger).toBeFocused()
-  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
-  await expect(toggle).toBeChecked()
-  await expect(page.getByText('Desactivada manualmente')).toBeVisible()
-  await page.reload()
-  await expect(page.getByText('Desactivada manualmente')).toBeVisible()
-  policy = await operation('Volver a gestión automática')
-  await policy
+  await expect(
+    advanced.getByText('Desactivada manualmente', { exact: true }),
+  ).toBeVisible()
+  await advanced
     .getByRole('button', { name: 'Volver a gestión automática', exact: true })
     .click()
-  await expect(menuTrigger).toBeFocused()
-  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
-  await expect(page.getByText('Gestión inteligente activa')).toBeVisible()
-
-  await toggle.click()
   await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Cerrar cola', exact: true })
+    .getByRole('dialog', {
+      name: `Volver a gestión automática · ${serviceName}`,
+      exact: true,
+    })
+    .getByRole('button', { name: 'Volver a gestión automática', exact: true })
     .click()
-  await expect(toggle).not.toBeChecked()
-  await toggle.click()
-  let sheet = page.getByRole('dialog', { name: 'Abrir cola · Restaurante' })
-  await expect(sheet).toHaveAttribute('data-side', 'bottom')
-  await sheet.getByRole('button', { name: 'Cancelar' }).click()
-  await expect(toggle).not.toBeChecked()
-  await expect(toggle).toBeFocused()
-  await toggle.click()
-  sheet = page.getByRole('dialog', { name: 'Abrir cola · Restaurante' })
-  await sheet.getByRole('button', { name: 'Mesas de 4', exact: true }).click()
-  await sheet
-    .getByLabel('Terraza · 4 plazas ocupadas fuera de la cola')
-    .fill('1')
-  await expect(
-    sheet.getByRole('button', { name: 'Abrir cola', exact: true }),
-  ).toBeDisabled()
-  const terraceTab = sheet.getByRole('tab', { name: 'Terraza' })
-  await terraceTab.focus()
+  await advanced
+    .getByRole('button', {
+      name: 'Desglose y correcciones de ocupación',
+      exact: true,
+    })
+    .click()
+  sheet = page.getByRole('dialog', {
+    name: `Actualizar ocupación · ${serviceName}`,
+    exact: true,
+  })
+  const terrace = sheet.getByRole('tab', { name: 'Terraza' })
+  await terrace.focus()
   await page.keyboard.press('ArrowRight')
   await expect(sheet.getByRole('tab', { name: 'Salón' })).toBeFocused()
   await page.keyboard.press('Enter')
-  await sheet.getByRole('button', { name: 'Mesas de 4', exact: true }).focus()
-  await page.keyboard.press('Enter')
-  await sheet.getByLabel('Salón · 4 plazas ocupadas fuera de la cola').fill('0')
-  await expect(
-    sheet.getByRole('button', { name: 'Abrir cola', exact: true }),
-  ).toBeInViewport()
-  await page.screenshot({
-    path: testInfo.outputPath('queue-opening-mobile.png'),
-  })
-  await sheet.getByRole('button', { name: 'Abrir cola', exact: true }).click()
-  await expect(toggle).toBeChecked()
-  await expect(page.getByText('Gestión inteligente activa')).toBeVisible()
-  sheet = await operation('Actualizar ocupación')
-  await sheet.getByRole('button', { name: 'Mesas de 4', exact: true }).click()
-  await expect(
-    sheet.getByLabel('Terraza · 4 plazas ocupadas fuera de la cola'),
-  ).toHaveValue('1')
-  await sheet.getByRole('button', { name: 'Liberar uno' }).click()
-  await sheet.getByRole('button', { name: 'Guardar cambio' }).click()
-  await expect(sheet).toHaveCount(0)
-  await expect(queueDrawer).toBeVisible()
-  await expect(menuTrigger).toBeFocused()
-  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
-  await toggle.click()
-  sheet = page.getByRole('dialog', { name: 'Cerrar cola · Restaurante' })
-  await expect(
-    sheet.getByText(/Los turnos existentes permanecen/),
-  ).toBeVisible()
-  await sheet.getByRole('button', { name: 'Cancelar' }).click()
-  await expect(toggle).toBeChecked()
-  await toggle.click()
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Cerrar cola', exact: true })
+  await sheet
+    .getByRole('tabpanel', { name: 'Salón', exact: true })
+    .getByRole('button', { name: 'Mesas de 4', exact: true })
     .click()
-  await expect(toggle).not.toBeChecked()
+  await expect(
+    sheet.getByLabel('Salón · 4 plazas ocupadas fuera de la lista'),
+  ).toHaveValue('1')
+  await sheet
+    .getByRole('tabpanel', { name: 'Salón', exact: true })
+    .getByRole('button', { name: 'Liberar uno', exact: true })
+    .click()
+  await sheet
+    .getByRole('button', { name: 'Guardar cambio', exact: true })
+    .click()
+  await expect(sheet).toHaveCount(0)
+  await expect(
+    advanced.getByRole('button', {
+      name: 'Desglose y correcciones de ocupación',
+      exact: true,
+    }),
+  ).toBeFocused()
+  await advanced.getByRole('button', { name: 'Atrás', exact: true }).click()
+  await expect(advancedTrigger).toBeFocused()
+  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 0])
+  await expect(card.getByRole('button', { name: 'Ver lista' })).toBeEnabled()
+  await page.setViewportSize({ width: 1280, height: 900 })
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true)
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('service-card-desktop.png'),
+  })
+  await card.getByRole('switch', { name: 'Cerrar lista', exact: true }).click()
+  await expect(confirmation).toBeVisible()
+  await page.screenshot({
+    animations: 'disabled',
+    path: testInfo.outputPath('service-card-confirm-desktop.png'),
+  })
+  await page
+    .getByRole('alertdialog')
+    .getByRole('button', { name: 'Cancelar', exact: true })
+    .click()
 })

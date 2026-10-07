@@ -3,7 +3,7 @@ import { publicService } from './public-context'
 import { normalizeConfig, recalculateQueue, readProjection } from './projection'
 import { serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
-import { serviceAcceptsEntries } from '../staff/availability'
+import { admissionState } from '../staff/availability'
 import {
   entrySchema,
   type JoinQueue,
@@ -254,6 +254,15 @@ export async function joinQueue(
         !config.receptionServices.includes(input.receptionService))
     )
       return { status: 400, body: { error: 'invalid_reception_service' } }
+    if (
+      config.type === 'restaurant' &&
+      !config.spaces.some((space) =>
+        space.tableTypes?.some(
+          (type) => type.count > 0 && type.seats >= input.partySize,
+        ),
+      )
+    )
+      return { status: 400, body: { error: 'invalid_party_size' } }
     if (input.preferredSpaceId) {
       const spaces =
         input.preferredSpaceId === 'fastest'
@@ -273,13 +282,13 @@ export async function joinQueue(
     }
     if (
       queue.tenant_status !== 'active' ||
-      !serviceAcceptsEntries(config, queue.timezone) ||
+      !(await admissionState(env, queueId))?.canJoin ||
       (config.type === 'pool' &&
         queue.waiting_people + input.partySize > queue.capacity)
     )
       return { status: 409, body: { error: 'queue_unavailable' } }
   }
-  if (!queue.open || queue.waiting >= queue.capacity)
+  if ((!queue.config && !queue.open) || queue.waiting >= queue.capacity)
     return { status: 409, body: { error: 'queue_unavailable' } }
   const id = crypto.randomUUID(),
     now = Date.now(),

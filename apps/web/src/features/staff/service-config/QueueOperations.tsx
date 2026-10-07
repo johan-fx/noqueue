@@ -146,9 +146,7 @@ export function QueueOperations({
                         type="datetime-local"
                         value={new Date(
                           adjustment.expiresAt -
-                            new Date(
-                              adjustment.expiresAt,
-                            ).getTimezoneOffset() *
+                            new Date(adjustment.expiresAt).getTimezoneOffset() *
                               60000,
                         )
                           .toISOString()
@@ -199,7 +197,7 @@ export function QueueOperations({
         })}
       </section>
       <p className="text-sm text-muted-foreground">
-        La capacidad de la cola limita las admisiones, no los recursos en
+        La capacidad de la lista limita las admisiones, no los recursos en
         servicio.
       </p>
     </div>

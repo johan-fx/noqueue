@@ -231,7 +231,7 @@ test('venue edit autocomplete preserves the stored address until explicit save a
       animations: 'disabled',
     })
     await expect(
-      owner.getByRole('button', { name: 'Configurar servicio' }),
+      owner.getByRole('button', { name: 'Opciones del servicio' }),
     ).toBeVisible()
     const location = await owner.request.get(
       '/api/v1/staff/venues/' + venueId + '/location',

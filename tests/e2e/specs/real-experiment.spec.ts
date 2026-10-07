@@ -22,7 +22,7 @@ test('real experiment page drives queue, confirmation, position updates and BAJA
   })
   await page.goto('/api/v1/experiments/confirmation')
   await expect(
-    page.getByRole('heading', { name: 'Prueba la cola, de principio a fin.' }),
+    page.getByRole('heading', { name: 'Prueba la lista, de principio a fin.' }),
   ).toBeVisible()
   await expect(page.locator('#panel')).toBeHidden()
   expect(mutationRequests).toHaveLength(0)
@@ -124,8 +124,18 @@ test('real experiment page drives queue, confirmation, position updates and BAJA
   })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(page.locator('body')).toHaveJSProperty('scrollWidth', 390)
-  const mobileSteps = await page.locator('.workspace section .step-number').evaluateAll(elements=>elements.map(element=>({step:Number(element.textContent),top:element.getBoundingClientRect().top})).sort((a,b)=>a.top-b.top).map(value=>value.step))
-  expect(mobileSteps).toEqual([1,2,3,4])
+  const mobileSteps = await page
+    .locator('.workspace section .step-number')
+    .evaluateAll((elements) =>
+      elements
+        .map((element) => ({
+          step: Number(element.textContent),
+          top: element.getBoundingClientRect().top,
+        }))
+        .sort((a, b) => a.top - b.top)
+        .map((value) => value.step),
+    )
+  expect(mobileSteps).toEqual([1, 2, 3, 4])
   await page.screenshot({
     path: '../../apps/api/.wrangler/ui-evidence/after-mobile.png',
     fullPage: true,

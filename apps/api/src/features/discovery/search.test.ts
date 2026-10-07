@@ -1,3 +1,5 @@
+import { serviceWindow } from '../staff/availability'
+import { serviceSchema } from '@noqueue/contracts/staff'
 import { directoryConfigStatement } from './configuration'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
@@ -63,6 +65,20 @@ async function fixture(latitude = 40.416, longitude = -3.704, complete = true) {
       ).bind(id, venue, `${prefix} ${name}`, open ? 1 : 0, source),
       directoryConfigStatement(env, id, source),
     ])
+    await env.DB.prepare(
+      'INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,?,?,?)',
+    )
+      .bind(
+        id,
+        serviceWindow(
+          serviceSchema.parse(JSON.parse(source)),
+          'Europe/Madrid',
+          new Date(now),
+        ).windowId,
+        open ? 'active' : 'paused',
+        now,
+      )
+      .run()
     if (wait !== null)
       await env.DB.batch([
         env.DB.prepare(
@@ -275,6 +291,12 @@ it('bounds anonymous request origin and rate, sends no-cache headers and no inte
   for (const row of result.items)
     expect(Object.keys(row).sort()).toEqual(
       [
+        'serviceOpen',
+        'queueState',
+        'canJoin',
+        'blockReason',
+        'waitingPeople',
+        'initialWaitingMarker',
         'address',
         'attribution',
         'distanceMeters',
@@ -310,4 +332,27 @@ it('does not silently expand the exact 5km radius', async () => {
   })
   expect(result.items.some((i) => i.id === a)).toBe(true)
   expect(result.items.some((i) => i.id === b)).toBe(false)
+})
+it('resolves discovery with physical opening, direct access, marker and automatic pool admission', async () => {
+  const f = await fixture()
+  const restaurant = await f.service('Direct')
+  const pool = await f.service('Pool', null, false, false, 'pool')
+  await env.DB.prepare('DELETE FROM queue_admission WHERE queue_id IN (?,?)')
+    .bind(restaurant, pool)
+    .run()
+  const result = await search({ text: f.prefix })
+  expect(result.items.find((i) => i.id === restaurant)).toMatchObject({
+    serviceOpen: true,
+    queueState: 'inactive',
+    canJoin: false,
+    waitMinutes: 0,
+  })
+  expect(result.items.find((i) => i.id === pool)).toMatchObject({
+    serviceOpen: true,
+    queueState: 'active',
+    canJoin: true,
+    initialWaitingMarker: true,
+    waitingPeople: 0,
+    waitMinutes: null,
+  })
 })

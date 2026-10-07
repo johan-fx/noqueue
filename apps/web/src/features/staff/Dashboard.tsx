@@ -1,8 +1,9 @@
+import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
+import { ServiceCard } from './ServiceCard'
 import { VenueLocationEditor } from './VenueLocationEditor'
 import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
 import { entryActions, receptionLabels } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
-import { readinessNotice, occupancyAction } from './queue-readiness'
 import { useEffect, useState, useRef } from 'react'
 import type {
   Capability,
@@ -20,7 +21,6 @@ import {
   CardContent,
   CardAction,
   CardDescription,
-  CardFooter,
 } from '@/components/ui/card'
 import {
   DropdownMenu,
@@ -29,10 +29,6 @@ import {
   DropdownMenuItem,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
-import { Label } from '@/components/ui/label'
-import { Switch } from '@/components/ui/switch'
 import {
   Sheet,
   SheetContent,
@@ -50,14 +46,7 @@ import {
   DrawerFooter,
   DrawerClose,
 } from '@/components/ui/drawer'
-import {
-  Plus,
-  MoveRight,
-  UsersIcon,
-  Info,
-  ChevronLeft,
-  Ellipsis,
-} from 'lucide-react'
+import { Plus, MoveRight, UsersIcon, ChevronLeft, Ellipsis } from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, ApiError, errorMessage } from './api'
 import { MembersDrawer } from './MembersDrawer'
@@ -78,6 +67,14 @@ export function Dashboard(props: DashboardProps) {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const savingRef = useRef(false)
+  const refreshSequence = useRef(0)
+  const refreshReaders = useRef(0)
+  const refreshPaused = useRef(false)
+  function cardBusy(value: boolean) {
+    refreshPaused.current = value
+    if (value) refreshSequence.current++
+    setBusy(value)
+  }
   const menuTrigger = useRef<HTMLButtonElement | null>(null)
   const drawerTrigger = useRef<HTMLButtonElement | null>(null)
   function openDrawer(
@@ -92,9 +89,17 @@ export function Dashboard(props: DashboardProps) {
     setDrawer(mode)
   }
   function closeDrawer() {
-    if (!savingRef.current && !busy && !lifecycle && !pending && !adding)
+    if (
+      !savingRef.current &&
+      !busy &&
+      !lifecycle &&
+      !pending &&
+      !adding &&
+      !advanced
+    )
       setDrawer(null)
   }
+  const [waitingCounts, setWaitingCounts] = useState<Record<string, number>>({})
   const [queues, setQueues] = useState<QueueSummary[]>([]),
     [selected, setSelected] = useState(''),
     [entries, setEntries] = useState<StaffEntry[]>([]),
@@ -102,6 +107,11 @@ export function Dashboard(props: DashboardProps) {
     [tab, setTab] = useState('active'),
     [busy, setBusy] = useState(false),
     [lastSync, setLastSync] = useState('')
+  const [advanced, setAdvanced] = useState<{
+    queueId: string
+    trigger: HTMLElement | null
+    insideDrawer?: boolean
+  } | null>(null)
   const [lifecycle, setLifecycle] = useState<{
     queueId: string
     insideDrawer?: boolean
@@ -112,6 +122,10 @@ export function Dashboard(props: DashboardProps) {
       | 'confirm_inventory'
       | 'disable_intelligence'
       | 'enable_intelligence'
+      | 'declare_full'
+      | 'pause'
+      | 'resume'
+      | 'release_unit'
     trigger: HTMLElement | null
   } | null>(null)
   const [adding, setAdding] = useState<{
@@ -134,7 +148,8 @@ export function Dashboard(props: DashboardProps) {
     props.mode === 'commercial'
       ? ['queue.read', 'queue.configure', 'members.manage']
       : roleCapabilities[props.venue.role]
-  const queueLabel = props.mode === 'commercial' ? 'Ver cola' : 'Gestionar cola'
+  const queueLabel =
+    props.mode === 'commercial' ? 'Ver lista' : 'Gestionar lista'
   const queue = queues.find((q) => q.id === selected)
   useEffect(() => {
     let live = true
@@ -159,18 +174,37 @@ export function Dashboard(props: DashboardProps) {
     if (!selected) return
     let live = true
     async function refresh() {
+      if (refreshPaused.current || refreshReaders.current) return
+      const sequence = ++refreshSequence.current
+      refreshReaders.current++
       try {
         const rows = await api<StaffEntry[]>(`/queues/${selected}/entries`)
         const summaries = await api<QueueSummary[]>(
           `/venues/${venue.id}/queues`,
         )
-        if (live) {
+        const counts = await Promise.all(
+          summaries.map(async (summary) => {
+            const waiting =
+              summary.id === selected
+                ? rows
+                : await api<StaffEntry[]>(`/queues/${summary.id}/entries`)
+            return [
+              summary.id,
+              waiting.filter((entry) => entry.status === 'waiting').length,
+            ] as const
+          }),
+        )
+        if (live && sequence === refreshSequence.current) {
+          setWaitingCounts(Object.fromEntries(counts))
           setQueues(summaries)
           setEntries(rows)
           setLastSync(new Date().toLocaleTimeString())
         }
       } catch (e) {
-        if (live) setError(errorMessage(e))
+        if (live && sequence === refreshSequence.current)
+          setError(errorMessage(e))
+      } finally {
+        refreshReaders.current--
       }
     }
     void refresh()
@@ -181,12 +215,33 @@ export function Dashboard(props: DashboardProps) {
     }
   }, [selected, venue.id])
   async function refresh() {
-    const [rows, qs] = await Promise.all([
-      api<StaffEntry[]>(`/queues/${selected}/entries`),
-      api<QueueSummary[]>(`/venues/${venue.id}/queues`),
-    ])
-    setEntries(rows)
-    setQueues(qs)
+    const sequence = ++refreshSequence.current
+    refreshReaders.current++
+    try {
+      const [rows, qs] = await Promise.all([
+        api<StaffEntry[]>(`/queues/${selected}/entries`),
+        api<QueueSummary[]>(`/venues/${venue.id}/queues`),
+      ])
+      const counts = await Promise.all(
+        qs.map(
+          async (summary) =>
+            [
+              summary.id,
+              (summary.id === selected
+                ? rows
+                : await api<StaffEntry[]>(`/queues/${summary.id}/entries`)
+              ).filter((entry) => entry.status === 'waiting').length,
+            ] as const,
+        ),
+      )
+      if (sequence !== refreshSequence.current) return
+      setWaitingCounts(Object.fromEntries(counts))
+      setEntries(rows)
+      setQueues(qs)
+      setError('')
+    } finally {
+      refreshReaders.current--
+    }
   }
   async function refreshQueues() {
     try {
@@ -393,7 +448,7 @@ export function Dashboard(props: DashboardProps) {
               <h2 className="text-xl font-semibold">Servicios</h2>
             </CardTitle>
             <CardDescription>
-              Selecciona un servicio para gestionar su cola.
+              Selecciona un servicio para gestionar su lista.
             </CardDescription>
             {permissions.includes('queue.configure') && (
               <CardAction>
@@ -411,170 +466,51 @@ export function Dashboard(props: DashboardProps) {
               <div className="flex flex-col pb-4">
                 <div className="grid gap-4 sm:grid-cols-1 xl:grid-cols-2">
                   {queues.map((service) => (
-                    <Card
+                    <ServiceCard
                       key={service.id}
-                      role="article"
-                      aria-label={'Servicio ' + service.name}
-                      size="sm"
-                      className={
-                        selected === service.id
-                          ? 'ring-1 ring-primary'
-                          : undefined
+                      service={service}
+                      permissions={permissions}
+                      waitingCount={waitingCounts[service.id]}
+                      disabled={
+                        busy ||
+                        saving ||
+                        !!lifecycle ||
+                        !!advanced ||
+                        !!pending ||
+                        !!adding ||
+                        !!drawer
                       }
-                    >
-                      <CardHeader>
-                        <CardTitle className="flex w-full items-center justify-between gap-2">
-                          <span className="flex min-w-0 flex-wrap items-center gap-2">
-                            {service.name}
-                            <Badge
-                              variant={service.open ? 'default' : 'secondary'}
-                            >
-                              {service.open
-                                ? 'Cola habilitada'
-                                : 'Cola deshabilitada'}
-                            </Badge>
-                            {service.outsideSchedule && (
-                              <Badge variant="secondary">
-                                Fuera de horario
-                              </Badge>
-                            )}
-                          </span>
-                          {permissions.includes('queue.operate') && (
-                            <Label
-                              htmlFor={`queue-open-${service.id}`}
-                              className="shrink-0 font-normal"
-                            >
-                              Abrir cola
-                              <Switch
-                                id={`queue-open-${service.id}`}
-                                size="sm"
-                                checked={!!service.open}
-                                disabled={saving}
-                                onCheckedChange={() =>
-                                  setLifecycle({
-                                    queueId: service.id,
-                                    action: service.open ? 'close' : 'open',
-                                    trigger:
-                                      document.activeElement as HTMLElement,
-                                  })
-                                }
-                              />
-                            </Label>
-                          )}
-                        </CardTitle>
-                        <CardDescription>
-                          {
-                            {
-                              restaurant: 'Restaurante',
-                              pool: 'Piscina',
-                              reception: 'Recepción',
-                            }[service.config.type]
-                          }
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        {(service.readiness?.state === 'pending' ||
-                          occupancyAction(service) === 'confirm_inventory') && (
-                          <Alert className="mb-3">
-                            <Info aria-hidden="true" />
-                            <AlertTitle>
-                              {readinessNotice(service).title}
-                            </AlertTitle>
-                            <AlertDescription>
-                              <ul>
-                                {readinessNotice(service).messages.map(
-                                  (message) => (
-                                    <li
-                                      key={message}
-                                      className="text-muted-foreground list-disc"
-                                    >
-                                      {message}
-                                    </li>
-                                  ),
-                                )}
-                              </ul>
-                              {permissions.includes('queue.operate') &&
-                                occupancyAction(service) ===
-                                  'confirm_inventory' && (
-                                  <Button
-                                    className="mt-2 w-full whitespace-normal sm:w-auto"
-                                    variant="outline"
-                                    disabled={saving || busy || !!lifecycle}
-                                    onClick={(event) =>
-                                      setLifecycle({
-                                        queueId: service.id,
-                                        action: 'confirm_inventory',
-                                        trigger: event.currentTarget,
-                                      })
-                                    }
-                                  >
-                                    Confirmar ocupación
-                                  </Button>
-                                )}
-                            </AlertDescription>
-                          </Alert>
-                        )}
-                        {service.readiness?.state === 'disabled' && (
-                          <p className="mb-3 text-sm font-medium" role="status">
-                            Desactivada manualmente
-                          </p>
-                        )}
-                        {service.readiness?.state === 'active' && (
-                          <p className="mb-3 text-sm font-medium" role="status">
-                            Gestión inteligente activa
-                          </p>
-                        )}
-                        <dl className="grid grid-cols-2 gap-3 text-sm">
-                          <div>
-                            <dt className="text-muted-foreground">Capacidad</dt>
-                            <dd className="font-medium">{service.capacity}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-muted-foreground">
-                              Duración media
-                            </dt>
-                            <dd className="font-medium">
-                              {service.averageMinutes} min
-                            </dd>
-                          </div>
-                        </dl>
-                      </CardContent>
-                      <CardFooter className="flex flex-col gap-2 sm:flex-row">
-                        <Button
-                          className="w-full sm:w-auto"
-                          variant="outline"
-                          aria-pressed={selected === service.id}
-                          onClick={(event) => {
-                            if (selected !== service.id) {
-                              setEntries([])
-                              setLastSync('')
-                            }
-                            setSelected(service.id)
-                            setPending(null)
-                            openDrawer('queue', event.currentTarget)
-                          }}
-                        >
-                          {queueLabel}
-                        </Button>
-                        {permissions.includes('queue.configure') && (
-                          <Button
-                            className="w-full sm:w-auto"
-                            variant="outline"
-                            onClick={(event) => {
-                              if (selected !== service.id) {
-                                setEntries([])
-                                setLastSync('')
-                              }
-                              setSelected(service.id)
-                              setPending(null)
-                              openDrawer('edit', event.currentTarget)
-                            }}
-                          >
-                            Configurar servicio
-                          </Button>
-                        )}
-                      </CardFooter>
-                    </Card>
+                      onBusyChange={cardBusy}
+                      onSaved={refresh}
+                      onView={(trigger) => {
+                        if (selected !== service.id) {
+                          setEntries([])
+                          setLastSync('')
+                        }
+                        setSelected(service.id)
+                        setPending(null)
+                        openDrawer('queue', trigger)
+                      }}
+                      onConfigure={(trigger) => {
+                        if (selected !== service.id) {
+                          setEntries([])
+                          setLastSync('')
+                        }
+                        setSelected(service.id)
+                        setPending(null)
+                        openDrawer('edit', trigger)
+                      }}
+                      onAdvanced={(trigger) =>
+                        setAdvanced({ queueId: service.id, trigger })
+                      }
+                      onFree={(trigger) =>
+                        setLifecycle({
+                          queueId: service.id,
+                          action: 'release_unit',
+                          trigger,
+                        })
+                      }
+                    />
                   ))}
                 </div>
               </div>
@@ -596,6 +532,18 @@ export function Dashboard(props: DashboardProps) {
           </Button>
         </div>
       )}
+      {advanced &&
+        !advanced.insideDrawer &&
+        queues.find((q) => q.id === advanced.queueId) && (
+          <QueueAdvancedDrawer
+            queue={queues.find((q) => q.id === advanced.queueId)!}
+            canOperate={permissions.includes('queue.operate')}
+            canConfigure={permissions.includes('queue.configure')}
+            returnFocus={advanced.trigger}
+            onClose={() => setAdvanced(null)}
+            onSaved={refresh}
+          />
+        )}
       <ServiceConfigDrawer
         resetKey={drawer === 'edit' ? queue?.id ?? 'edit' : 'create'}
         open={drawer === 'create' || drawer === 'edit'}
@@ -627,6 +575,16 @@ export function Dashboard(props: DashboardProps) {
           finalFocus={drawerTrigger}
           className="w-full sm:w-[48rem] sm:max-w-[calc(100vw-2rem)]"
         >
+          {advanced?.insideDrawer && queue && (
+            <QueueAdvancedDrawer
+              queue={queue}
+              canOperate={permissions.includes('queue.operate')}
+              canConfigure={permissions.includes('queue.configure')}
+              returnFocus={advanced.trigger}
+              onClose={() => setAdvanced(null)}
+              onSaved={refresh}
+            />
+          )}
           <DrawerHeader className="border-b p-6">
             <div className="flex items-center gap-3">
               {drawer === 'queue' && (
@@ -636,7 +594,7 @@ export function Dashboard(props: DashboardProps) {
                       variant="ghost"
                       size="icon"
                       aria-label="Volver"
-                      disabled={saving || busy || !!lifecycle}
+                      disabled={saving || busy || !!lifecycle || !!advanced}
                     />
                   }
                 >
@@ -661,8 +619,8 @@ export function Dashboard(props: DashboardProps) {
                           ref={menuTrigger}
                           variant="ghost"
                           size="icon"
-                          aria-label="Opciones de la cola"
-                          disabled={saving || busy || !!lifecycle}
+                          aria-label="Opciones de la lista"
+                          disabled={saving || busy || !!lifecycle || !!advanced}
                         />
                       }
                     >
@@ -673,30 +631,25 @@ export function Dashboard(props: DashboardProps) {
                       className="w-64 max-w-[calc(100vw-2rem)]"
                       finalFocus={lifecycle ? false : menuTrigger}
                     >
-                      {occupancyAction(queue) && (
-                        <DropdownMenuItem
-                          onClick={() =>
-                            openQueueOperation(occupancyAction(queue)!)
-                          }
-                        >
-                          {occupancyAction(queue) === 'occupancy'
-                            ? 'Actualizar ocupación'
-                            : 'Confirmar ocupación'}
-                        </DropdownMenuItem>
-                      )}
                       <DropdownMenuItem
                         onClick={() =>
-                          openQueueOperation(
-                            queue.config.intelligencePolicy === 'disabled'
-                              ? 'enable_intelligence'
-                              : 'disable_intelligence',
-                          )
+                          setAdvanced({
+                            queueId: queue.id,
+                            trigger: menuTrigger.current,
+                            insideDrawer: true,
+                          })
                         }
                       >
-                        {queue.config.intelligencePolicy === 'disabled'
-                          ? 'Volver a gestión automática'
-                          : 'Desactivar gestión inteligente'}
+                        Configuración avanzada
                       </DropdownMenuItem>
+                      {queue.config.type === 'restaurant' &&
+                        queue.inventoryConfirmed && (
+                          <DropdownMenuItem
+                            onClick={() => openQueueOperation('release_unit')}
+                          >
+                            Mesa libre
+                          </DropdownMenuItem>
+                        )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -782,7 +735,7 @@ export function Dashboard(props: DashboardProps) {
                 <SheetDescription>
                   Se registrará esta acción con tu identidad.{' '}
                   {pending?.action === 'skip'
-                    ? 'El turno se moverá al final de la cola.'
+                    ? 'El turno se moverá al final de la lista.'
                     : ''}
                 </SheetDescription>
               </SheetHeader>

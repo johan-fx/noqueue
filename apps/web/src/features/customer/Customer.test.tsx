@@ -85,7 +85,7 @@ it('shows unknown estimates honestly and renders a noninteractive stepper', () =
       />
     </MemoryRouter>,
   )
-  expect(screen.getByText('Espera pendiente de datos')).toBeVisible()
+  expect(screen.getByText('Sin estimación')).toBeVisible()
   expect(screen.getByText('5 turnos')).toBeVisible()
   expect(screen.queryByRole('tab')).not.toBeInTheDocument()
 })

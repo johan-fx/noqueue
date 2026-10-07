@@ -1,6 +1,6 @@
 import { serviceSchema } from '@noqueue/contracts/staff'
 import { normalizeConfig } from './projection'
-import { serviceAcceptsEntries } from '../staff/availability'
+import { admissionState, publicAdmission } from '../staff/availability'
 
 export async function publicService(env: CloudflareBindings, id: string) {
   const row = await env.DB.prepare(
@@ -18,12 +18,20 @@ export async function publicService(env: CloudflareBindings, id: string) {
     }>()
   if (!row) return null
   const config = normalizeConfig(serviceSchema.parse(JSON.parse(row.config)))
+  const admission = await admissionState(env, id)
+  const estimate = await env.DB.prepare(
+    "SELECT ROUND(AVG(MAX(0,(p.predicted_at-?)/60000.0))) minutes FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND e.status='waiting' AND p.quality!='unknown' AND p.predicted_at IS NOT NULL AND p.updated_at>=?",
+  )
+    .bind(Date.now(), id, Date.now() - 120000)
+    .first<{ minutes: number | null }>()
   return {
+    averageWaitMinutes: estimate?.minutes ?? null,
+    ...(admission ? publicAdmission(admission) : {}),
     id: row.id,
     name: row.name,
     venueId: row.venueId,
     venueName: row.venueName,
-    open: Number(!!row.open && serviceAcceptsEntries(config, row.timezone)),
+    open: Number(admission?.canJoin ?? false),
     type: config.type,
     receptionServices: config.receptionServices,
     spaces: config.spaces.map((space) => ({

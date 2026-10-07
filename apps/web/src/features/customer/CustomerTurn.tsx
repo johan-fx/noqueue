@@ -1,3 +1,4 @@
+import { useLocale, usePublicResource } from './public-resource'
 import { X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
@@ -14,15 +15,19 @@ import {
 } from '@/components/ui/sheet'
 import { RestaurantForm } from './RestaurantForm'
 import { TurnView } from './TurnView'
-import {
-  CustomerShell,
-  LoadError,
-  useLocale,
-  usePublicResource,
-} from './shared'
+import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => entrySchema.parse(value)
 export function CustomerTurn() {
   const { recoveryToken } = useParams()
+  return (
+    <CustomerTurnContent key={recoveryToken} recoveryToken={recoveryToken} />
+  )
+}
+function CustomerTurnContent({
+  recoveryToken,
+}: {
+  recoveryToken: string | undefined
+}) {
   const location = useLocation()
   const [locale, setLocale] = useLocale(),
     es = locale === 'es'
@@ -41,16 +46,11 @@ export function CustomerTurn() {
   const [busy, setBusy] = useState(false),
     lock = useRef(false)
   const [commandError, setCommandError] = useState('')
-  const [now, setNow] = useState(Date.now())
+  const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)
   }, [])
-  useEffect(() => {
-    setPending(null)
-    setEditVersion(null)
-    setCommandError('')
-  }, [recoveryToken])
   async function command(input: CustomerCommand, key: string) {
     const response = await fetch(
       `/api/v1/public/entries/${recoveryToken}/commands`,

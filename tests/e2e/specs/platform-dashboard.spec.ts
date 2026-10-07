@@ -102,11 +102,11 @@ for (const width of [320, 390, 1280]) {
     ).toBeVisible()
     await page.reload()
     await expect(
-      page.getByRole('button', { name: 'Configurar servicio' }),
+      page.getByRole('button', { name: 'Opciones del servicio' }),
     ).toBeVisible()
     await expect(page.getByRole('button', { name: 'Accesos' })).toBeVisible()
-    await page.getByRole('button', { name: 'Ver cola', exact: true }).click()
-    const drawer = page.getByRole('dialog', { name: 'Ver cola', exact: true })
+    await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
+    const drawer = page.getByRole('dialog', { name: 'Ver lista', exact: true })
     await expect(drawer).toBeVisible()
     await expect(drawer.getByText('Turno A001', { exact: true })).toBeVisible()
     await expect(
@@ -119,9 +119,7 @@ for (const width of [320, 390, 1280]) {
       fullPage: true,
     })
     await drawer.getByRole('button', { name: 'Volver', exact: true }).click()
-    await page
-      .getByRole('link', { name: 'Volver a establecimientos' })
-      .click()
+    await page.getByRole('link', { name: 'Volver a establecimientos' }).click()
     await expect(page).toHaveURL(/\/staff\?page=2$/)
     await page.getByRole('link', { name: 'Página siguiente' }).click()
     await expect(page).toHaveURL(/\/staff\?page=3$/)

@@ -57,7 +57,7 @@ export function QueueConfigDrawer({
                 Configuración avanzada
               </DrawerTitle>
               <DrawerDescription className="text-base">
-                Gestión de la cola
+                Gestión de la lista
               </DrawerDescription>
             </div>
           </div>

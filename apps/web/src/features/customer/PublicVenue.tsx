@@ -1,12 +1,9 @@
+import { useLocale, usePublicResource } from './public-resource'
+import { availabilityText, visualWaitingPeople } from './availability'
 import { Link, useParams } from 'react-router'
 import { ArrowRight, Clock, Users } from 'lucide-react'
 import { publicVenueSchema } from '@noqueue/contracts/queue'
-import {
-  CustomerShell,
-  LoadError,
-  useLocale,
-  usePublicResource,
-} from './shared'
+import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => publicVenueSchema.parse(value)
 export function PublicVenue() {
   const { venueId } = useParams()
@@ -70,22 +67,16 @@ export function PublicVenue() {
                   </div>
                   <p className="flex items-center gap-2 text-xs">
                     <Users className="size-4" />
-                    {service.waitingPeople}{' '}
+                    {visualWaitingPeople(service)}{' '}
                     {es ? 'personas en lista de espera' : 'people waiting'}
                   </p>
                   <p className="flex items-center gap-2 text-xs">
                     <Clock className="size-4" />
-                    {!service.open
-                      ? es
-                        ? 'La cola está cerrada'
-                        : 'Queue closed'
-                      : service.averageWaitMinutes === null
-                      ? es
-                        ? 'Espera pendiente de datos'
-                        : 'Wait estimate not yet available'
-                      : es
-                      ? `Ahora, media de espera ${service.averageWaitMinutes} minutos`
-                      : `Average wait now: ${service.averageWaitMinutes} minutes`}
+                    {availabilityText(
+                      service,
+                      locale,
+                      service.averageWaitMinutes,
+                    )}
                   </p>
                 </Link>
               ))}

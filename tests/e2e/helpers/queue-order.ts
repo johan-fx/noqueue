@@ -61,7 +61,7 @@ export async function queueOrder(options: {
     await expect(alice.getByText('1 turnos', { exact: true })).toBeVisible()
     await expect(bob.getByText('0 turnos', { exact: true })).toBeVisible()
     const rows = page
-      .getByRole('dialog', { name: 'Gestionar cola', exact: true })
+      .getByRole('dialog', { name: 'Gestionar lista', exact: true })
       .locator('li')
     await expect(
       rows.filter({ hasText: 'Bob' }).getByLabel('Posición 1'),

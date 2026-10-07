@@ -1,3 +1,4 @@
+import { availabilityText } from './availability'
 import { Link } from 'react-router'
 import { ConciergeBell, Utensils, Martini, Clock, MapPin } from 'lucide-react'
 import type { PublicSearchResult } from '@noqueue/contracts/discovery'
@@ -18,15 +19,7 @@ export function ServiceResult({
       : service.type === 'reception'
       ? ConciergeBell
       : Martini
-  const wait = !service.open
-    ? locale === 'es'
-      ? 'Cerrado'
-      : 'Closed'
-    : service.waitMinutes === null
-    ? locale === 'es'
-      ? 'Sin estimación'
-      : 'No estimate'
-    : `${service.waitMinutes}min`
+  const wait = availabilityText(service, locale, service.waitMinutes)
   const distance =
     service.distanceMeters === null
       ? null
@@ -53,7 +46,7 @@ export function ServiceResult({
           >
             {service.name}
           </span>
-          <span className="flex shrink-0 items-center gap-2 text-xs">
+          <span className="flex max-w-[55%] flex-wrap items-center justify-end gap-2 text-right text-xs">
             <span className="flex items-center gap-1 text-black">
               <Clock aria-hidden="true" className="size-3" />
               {wait}

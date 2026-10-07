@@ -70,16 +70,39 @@ async function entry(queue: string, status = 'waiting') {
 }
 async function open(t: Awaited<ReturnType<typeof setup>>, occupied = 1) {
   const context = await openingContext(env, t.queue)
+  const restaurant =
+    (await loadQueueState(env, t.queue)).config?.type === 'restaurant'
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'open',
     contextToken: context.contextToken,
     groups: context.groups.map((g) => ({
       spaceId: g.spaceId,
       seats: g.seats,
-      occupied: g.spaceId === 'terrace' ? occupied : 0,
+      occupied: restaurant
+        ? g.count - g.allocated
+        : g.spaceId === 'terrace'
+        ? occupied
+        : 0,
     })),
   })
+  // Fixtures first declare genuine full capacity, then explicitly record physical changes.
+  if (restaurant)
+    for (const group of context.groups) {
+      const target = group.spaceId === 'terrace' ? occupied : 0
+      if (target !== group.count - group.allocated)
+        await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+          action: 'occupancy',
+          contextToken: (await openingContext(env, t.queue)).contextToken,
+          group: {
+            spaceId: group.spaceId,
+            seats: group.seats,
+            occupied: target,
+          },
+          reason: 'Fixture physical capacity update',
+        })
+    }
 }
+
 it('opens active with occupied resources, protects holds, corrects/release counts, and closes without cancelling turns', async () => {
   const t = await setup(),
     e = await entry(t.queue)
@@ -130,7 +153,7 @@ it('rejects incomplete counts, stale contexts, bypasses, and keeps idempotent re
       contextToken: context.contextToken,
       groups: [],
     }),
-  ).rejects.toThrow('incomplete_inventory')
+  ).rejects.toThrow('full_declaration_required')
   await entry(t.queue)
   await expect(
     runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
@@ -147,7 +170,7 @@ it('rejects incomplete counts, stale contexts, bypasses, and keeps idempotent re
     groups: ctx.groups.map((g) => ({
       spaceId: g.spaceId,
       seats: g.seats,
-      occupied: 0,
+      occupied: g.count - g.allocated,
     })),
   }
   await runLifecycleCommand(env, t.actor, t.queue, key, body)
@@ -213,12 +236,12 @@ it('waits for legacy entries to drain, but does not silently activate existing o
     (await loadQueueState(env, old.queue)).config?.estimationMode,
   ).not.toBe('active')
 })
-it('opens initially with missing configuration, but rejects commercial-only actors', async () => {
+it('rejects opening with missing configuration and rejects commercial-only actors', async () => {
   const t = await setup({
     ...config,
     spaces: [{ id: 'terrace', name: 'Terraza', tables: 2 }],
   })
-  await open(t)
+  await expect(open(t)).rejects.toThrow('configuration_missing')
   expect((await openingContext(env, t.queue)).readiness.reasons).toEqual(
     expect.arrayContaining(['configuration_missing']),
   )
@@ -239,7 +262,7 @@ it('serializes competing openings and invalidates contexts after new reservation
     groups: ctx.groups.map((g) => ({
       spaceId: g.spaceId,
       seats: g.seats,
-      occupied: 0,
+      occupied: g.count - g.allocated,
     })),
   }
   const results = await Promise.all([
@@ -247,6 +270,12 @@ it('serializes competing openings and invalidates contexts after new reservation
     coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), body),
   ])
   expect(results.map((r) => r.status).sort()).toEqual([200, 409])
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'release_unit',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+    spaceId: 'terrace',
+    seats: 4,
+  })
   const id = await entry(t.queue),
     beforeCall = await openingContext(env, t.queue)
   await coordinator.staffCommand(t.actor, t.queue, crypto.randomUUID(), {
@@ -350,7 +379,7 @@ it('allows queue operators without configuration permission and deduplicates pro
     groups: ctx.groups.map((g) => ({
       spaceId: g.spaceId,
       seats: g.seats,
-      occupied: 0,
+      occupied: g.count - g.allocated,
     })),
   }
   await runLifecycleCommand(env, t.actor, t.queue, key, command)
@@ -599,7 +628,8 @@ it('confirms inventory in place while preserving admissions and allocations', as
   await expectDirectorySnapshot(t.queue)
   const after = await loadQueueState(env, t.queue),
     current = await openingContext(env, t.queue)
-  expect(current.open).toBe(true)
+  expect(current.open).toBe(false)
+  expect(current.queueState).toBe('inactive')
   expect(after.allocations).toEqual(before.allocations)
   expect(after.config?.resourceStateKnown).toBe(true)
   expect(after.config?.estimationMode).toBe('active')
@@ -1760,4 +1790,428 @@ it('failed provisioning snapshot insertion leaves no organization or service fro
     queues,
   )
   await env.DB.exec('DROP TRIGGER reject_directory')
+})
+
+it('declares full without a survey, preserves holds and allocations, and resumes without refilling', async () => {
+  const t = await setup()
+  const e = await entry(t.queue)
+  const allocated = await entry(t.queue, 'called')
+  await env.DB.prepare(
+    'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,?,?,?,?)',
+  )
+    .bind(allocated, t.queue, 'terrace:4:0', 'terrace', 4, 100)
+    .run()
+  await env.DB.prepare(
+    'INSERT INTO queue_external_occupancy VALUES (?,?,?,?,?)',
+  )
+    .bind(t.queue, 'terrace:4:1', 'terrace', 4, 200)
+    .run()
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'declare_full',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  expect((await openingContext(env, t.queue)).queueState).toBe('active')
+  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(2)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT recorded_at FROM queue_external_occupancy WHERE queue_id=? AND resource_id=?',
+      )
+        .bind(t.queue, 'terrace:4:1')
+        .first<{ recorded_at: number }>()
+    )?.recorded_at,
+  ).toBe(200)
+  await expect(
+    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      action: 'call',
+      entryId: e,
+      version: 0,
+    }),
+  ).rejects.toThrow('no_free_compatible_resource')
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'release_unit',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+    spaceId: 'salon',
+    seats: 4,
+  })
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'pause',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'resume',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(1)
+  expect((await loadQueueState(env, t.queue)).allocations[0]?.reserved_at).toBe(
+    100,
+  )
+})
+it('does not activate an acknowledged reminder and automatically opens new pool services', async () => {
+  const t = await setup()
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'dismiss_reminder',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  expect((await openingContext(env, t.queue)).queueState).toBe('inactive')
+  const pool = await setup({ ...config, type: 'pool' })
+  expect((await openingContext(env, pool.queue)).queueState).toBe('active')
+  expect((await loadQueueState(env, pool.queue)).holds).toHaveLength(0)
+})
+
+it('publishes independent admission fields and rejects fresh joins until restaurant activation', async () => {
+  const { publicService } = await import('../queue/public-context')
+  const { joinQueue } = await import('../queue/entries')
+  const t = await setup()
+  const service = await publicService(env, t.queue)
+  expect(service?.serviceOpen).toBe(true)
+  expect(service?.queueState).toBe('inactive')
+  expect(service?.canJoin).toBe(false)
+  const input = {
+    displayName: 'Guest',
+    partySize: 4,
+    locale: 'es' as const,
+    whatsapp: { consent: false as const },
+  }
+  expect(
+    (await joinQueue(env, t.queue, crypto.randomUUID(), input)).status,
+  ).toBe(409)
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'declare_full',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  expect((await publicService(env, t.queue))?.initialWaitingMarker).toBe(true)
+  expect(
+    (
+      await joinQueue(env, t.queue, crypto.randomUUID(), {
+        ...input,
+        partySize: 5,
+      })
+    ).status,
+  ).toBe(400)
+})
+
+it('additive admission migration preserves tickets, allocations and external occupancy', async () => {
+  const restaurant = await setup()
+  const ticket = await entry(restaurant.queue)
+  await open(restaurant, 1)
+  await runQueueCommand(
+    env,
+    restaurant.actor,
+    restaurant.queue,
+    crypto.randomUUID(),
+    { action: 'call', entryId: ticket, version: 0 },
+  )
+  const pool = await setup({ ...config, type: 'pool', spaces: [] })
+  const before = await env.DB.prepare('SELECT * FROM queue_entry WHERE id=?')
+    .bind(ticket)
+    .first()
+  const holds = await env.DB.prepare(
+    'SELECT * FROM queue_external_occupancy WHERE queue_id=?',
+  )
+    .bind(restaurant.queue)
+    .all()
+  const allocations = await env.DB.prepare(
+    'SELECT * FROM queue_allocation WHERE queue_id=?',
+  )
+    .bind(restaurant.queue)
+    .all()
+  expect(allocations.results).toHaveLength(1)
+  expect(holds.results).toHaveLength(1)
+  await env.DB.prepare('DELETE FROM queue_admission WHERE queue_id IN (?,?)')
+    .bind(restaurant.queue, pool.queue)
+    .run()
+  await env.DB.prepare('UPDATE queue SET open=0 WHERE id=?')
+    .bind(pool.queue)
+    .run()
+  const migration = env.TEST_MIGRATIONS.find((m) => m.name.includes('0012'))!
+  const insert = migration.queries.find((sql) =>
+    sql.includes('INSERT INTO queue_admission'),
+  )!
+  await env.DB.prepare(insert).run()
+  expect(
+    await env.DB.prepare('SELECT * FROM queue_entry WHERE id=?')
+      .bind(ticket)
+      .first(),
+  ).toEqual(before)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT * FROM queue_external_occupancy WHERE queue_id=?',
+      )
+        .bind(restaurant.queue)
+        .all()
+    ).results,
+  ).toEqual(holds.results)
+  expect(
+    (
+      await env.DB.prepare('SELECT * FROM queue_allocation WHERE queue_id=?')
+        .bind(restaurant.queue)
+        .all()
+    ).results,
+  ).toEqual(allocations.results)
+  expect((await openingContext(env, restaurant.queue)).queueState).toBe(
+    'inactive',
+  )
+  expect((await openingContext(env, pool.queue)).queueState).toBe('paused')
+  const fresh = await setup({ ...config, type: 'pool', spaces: [] })
+  expect((await openingContext(env, fresh.queue)).queueState).toBe('active')
+})
+
+it('rejects non-full legacy restaurant activation without admission, occupancy or audit writes', async () => {
+  const t = await setup()
+  const before = await openingContext(env, t.queue)
+  const snapshot = async () => ({
+    queue: await env.DB.prepare(
+      'SELECT open,version,config FROM queue WHERE id=?',
+    )
+      .bind(t.queue)
+      .first(),
+    admission: await env.DB.prepare(
+      'SELECT * FROM queue_admission WHERE queue_id=?',
+    )
+      .bind(t.queue)
+      .first(),
+    holds: (
+      await env.DB.prepare(
+        'SELECT * FROM queue_external_occupancy WHERE queue_id=?',
+      )
+        .bind(t.queue)
+        .all()
+    ).results,
+    inventory: (
+      await env.DB.prepare(
+        'SELECT * FROM queue_inventory_audit WHERE queue_id=?',
+      )
+        .bind(t.queue)
+        .all()
+    ).results,
+    audit: (
+      await env.DB.prepare('SELECT * FROM staff_audit WHERE target_id=?')
+        .bind(t.queue)
+        .all()
+    ).results,
+  })
+  const saved = await snapshot()
+  const full = before.groups.map((g) => ({
+    spaceId: g.spaceId,
+    seats: g.seats,
+    occupied: g.count - g.allocated,
+  }))
+  for (const groups of [
+    full.map((g) => ({ ...g, occupied: 0 })),
+    full.map((g, i) => (i ? g : { ...g, occupied: 1 })),
+    full.slice(0, 1),
+    [full[0]!, full[0]!],
+    [full[0]!, { ...full[1]!, spaceId: 'wrong' }],
+  ]) {
+    await expect(
+      runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+        action: 'open',
+        contextToken: before.contextToken,
+        groups,
+      }),
+    ).rejects.toMatchObject({
+      status: 409,
+      message: 'full_declaration_required',
+    })
+    expect(await snapshot()).toEqual(saved)
+  }
+  expect(await openingContext(env, t.queue)).toMatchObject({
+    queueState: 'inactive',
+    canJoin: false,
+  })
+})
+
+it('accepts full legacy restaurant declarations while retaining allocations and hold timestamps', async () => {
+  const t = await setup()
+  const ticket = await entry(t.queue, 'called')
+  await env.DB.prepare(
+    'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,?,?,?,?)',
+  )
+    .bind(ticket, t.queue, 'terrace:4:0', 'terrace', 4, 123)
+    .run()
+  await env.DB.prepare(
+    'INSERT INTO queue_external_occupancy(queue_id,resource_id,space_id,seats,recorded_at) VALUES (?,?,?,?,?)',
+  )
+    .bind(t.queue, 'terrace:4:1', 'terrace', 4, 77)
+    .run()
+  const allocation = await env.DB.prepare(
+    'SELECT * FROM queue_allocation WHERE entry_id=?',
+  )
+    .bind(ticket)
+    .first()
+  const context = await openingContext(env, t.queue)
+  const key = crypto.randomUUID(),
+    input = {
+      action: 'open' as const,
+      contextToken: context.contextToken,
+      groups: context.groups.map((g) => ({
+        spaceId: g.spaceId,
+        seats: g.seats,
+        occupied: g.count - g.allocated,
+      })),
+    }
+  await runLifecycleCommand(env, t.actor, t.queue, key, input)
+  expect(await openingContext(env, t.queue)).toMatchObject({
+    queueState: 'active',
+    canJoin: true,
+  })
+  expect(
+    await env.DB.prepare('SELECT * FROM queue_allocation WHERE entry_id=?')
+      .bind(ticket)
+      .first(),
+  ).toEqual(allocation)
+  expect(
+    await env.DB.prepare(
+      'SELECT recorded_at FROM queue_external_occupancy WHERE queue_id=? AND resource_id=?',
+    )
+      .bind(t.queue, 'terrace:4:1')
+      .first(),
+  ).toEqual({ recorded_at: 77 })
+  expect(
+    (await openingContext(env, t.queue)).groups.map(
+      (g) => g.occupied + g.allocated,
+    ),
+  ).toEqual([2, 1])
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'pause',
+    contextToken: (await openingContext(env, t.queue)).contextToken,
+  })
+  await runLifecycleCommand(env, t.actor, t.queue, key, input)
+  expect((await openingContext(env, t.queue)).queueState).toBe('paused')
+})
+
+it('rejects legacy restaurant activation with incomplete resource topology', async () => {
+  const t = await setup({
+    ...config,
+    spaces: [{ id: 'unknown', name: 'Unknown', tables: 1 }],
+  })
+  const context = await openingContext(env, t.queue)
+  await expect(
+    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      action: 'open',
+      contextToken: context.contextToken,
+      groups: context.groups.map((g) => ({
+        spaceId: g.spaceId,
+        seats: g.seats,
+        occupied: g.count,
+      })),
+    }),
+  ).rejects.toMatchObject({ status: 409, message: 'configuration_missing' })
+  expect((await openingContext(env, t.queue)).queueState).toBe('inactive')
+})
+
+it('migration conservatively pauses every existing automatic value except exactly one and expires only scheduled windows', async () => {
+  const { admissionState, resolveAdmission } = await import('./availability')
+  const queues: { queue: string; value: number; scheduled: boolean }[] = []
+  for (const scheduled of [false, true])
+    for (const value of [-1, 0, 1, 2]) {
+      const service = {
+        ...config,
+        type: 'pool' as const,
+        spaces: [],
+        twentyFourHours: !scheduled,
+        schedules: scheduled
+          ? Array.from({ length: 7 }, (_, day) => ({
+              day,
+              from: '00:00',
+              to: '23:59',
+            }))
+          : [],
+      }
+      const t = await setup(service)
+      await env.DB.prepare('UPDATE queue SET open=? WHERE id=?')
+        .bind(value, t.queue)
+        .run()
+      queues.push({ queue: t.queue, value, scheduled })
+    }
+  const migration = env.TEST_MIGRATIONS.find((m) => m.name.includes('0012'))!
+  const migrationSql = migration.queries.find((sql) =>
+    sql.includes('INSERT INTO queue_admission'),
+  )!
+  await env.DB.prepare(
+    migrationSql.replace(/;\s*$/, '') +
+      ` AND q.id IN (${queues.map(() => '?').join(',')});`,
+  )
+    .bind(...queues.map((q) => q.queue))
+    .run()
+  for (const { queue, value, scheduled } of queues) {
+    const state = await admissionState(env, queue)
+    expect(state?.queueState).toBe(value === 1 ? 'active' : 'paused')
+    const row = await env.DB.prepare(
+      'SELECT * FROM queue_admission WHERE queue_id=?',
+    )
+      .bind(queue)
+      .first<import('./availability').AdmissionRecord>()
+    if (value === 1) expect(row).toBeNull()
+    else {
+      expect(row?.legacy_config).toBeTruthy()
+      const service = JSON.parse(row!.legacy_config!) as ServiceInput
+      const next = new Date(row!.legacy_paused_at! + 7 * 86400000)
+      expect(
+        resolveAdmission(service, 'Europe/Madrid', row, 0, next).queueState,
+      ).toBe(scheduled ? 'active' : 'paused')
+    }
+  }
+  const fresh = await setup({ ...config, type: 'pool', spaces: [] })
+  expect((await admissionState(env, fresh.queue))?.queueState).toBe('active')
+  const columns = (
+    await env.DB.prepare('PRAGMA table_info(queue)').all<{
+      name: string
+      notnull: number
+    }>()
+  ).results
+  expect(columns.find((c) => c.name === 'open')?.notnull).toBe(1)
+})
+
+it('recovers committed zero-occupancy legacy requests without activating a later restaurant window', async () => {
+  const { hash } = await import('../queue/crypto')
+  const t = await setup()
+  const context = await openingContext(env, t.queue)
+  const key = crypto.randomUUID()
+  const input = {
+    action: 'open' as const,
+    contextToken: context.contextToken,
+    groups: context.groups.map((group) => ({
+      spaceId: group.spaceId,
+      seats: group.seats,
+      occupied: 0,
+    })),
+  }
+  // Simulate a legacy command committed before the full-declaration requirement.
+  await env.DB.prepare('INSERT INTO staff_command VALUES (?,?,?,?)')
+    .bind(
+      t.actor,
+      key,
+      await hash(JSON.stringify({ queueId: t.queue, lifecycle: input })),
+      JSON.stringify({ ok: true }),
+    )
+    .run()
+  const before = await env.DB.prepare(
+    'SELECT * FROM queue_admission WHERE queue_id=?',
+  )
+    .bind(t.queue)
+    .first()
+  await expect(
+    runLifecycleCommand(env, t.actor, t.queue, key, input),
+  ).resolves.toEqual({ ok: true })
+  expect(
+    await env.DB.prepare('SELECT * FROM queue_admission WHERE queue_id=?')
+      .bind(t.queue)
+      .first(),
+  ).toEqual(before)
+  expect(await openingContext(env, t.queue)).toMatchObject({
+    queueState: 'inactive',
+    canJoin: false,
+  })
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT * FROM queue_external_occupancy WHERE queue_id=?',
+      )
+        .bind(t.queue)
+        .all()
+    ).results,
+  ).toEqual([])
 })

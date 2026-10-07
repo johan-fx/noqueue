@@ -5,7 +5,7 @@ export function WebJoinQueueScreen() {
   const navigate = useNavigate()
   return (
     <QueueIntroduction
-      channelDescription="Continue on the web and receive queue updates through WhatsApp."
+      channelDescription="Continue on the web and receive waiting list updates through WhatsApp."
       onContinue={() => navigate('/q/demo-queue')}
     />
   )

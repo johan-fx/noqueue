@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { admissionFields } from './queue'
 
 const text = z.string().trim().min(1).max(300)
 export const coordinatesSchema = z
@@ -89,6 +90,7 @@ export const publicSearchSchema = z
   })
 export type PublicSearchInput = z.infer<typeof publicSearchSchema>
 export const publicSearchResultSchema = z.object({
+  ...admissionFields,
   id: z.string(),
   venueId: z.string(),
   name: z.string(),

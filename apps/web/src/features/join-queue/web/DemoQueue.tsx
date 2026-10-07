@@ -60,7 +60,7 @@ export function DemoQueue() {
   return (
     <section className="max-w-lg space-y-5">
       <h1 className="text-2xl font-semibold">
-        {es ? 'Cola de demostración' : 'Demo queue'}
+        {es ? 'Lista de demostración' : 'Demo waiting list'}
       </h1>
       <label>
         {es ? 'Idioma' : 'Language'}{' '}
@@ -130,8 +130,8 @@ export function DemoQueue() {
               ? 'Guardando…'
               : 'Saving…'
             : es
-            ? 'Apuntarme a la cola'
-            : 'Join queue'}
+            ? 'Apuntarme a la lista'
+            : 'Join waiting list'}
         </Button>
         {error && <p role="alert">{error}</p>}
       </form>
@@ -169,7 +169,7 @@ export function DemoEntry() {
   return (
     <section className="space-y-4" aria-live="polite">
       <h1 className="text-2xl font-semibold">
-        {es ? 'Tu turno' : 'Your queue entry'}
+        {es ? 'Tu turno' : 'Your waiting list entry'}
       </h1>
       {entry && (
         <>
@@ -216,7 +216,7 @@ export function DemoEntry() {
           <p>
             {es
               ? 'Guarda este enlace privado para consultar el estado de tu turno.'
-              : 'Save this private link to check your queue status.'}
+              : 'Save this private link to check your waiting list status.'}
           </p>
         </>
       )}

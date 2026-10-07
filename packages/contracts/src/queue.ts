@@ -11,12 +11,33 @@ export const serviceJoinSchema = z.strictObject({
   locale: z.enum(['es', 'en']),
 })
 export type ServiceJoin = z.infer<typeof serviceJoinSchema>
+export const admissionFields = {
+  serviceOpen: z.boolean().optional(),
+  queueState: z.enum(['inactive', 'active', 'paused']).optional(),
+  canJoin: z.boolean().optional(),
+  blockReason: z
+    .enum(['closed', 'inactive', 'paused', 'cutoff', 'capacity'])
+    .nullable()
+    .optional(),
+  waitingPeople: z.number().nonnegative().optional(),
+  initialWaitingMarker: z.boolean().optional(),
+}
+export type AdmissionStatus = {
+  serviceOpen: boolean
+  queueState: 'inactive' | 'active' | 'paused'
+  canJoin: boolean
+  blockReason: 'closed' | 'inactive' | 'paused' | 'cutoff' | 'capacity' | null
+  waitingPeople: number
+  initialWaitingMarker: boolean
+}
 export const publicServiceSchema = z.object({
+  ...admissionFields,
   id: z.string(),
   name: z.string(),
   venueName: z.string(),
   venueId: z.string().optional(),
   open: z.number(),
+  averageWaitMinutes: z.number().nullable().optional(),
   type: z.enum(['restaurant', 'reception', 'pool']),
   receptionServices: z.array(receptionServiceSchema),
   spaces: z.array(
@@ -140,5 +161,5 @@ export const joinedEntrySchema = entrySchema.extend({
 export type Entry = z.infer<typeof entrySchema>
 export const consentCopy = {
   es: 'Acepto recibir actualizaciones de este turno por WhatsApp. Puedo darme de baja enviando STOP o BAJA. Aviso provisional para pruebas.',
-  en: 'I agree to receive updates for this queue entry on WhatsApp. I can opt out by sending STOP or BAJA. Provisional testing notice.',
+  en: 'I agree to receive updates for this waiting list entry on WhatsApp. I can opt out by sending STOP or BAJA. Provisional testing notice.',
 }

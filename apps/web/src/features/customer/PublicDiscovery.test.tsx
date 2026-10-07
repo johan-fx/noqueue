@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,6 +12,7 @@ import { MemoryRouter } from 'react-router'
 import { PublicDiscovery } from './PublicDiscovery'
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   localStorage.clear()
 })
@@ -183,4 +185,25 @@ it('changes sort before requesting page one without losing nearby scope, text or
     }),
   )
   setDiscoveryCoordinates(undefined)
+})
+
+it('refreshes visible discovery every five seconds and deduplicates focus', async () => {
+  vi.useFakeTimers()
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(Response.json({ items: [], page: 1, hasMore: false }))
+  vi.stubGlobal('fetch', fetcher)
+  render(
+    <MemoryRouter initialEntries={['/search']}>
+      <PublicDiscovery search />
+    </MemoryRouter>,
+  )
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1)
+  })
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  expect(fetcher).toHaveBeenCalledTimes(2)
 })

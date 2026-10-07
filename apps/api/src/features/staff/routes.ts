@@ -8,7 +8,7 @@ import {
   readVenueLocation,
   updateVenueLocation,
 } from './location'
-import { serviceAcceptsEntries } from './availability'
+import { admissionState, serviceWindow } from './availability'
 import { readiness, inventoryConfirmed } from '../queue/opening-state'
 import { queueLifecycleSchema } from '@noqueue/contracts/staff'
 import { normalizeConfig, readProjection } from '../queue/projection'
@@ -491,7 +491,8 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
           ...row,
           config,
           manualJoinWhatsappRequired: manualJoinRequiresWhatsapp(c.env),
-          outsideSchedule: !serviceAcceptsEntries(config, venue!.timezone),
+          ...(await admissionState(c.env, row.id)),
+          outsideSchedule: !serviceWindow(config, venue!.timezone).serviceOpen,
           inventoryConfirmed: await inventoryConfirmed(c.env, row.id, config),
           readiness: await readiness(c.env, row.id, config),
         }

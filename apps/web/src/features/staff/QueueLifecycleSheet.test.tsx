@@ -59,22 +59,22 @@ it('requires explicit counts in every tab and submits only after confirmation', 
     />,
   )
   await screen.findByRole('tab', { name: 'Terraza' })
-  expect(screen.getByRole('button', { name: 'Abrir cola' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Abrir lista' })).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: /Mesas de 4/ }))
   expect(
-    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la cola'),
+    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la lista'),
   ).toHaveValue(null)
   fireEvent.change(
-    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la cola'),
+    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la lista'),
     { target: { value: '1' } },
   )
   fireEvent.click(screen.getByRole('tab', { name: 'Salón' }))
   fireEvent.click(screen.getByRole('button', { name: /Mesas de 4/ }))
   fireEvent.change(
-    screen.getByLabelText('Salón · 4 plazas ocupadas fuera de la cola'),
+    screen.getByLabelText('Salón · 4 plazas ocupadas fuera de la lista'),
     { target: { value: '0' } },
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Abrir cola' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Abrir lista' }))
   await waitFor(() => expect(done).toHaveBeenCalledTimes(1))
   expect(api).toHaveBeenCalledWith(
     '/queues/q/lifecycle',
@@ -114,7 +114,7 @@ it('shows pending turns on close and cancellation makes no mutation', async () =
 it.each(['open', 'confirm_inventory'] as const)(
   'retains the idempotency key and resets confirmations after a conflict (%s)',
   async (action) => {
-    const label = action === 'open' ? 'Abrir cola' : 'Confirmar ocupación'
+    const label = action === 'open' ? 'Abrir lista' : 'Confirmar ocupación'
     const { ApiError } = await import('./api')
     const latest = { ...context, open: action === 'confirm_inventory' }
     const empty = { ...latest, groups: [] }
@@ -167,7 +167,7 @@ it('confirms an already-open inventory explicitly with an all-free shortcut, not
   expect(confirm).toBeDisabled()
   fireEvent.click(screen.getByRole('button', { name: /Mesas de 4/ }))
   expect(
-    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la cola'),
+    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la lista'),
   ).toHaveValue(null)
   expect(
     screen.queryByLabelText('Motivo de la corrección o liberación'),
@@ -218,15 +218,13 @@ it('shows recorded holds without treating unconfirmed empty groups as known zero
   await screen.findByRole('tab', { name: 'Terraza' })
   fireEvent.click(screen.getByRole('button', { name: /Mesas de 4/ }))
   expect(
-    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la cola'),
+    screen.getByLabelText('Terraza · 4 plazas ocupadas fuera de la lista'),
   ).toHaveValue(1)
-  expect(
-    screen.getByRole('button', { name: 'Guardar cambio' }),
-  ).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Guardar cambio' })).toBeDisabled()
   fireEvent.click(screen.getByRole('tab', { name: 'Salón' }))
   fireEvent.click(screen.getByRole('button', { name: /Mesas de 4/ }))
   expect(
-    screen.getByLabelText('Salón · 4 plazas ocupadas fuera de la cola'),
+    screen.getByLabelText('Salón · 4 plazas ocupadas fuera de la lista'),
   ).toHaveValue(null)
 })
 it.each(['disable_intelligence', 'enable_intelligence'] as const)(
@@ -277,3 +275,84 @@ it.each(['disable_intelligence', 'enable_intelligence'] as const)(
     )
   },
 )
+it('declares full without any occupancy inputs and releases a single configured group', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('opening-context')
+      ? {
+          ...context,
+          serviceOpen: true,
+          queueState: 'inactive',
+          groups: [{ ...context.groups[0]!, occupied: 1 }],
+        }
+      : { ok: true },
+  )
+  const done = vi.fn()
+  const view = render(
+    <QueueLifecycleSheet
+      queueId="q"
+      name="Restaurant"
+      action="declare_full"
+      onClose={vi.fn()}
+      onSaved={done}
+    />,
+  )
+  const activate = await screen.findByRole('button', { name: 'Activar lista' })
+  expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument()
+  fireEvent.click(activate)
+  await waitFor(() => expect(done).toHaveBeenCalled())
+  expect(api).toHaveBeenCalledWith(
+    '/queues/q/lifecycle',
+    'POST',
+    { action: 'declare_full', contextToken: 'token' },
+    expect.any(String),
+  )
+  view.unmount()
+  render(
+    <QueueLifecycleSheet
+      queueId="q"
+      name="Restaurant"
+      action="release_unit"
+      onClose={vi.fn()}
+      onSaved={done}
+    />,
+  )
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Liberar una mesa' }),
+  )
+  await waitFor(() =>
+    expect(api).toHaveBeenCalledWith(
+      '/queues/q/lifecycle',
+      'POST',
+      {
+        action: 'release_unit',
+        contextToken: 'token',
+        spaceId: 'terrace',
+        seats: 4,
+      },
+      expect.any(String),
+    ),
+  )
+  expect(screen.queryByLabelText('Grupo de mesas')).not.toBeInTheDocument()
+})
+
+it('allows confirming inventory in advanced settings without activating an inactive list', async () => {
+  vi.mocked(api).mockResolvedValue(context)
+  render(
+    <QueueLifecycleSheet
+      queueId="q"
+      name="Restaurant"
+      action="confirm_inventory"
+      onClose={() => {}}
+      onSaved={() => {}}
+    />,
+  )
+  await screen.findByRole('tab', { name: 'Terraza' })
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Todas las mesas restantes están libres',
+    }),
+  )
+  expect(
+    screen.getByRole('button', { name: 'Confirmar ocupación' }),
+  ).toBeEnabled()
+})

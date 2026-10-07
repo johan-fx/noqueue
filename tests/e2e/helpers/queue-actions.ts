@@ -106,17 +106,32 @@ export async function setup(
       await page.request.post(`/api/v1/staff/queues/${queue.id}/lifecycle`, {
         headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
         data: {
-          action: 'open',
+          action: 'declare_full',
           contextToken: ctx.contextToken,
-          groups: ctx.groups.map((g) => ({ ...g, occupied: 0 })),
         },
       })
     ).ok(),
   ).toBeTruthy()
+  for (const group of ctx.groups) {
+    const current = (await (
+      await page.request.get(`/api/v1/staff/queues/${queue.id}/opening-context`)
+    ).json()) as { contextToken: string }
+    expect(
+      (
+        await page.request.post(`/api/v1/staff/queues/${queue.id}/lifecycle`, {
+          headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+          data: {
+            action: 'occupancy',
+            contextToken: current.contextToken,
+            group: { ...group, occupied: 0 },
+            reason: 'Fixture physical capacity update',
+          },
+        })
+      ).ok(),
+    ).toBeTruthy()
+  }
   await page.reload()
-  await page
-    .getByRole('button', { name: 'Gestionar cola', exact: true })
-    .click()
+  await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   return { queue: queue.id, venueId, headers }
 }
 export async function join(page: Page, queue: string, name: string) {
@@ -134,7 +149,7 @@ export async function act(
   beforeConfirm?: () => Promise<void>,
 ) {
   const row = page
-    .getByRole('dialog', { name: 'Gestionar cola', exact: true })
+    .getByRole('dialog', { name: 'Gestionar lista', exact: true })
     .locator('li')
     .filter({ hasText: name })
   await row.getByRole('button', { name: /Acciones del turno/ }).click()

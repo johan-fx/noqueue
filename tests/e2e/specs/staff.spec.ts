@@ -122,7 +122,8 @@ test('sales provisioning, direct owner access and staff console use passwords an
     page.getByRole('heading', { name: 'Hotel Madrid E2E', exact: true }),
   ).toBeVisible()
   await page.reload()
-  await page.getByRole('button', { name: 'Configurar servicio' }).click()
+  await page.getByRole('button', { name: 'Opciones del servicio' }).click()
+  await page.getByRole('menuitem', { name: 'Configurar servicio' }).click()
   const initialConfigDrawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
@@ -214,7 +215,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
     page.getByRole('heading', { name: 'Hotel Madrid E2E', exact: true }),
   ).toBeVisible()
   await expect(
-    page.getByRole('button', { name: 'Configurar servicio' }),
+    page.getByRole('button', { name: 'Opciones del servicio' }),
   ).toBeVisible()
   await expect(
     page.getByRole('heading', { name: 'Establecimientos', exact: true }),
@@ -229,7 +230,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(
     services
       .getByRole('article', { name: 'Servicio Restaurante E2E' })
-      .getByRole('button', { name: 'Gestionar cola' }),
+      .getByRole('button', { name: 'Ver lista' }),
   ).toBeInViewport()
   await page.screenshot({
     path: testInfo.outputPath('service-cards-mobile.png'),
@@ -277,7 +278,10 @@ test('sales provisioning, direct owner access and staff console use passwords an
   const restaurant = services.getByRole('article', {
     name: 'Servicio Restaurante E2E',
   })
-  await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
+  await restaurant
+    .getByRole('button', { name: 'Opciones del servicio' })
+    .click()
+  await page.getByRole('menuitem', { name: 'Configurar servicio' }).click()
   const configDrawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
   })
@@ -289,15 +293,14 @@ test('sales provisioning, direct owner access and staff console use passwords an
     .fill('Borrador cancelado')
   await configDrawer.getByRole('button', { name: 'Volver' }).click()
   await expect(configDrawer).toHaveCount(0)
-  await restaurant.getByRole('switch', { name: 'Abrir cola' }).click()
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Abrir cola', exact: true })
-    .click()
+  await restaurant.getByRole('switch', { name: 'Activar lista' }).click()
   await expect(
-    restaurant.getByRole('switch', { name: 'Abrir cola' }),
+    restaurant.getByRole('switch', { name: 'Cerrar lista' }),
   ).toBeChecked()
-  await restaurant.getByRole('button', { name: 'Configurar servicio' }).click()
+  await restaurant
+    .getByRole('button', { name: 'Opciones del servicio' })
+    .click()
+  await page.getByRole('menuitem', { name: 'Configurar servicio' }).click()
   await expect(configDrawer.getByLabel('Nombre del servicio')).toHaveValue(
     'Restaurante E2E',
   )
@@ -329,16 +332,16 @@ test('sales provisioning, direct owner access and staff console use passwords an
   await expect(configDrawer.getByText('24 horas, todos los días')).toBeVisible()
   await page.getByRole('button', { name: 'Confirmar' }).click()
   await expect(page.getByRole('button', { name: 'Confirmar' })).toHaveCount(0)
-  await restaurant.getByRole('button', { name: 'Gestionar cola' }).click()
-  const queueDrawer = page.getByRole('dialog', { name: 'Gestionar cola' })
+  await restaurant.getByRole('button', { name: 'Ver lista' }).click()
+  const queueDrawer = page.getByRole('dialog', { name: 'Gestionar lista' })
   await expect(queueDrawer).toBeVisible()
   await expect(
     queueDrawer.getByRole('link', {
-      name: 'Abrir enlace público de la cola',
+      name: 'Abrir enlace público de la lista',
     }),
   ).toBeVisible()
   const publicURL = await queueDrawer
-    .getByRole('link', { name: 'Abrir enlace público de la cola' })
+    .getByRole('link', { name: 'Abrir enlace público de la lista' })
     .getAttribute('href')
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
@@ -552,8 +555,9 @@ test('space-specific durations and an availability delay survive browser save an
   await expect(
     page.getByRole('heading', { name: 'Timing Venue', exact: true }),
   ).toBeVisible()
+  await page.getByRole('button', { name: 'Opciones del servicio' }).click()
   await page
-    .getByRole('button', { name: 'Configurar servicio', exact: true })
+    .getByRole('menuitem', { name: 'Configurar servicio', exact: true })
     .click()
   const drawer = page.getByRole('dialog', {
     name: 'Configuración restaurante',
@@ -704,8 +708,9 @@ test('space-specific durations and an availability delay survive browser save an
   await drawer.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await expect(drawer).toHaveCount(0)
   await page.reload()
+  await page.getByRole('button', { name: 'Opciones del servicio' }).click()
   await page
-    .getByRole('button', { name: 'Configurar servicio', exact: true })
+    .getByRole('menuitem', { name: 'Configurar servicio', exact: true })
     .click()
   await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
@@ -743,37 +748,16 @@ test('space-specific durations and an availability delay survive browser save an
   await expect(advanced).toHaveCount(0)
   await page.keyboard.press('Escape')
   await expect(drawer).toHaveCount(0)
-  await page.getByRole('switch', { name: 'Abrir cola' }).click()
-  const opening = page.getByRole('dialog')
-  for (const space of [
-    'Terrace',
-    'Salon',
-    'Patio exterior junto a la piscina',
-    'Sala para eventos privados',
-  ]) {
-    await opening.getByRole('tab', { name: space, exact: true }).click()
-    await opening
-      .getByRole('button', { name: 'Mesas de 4', exact: true })
-      .click()
-    await opening
-      .getByLabel(`${space} · 4 plazas ocupadas fuera de la cola`)
-      .fill('0')
-  }
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Abrir cola', exact: true })
-    .click()
-  await expect(page.getByRole('switch', { name: 'Abrir cola' })).toBeChecked()
-  await expect(page.getByRole('switch', { name: 'Abrir cola' })).toBeEnabled()
-  await page
-    .getByRole('button', { name: 'Gestionar cola', exact: true })
-    .click()
+  await page.getByRole('switch', { name: 'Activar lista' }).click()
+  await expect(page.getByRole('switch', { name: 'Cerrar lista' })).toBeChecked()
+  await expect(page.getByRole('switch', { name: 'Cerrar lista' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   const queue = page.getByRole('dialog', {
-    name: 'Gestionar cola',
+    name: 'Gestionar lista',
     exact: true,
   })
   const publicURL = await queue
-    .getByRole('link', { name: 'Abrir enlace público de la cola' })
+    .getByRole('link', { name: 'Abrir enlace público de la lista' })
     .getAttribute('href')
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)

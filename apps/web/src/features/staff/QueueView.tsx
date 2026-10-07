@@ -7,12 +7,7 @@ import type {
   QueueSummary,
   StaffEntry,
 } from '@noqueue/contracts/staff'
-import {
-  Tabs,
-  TabsList,
-  TabsTrigger,
-  TabsContent,
-} from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 
 import { receptionLabels } from './queue-labels'
@@ -118,7 +113,7 @@ export function QueueView({
         className="gap-6"
       >
         <TabsList
-          aria-label="Vistas de la cola"
+          aria-label="Vistas de la lista"
           className="w-full group-data-horizontal/tabs:h-12"
         >
           {views.map((view) => (
@@ -180,7 +175,7 @@ export function QueueView({
               {view.value === 'active' && options.length > 0 && (
                 <div
                   role="group"
-                  aria-label="Filtros de la cola"
+                  aria-label="Filtros de la lista"
                   className="flex max-w-full gap-1 overflow-x-auto pb-1"
                 >
                   {[{ value: 'all', label: 'Todos' }, ...options].map(
@@ -199,9 +194,7 @@ export function QueueView({
                           className="shrink-0 rounded-full"
                           size="sm"
                           variant={
-                            activeFilter === option.value
-                              ? 'default'
-                              : 'ghost'
+                            activeFilter === option.value ? 'default' : 'ghost'
                           }
                           aria-pressed={activeFilter === option.value}
                           aria-label={`Filtrar ${option.label}`}
@@ -273,12 +266,7 @@ export function QueueView({
       <div className="space-y-2 border-t pt-4 text-xs text-muted-foreground">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p>Última lectura: {lastSync || 'cargando…'} · Cada 5 s</p>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={busy}
-            onClick={onRefresh}
-          >
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onRefresh}>
             Actualizar
           </Button>
         </div>
@@ -288,7 +276,7 @@ export function QueueView({
           target="_blank"
           rel="noreferrer"
         >
-          Abrir enlace público de la cola
+          Abrir enlace público de la lista
         </a>
       </div>
     </div>

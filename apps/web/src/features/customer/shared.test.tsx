@@ -1,8 +1,9 @@
+import { useLocale } from './public-resource'
 import '@testing-library/jest-dom/vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, expect, it } from 'vitest'
 import { MemoryRouter, useLocation, useNavigate } from 'react-router'
-import { CustomerShell, useLocale } from './shared'
+import { CustomerShell } from './shared'
 
 afterEach(cleanup)
 function Harness() {
@@ -63,4 +64,47 @@ it('changes language without dropping query parameters or adding a history entry
   )
   fireEvent.click(screen.getByRole('button', { name: 'Previous page' }))
   expect(screen.getByLabelText('Route')).toHaveTextContent('/before')
+})
+
+it('polls public resources every five seconds only while visible and deduplicates focus', async () => {
+  const { act } = await import('@testing-library/react')
+  const { vi } = await import('vitest')
+  const { usePublicResource } = await import('./public-resource')
+  const parse = (value: unknown) => value
+  function Resource() {
+    usePublicResource('/api/test', parse)
+    return null
+  }
+  vi.useFakeTimers()
+  const fetch = vi.fn().mockResolvedValue(Response.json({ ok: true }))
+  vi.stubGlobal('fetch', fetch)
+  try {
+    await act(async () => {
+      render(<Resource />)
+      await Promise.resolve()
+    })
+    expect(fetch).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000)
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(15000)
+    })
+    expect(fetch).toHaveBeenCalledTimes(2)
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      window.dispatchEvent(new Event('focus'))
+      await Promise.resolve()
+    })
+    expect(fetch).toHaveBeenCalledTimes(3)
+  } finally {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  }
 })

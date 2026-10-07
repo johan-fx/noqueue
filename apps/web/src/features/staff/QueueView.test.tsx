@@ -71,7 +71,7 @@ it('separates active, completed and cancelled histories using accessible tabs', 
   // The drawer header already shows the service name; the queue body starts at tabs.
   expect(screen.queryByText('Recepción')).not.toBeInTheDocument()
   expect(
-    screen.getByRole('tablist', { name: 'Vistas de la cola' }),
+    screen.getByRole('tablist', { name: 'Vistas de la lista' }),
   ).toBeVisible()
   expect(screen.getByRole('tab', { name: 'Lista' })).toHaveAttribute(
     'aria-selected',
@@ -123,9 +123,7 @@ it('separates active, completed and cancelled histories using accessible tabs', 
 it('expands permitted turn actions without making historical cards actionable', () => {
   const action = vi.fn()
   render(<Harness action={action} />)
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Acciones del turno T0' }),
-  )
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
   fireEvent.click(screen.getByRole('button', { name: 'Llamar' }))
   expect(action).toHaveBeenCalledWith(entries[0], 'call')
 })
@@ -150,12 +148,8 @@ it('offers an explicit release after arrival', () => {
       onAction={vi.fn()}
     />,
   )
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Acciones del turno T2' }),
-  )
-  expect(
-    screen.getByRole('button', { name: 'Liberar recurso' }),
-  ).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T2' }))
+  expect(screen.getByRole('button', { name: 'Liberar recurso' })).toBeVisible()
 })
 it('disables explicit calls while managed inventory needs a fresh survey', () => {
   render(
@@ -237,7 +231,7 @@ it('numbers the whole active list including called turns, preserves ordinals whe
     />,
   )
   expect(
-    screen.queryByRole('group', { name: 'Filtros de la cola' }),
+    screen.queryByRole('group', { name: 'Filtros de la lista' }),
   ).not.toBeInTheDocument()
   expect(screen.getByText('Daniel')).toBeVisible()
 })
@@ -291,24 +285,16 @@ it('closes row actions when externally changing views or queues', () => {
   const { rerender } = render(
     <QueueView {...props} queue={queue} tab="active" />,
   )
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Acciones del turno T0' }),
-  )
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
   expect(screen.getByRole('button', { name: 'Llamar' })).toBeVisible()
   rerender(<QueueView {...props} queue={queue} tab="completed" />)
   rerender(<QueueView {...props} queue={queue} tab="active" />)
   expect(
     screen.queryByRole('button', { name: 'Llamar' }),
   ).not.toBeInTheDocument()
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Acciones del turno T0' }),
-  )
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
   rerender(
-    <QueueView
-      {...props}
-      queue={{ ...queue, id: 'another' }}
-      tab="active"
-    />,
+    <QueueView {...props} queue={{ ...queue, id: 'another' }} tab="active" />,
   )
   rerender(<QueueView {...props} queue={queue} tab="active" />)
   expect(

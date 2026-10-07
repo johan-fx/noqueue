@@ -63,7 +63,7 @@ export function AddQueueEntryDrawer({
             <span aria-hidden="true" className="w-9" />
           </div>
           <DrawerDescription className="sr-only">
-            {result ? 'Turno añadido' : 'Añadir a la cola'}
+            {result ? 'Turno añadido' : 'Añadir a la lista'}
           </DrawerDescription>
         </DrawerHeader>
         {result ? (
@@ -72,11 +72,7 @@ export function AddQueueEntryDrawer({
             <p className="text-xl font-medium">Turno: {result.code}</p>
             <label className="block space-y-2">
               Enlace del turno
-              <Input
-                readOnly
-                value={url}
-                onFocus={(e) => e.target.select()}
-              />
+              <Input readOnly value={url} onFocus={(e) => e.target.select()} />
             </label>
             <Button
               className="w-full"

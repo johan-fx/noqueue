@@ -1,6 +1,9 @@
 import { useState } from 'react'
 import { useForm, useWatch } from 'react-hook-form'
-import type { ServiceInput } from '@noqueue/contracts/staff'
+import {
+  defaultGraceMinutes,
+  type ServiceInput,
+} from '@noqueue/contracts/staff'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 import {
@@ -14,9 +17,15 @@ import { QueueOperations } from './QueueOperations'
 import { emptyService } from './model'
 import { issuesFor } from './validate'
 
-export type QueueOptions = Pick<
-  ServiceInput,
-  'adjustments' | 'estimationMode' | 'resourceStateKnown' | 'stations'
+export type QueueOptions = Partial<
+  Pick<
+    ServiceInput,
+    | 'adjustments'
+    | 'estimationMode'
+    | 'resourceStateKnown'
+    | 'stations'
+    | 'graceMinutes'
+  >
 >
 
 /** The nested drawer owns a complete draft; only confirmation updates the wizard. */
@@ -41,6 +50,7 @@ export function QueueConfigForm({
   const form = useForm<ServiceInput>({
     defaultValues: {
       ...emptyService,
+      graceMinutes: defaultGraceMinutes(type),
       ...options,
       type,
       averageMinutes,
@@ -85,6 +95,7 @@ export function QueueConfigForm({
             'spaces',
             'adjustments',
             'stations',
+            'graceMinutes',
             'estimationMode',
             'resourceStateKnown',
           ].includes(item.path),
@@ -99,6 +110,7 @@ export function QueueConfigForm({
         onConfirm(values.spaces, {
           adjustments: values.adjustments,
           stations: values.stations,
+          graceMinutes: values.graceMinutes,
           estimationMode: values.estimationMode,
           resourceStateKnown: values.resourceStateKnown,
         })
@@ -109,7 +121,24 @@ export function QueueConfigForm({
           {error}
         </p>
       )}
-      {type !== 'reception' ? (
+      <Field>
+        <FieldLabel htmlFor="arrival-grace">
+          Plazo de llegada (minutos)
+        </FieldLabel>
+        <Input
+          id="arrival-grace"
+          type="number"
+          min={1}
+          max={120}
+          required
+          {...form.register('graceMinutes', { valueAsNumber: true })}
+        />
+        <p className="text-sm text-muted-foreground">
+          Empieza al asignar, aunque falle el aviso. Solo afecta a futuras
+          asignaciones.
+        </p>
+      </Field>
+      {type === 'restaurant' ? (
         <Tabs
           value={selected}
           onValueChange={(value) => setSelected(String(value))}

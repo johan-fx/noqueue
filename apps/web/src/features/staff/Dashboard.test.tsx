@@ -194,8 +194,8 @@ it('does not advance a known but exhausted shadow queue', async () => {
   )
   fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   expect(
-    await screen.findByRole('button', { name: 'Avanzar un turno' }),
-  ).toBeDisabled()
+    screen.queryByRole('button', { name: 'Avanzar un turno' }),
+  ).not.toBeInTheDocument()
 })
 it('blocks advance and explains how to resurvey invalidated managed inventory', async () => {
   const invalidated = {
@@ -242,8 +242,8 @@ it('blocks advance and explains how to resurvey invalidated managed inventory', 
   fireEvent.click(screen.getByRole('button', { name: 'Atrás' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
   expect(
-    await screen.findByRole('button', { name: 'Avanzar un turno' }),
-  ).toBeDisabled()
+    screen.queryByRole('button', { name: 'Avanzar un turno' }),
+  ).not.toBeInTheDocument()
 })
 
 it.each(['pending', 'active'] as const)(
@@ -539,7 +539,9 @@ it('keeps service Card actions minimal and moves operations into the queue heade
     'Cerrar listaVer lista',
   )
   fireEvent.click(within(card).getByRole('button', { name: 'Ver lista' }))
-  const drawer = await screen.findByRole('dialog', { name: 'Gestionar lista' })
+  const drawer = await screen.findByRole('dialog', {
+    name: 'Gestionar lista',
+  })
   expect(
     within(drawer).queryByRole('button', { name: 'Cerrar' }),
   ).not.toBeInTheDocument()
@@ -717,7 +719,7 @@ it('keeps the initial occupancy CTA visible even when intelligence is manually d
   ).toBeVisible()
   expect(screen.getByText('Desactivada manualmente')).toBeVisible()
 })
-it('omits queue footer in non-active tabs and keeps advance connected to the existing confirmation', async () => {
+it('omits the restaurant global footer and assigns the selected group through the existing sheet', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [service]
@@ -745,21 +747,29 @@ it('omits queue footer in non-active tabs and keeps advance connected to the exi
     />,
   )
   fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
-  const drawer = await screen.findByRole('dialog', { name: 'Gestionar lista' })
+  const drawer = await screen.findByRole('dialog', {
+    name: 'Gestionar lista',
+  })
   for (const tab of ['Completados', 'Cancelados']) {
     fireEvent.click(within(drawer).getByRole('tab', { name: tab }))
     expect(drawer.querySelector('[data-slot="drawer-footer"]')).toBeNull()
   }
   fireEvent.click(within(drawer).getByRole('tab', { name: 'Lista' }))
+  expect(
+    within(drawer).queryByRole('button', { name: 'Avanzar un turno' }),
+  ).not.toBeInTheDocument()
+  fireEvent.click(
+    within(drawer).getByRole('button', { name: 'Acciones del turno A1' }),
+  )
   const advance = within(drawer).getByRole('button', {
-    name: 'Avanzar un turno',
+    name: 'Asignar turno',
   })
   await waitFor(() => expect(advance).toBeEnabled())
   fireEvent.click(advance)
   expect(
-    within(await screen.findByRole('dialog', { name: 'Llamar' })).getByText(
-      'Turno A1',
-    ),
+    within(
+      await screen.findByRole('dialog', { name: 'Asignar turno' }),
+    ).getByText('Turno A1'),
   ).toBeVisible()
 })
 
@@ -805,18 +815,17 @@ it('refreshes an entry after 409 and requires another confirmation using the fre
     await screen.findByRole('button', { name: 'Acciones del turno T1' }),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Confirmar llegada' }))
-  const sheet = await screen.findByRole('dialog', {
-    name: 'Confirmar llegada',
-  })
-  expect(sheet).toHaveAttribute('data-side', 'bottom')
-  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() => expect(commands).toHaveLength(1))
+  expect(
+    screen.queryByRole('dialog', { name: 'Confirmar llegada' }),
+  ).not.toBeInTheDocument()
   await waitFor(() =>
-    expect(within(sheet).getByRole('alert')).toHaveTextContent(
-      'confirma de nuevo',
-    ),
+    expect(
+      screen.getByRole('button', { name: 'Acciones del turno T1' }),
+    ).toBeEnabled(),
   )
-  expect(commands).toHaveLength(1)
-  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T1' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar llegada' }))
   await waitFor(() => expect(commands).toHaveLength(2))
   expect(commands[0]!.body).toMatchObject({ version: 0, action: 'complete' })
   expect(commands[1]!.body).toMatchObject({ version: 1, action: 'complete' })
@@ -829,7 +838,7 @@ it.each([
   ['shadow', undefined],
   ['shadow', 'fastest'],
 ] as const)(
-  'advances past an uncallable strict preference in mode %s to fallback preference %s',
+  'lets the maître select the compatible group in mode %s with preference %s',
   async (estimationMode, preferredSpaceId) => {
     const strictEntry = {
       id: 'strict',
@@ -875,19 +884,22 @@ it.each([
       />,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
-    const advance = await screen.findByRole('button', {
-      name: 'Avanzar un turno',
-    })
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Acciones del turno ELIGIBLE',
+      }),
+    )
+    const advance = screen.getByRole('button', { name: 'Asignar turno' })
     await waitFor(() => expect(advance).toBeEnabled())
     fireEvent.click(advance)
-    const sheet = await screen.findByRole('dialog', { name: 'Llamar' })
+    const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
     expect(within(sheet).getByText('Turno ELIGIBLE')).toBeVisible()
     expect(within(sheet).queryByText('Turno STRICT')).not.toBeInTheDocument()
   },
 )
 it.each([false, true])(
-  'requires callable=%s for a strict preference with unknown inventory',
-  async (callable) => {
+  'revalidates restaurant compatibility in the selected sheet (available=%s)',
+  async (available) => {
     vi.mocked(api).mockImplementation(async (path) =>
       path.endsWith('/queues')
         ? [service]
@@ -900,8 +912,12 @@ it.each([false, true])(
               version: 0,
               sequence: 1,
               calledAt: null,
-              callable,
-              preferredSpaceId: 'terrace',
+              assignment: {
+                available,
+                spaceName: 'Terraza',
+                priorityRequired: false,
+                token: 'snapshot',
+              },
             },
           ],
     )
@@ -917,12 +933,19 @@ it.each([false, true])(
       />,
     )
     fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
-    await screen.findByText('Turno:', { exact: true })
-    const advance = await screen.findByRole('button', {
-      name: 'Avanzar un turno',
-    })
-    if (callable) await waitFor(() => expect(advance).toBeEnabled())
-    else expect(advance).toBeDisabled()
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Acciones del turno STRICT',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
+    expect(
+      within(sheet).getByLabelText('Cliente ya presente'),
+    ).not.toBeChecked()
+    const submit = within(sheet).getByRole('button', { name: 'Confirmar' })
+    if (available) expect(submit).toBeEnabled()
+    else expect(submit).toBeDisabled()
   },
 )
 
@@ -1226,3 +1249,56 @@ it('does not invent an initial count or allow an older poll to overwrite a confi
     within(card).getByText('Turnos en lista de espera').nextElementSibling,
   ).toHaveTextContent('1')
 })
+
+it.each(['reception', 'pool'] as const)(
+  'assigns next %s once without a sheet or an individual waiting action',
+  async (type) => {
+    const commands: unknown[] = []
+    let resolve!: () => void
+    vi.mocked(api).mockImplementation(async (path, _method, body) => {
+      if (path.endsWith('/commands')) {
+        commands.push(body)
+        await new Promise<void>((r) => {
+          resolve = r
+        })
+        return { ok: true }
+      }
+      return path.endsWith('/queues')
+        ? [{ ...service, config: { ...service.config, type } }]
+        : [
+            {
+              id: 'entry',
+              code: 'Q1',
+              partySize: 1,
+              status: 'waiting',
+              version: 0,
+              sequence: 1,
+              calledAt: null,
+            },
+          ]
+    })
+    render(
+      <Dashboard
+        venue={{
+          id: 'hotel',
+          name: 'Hotel',
+          organizationId: 'org',
+          organizationName: 'Empresa',
+          role: 'queue_staff',
+        }}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+    const next = await screen.findByRole('button', {
+      name: 'Asignar próximo turno',
+    })
+    fireEvent.click(next)
+    fireEvent.click(next)
+    expect(commands).toEqual([{ action: 'assign_next' }])
+    expect(
+      screen.queryByRole('dialog', { name: 'Asignar turno' }),
+    ).not.toBeInTheDocument()
+    resolve()
+    await waitFor(() => expect(next).toBeEnabled())
+  },
+)

@@ -11,6 +11,7 @@ import type {
   StaffEntry,
   VenueSummary,
   QueueCommand,
+  EntryCommand,
   ServiceInput,
 } from '@noqueue/contracts/staff'
 import { roleCapabilities } from '@noqueue/contracts/staff'
@@ -138,10 +139,11 @@ export function Dashboard(props: DashboardProps) {
   const [commandError, setCommandError] = useState('')
   const [commandStale, setCommandStale] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
+  const [arrivalMode, setArrivalMode] = useState<'notify' | 'present'>('notify')
   const [pending, setPending] = useState<{
     queueId: string
     entry: StaffEntry
-    action: QueueCommand['action']
+    action: EntryCommand['action']
     key: string
   } | null>(null)
   const permissions: readonly Capability[] =
@@ -299,7 +301,7 @@ export function Dashboard(props: DashboardProps) {
       setSaving(false)
     }
   }
-  function selectCommand(entry: StaffEntry, action: QueueCommand['action']) {
+  function selectCommand(entry: StaffEntry, action: EntryCommand['action']) {
     if (!queue || commandLock.current) return
     const trigger = document.activeElement as HTMLElement
     // Entry actions collapse their tray before opening confirmation. Return to
@@ -308,11 +310,53 @@ export function Dashboard(props: DashboardProps) {
       trigger
         .closest('li[data-entry-code]')
         ?.querySelector<HTMLElement>('[aria-controls^="actions-"]') ?? trigger
-    commandRequest.current = null
+    if (action !== 'complete') commandRequest.current = null
     setCommandError('')
     setCommandStale(false)
     setOverrideReason('')
+    setArrivalMode('notify')
+    if (action === 'complete') {
+      void directCommand({
+        action,
+        entryId: entry.id,
+        version: entry.version,
+      })
+      return
+    }
     setPending({ queueId: queue.id, entry, action, key: crypto.randomUUID() })
+  }
+  async function directCommand(input: QueueCommand) {
+    if (!queue || commandLock.current) return
+    commandLock.current = true
+    setBusy(true)
+    setError('')
+    const body = JSON.stringify({ queueId: queue.id, input })
+    if (commandRequest.current?.body !== body)
+      commandRequest.current = { body, key: crypto.randomUUID() }
+    try {
+      await api(
+        `/queues/${queue.id}/commands`,
+        'POST',
+        input,
+        commandRequest.current.key,
+      )
+      commandRequest.current = null
+      await refresh()
+    } catch (e) {
+      setError(errorMessage(e))
+      if (e instanceof ApiError && e.status === 409)
+        commandRequest.current = null
+      await refresh().catch(() => undefined)
+    } finally {
+      commandLock.current = false
+      setBusy(false)
+      requestAnimationFrame(() =>
+        (commandTrigger.current?.isConnected
+          ? commandTrigger.current
+          : menuTrigger.current
+        )?.focus(),
+      )
+    }
   }
   async function command() {
     if (!pending || commandLock.current || commandStale) return
@@ -324,6 +368,9 @@ export function Dashboard(props: DashboardProps) {
       entryId: snapshot.entry.id,
       version: snapshot.entry.version,
       action: snapshot.action,
+      ...(snapshot.action === 'call'
+        ? { arrivalMode, assignmentToken: snapshot.entry.assignment?.token }
+        : {}),
       ...(['call', 'restore'].includes(snapshot.action) && overrideReason.trim()
         ? { overrideReason: overrideReason.trim() }
         : {}),
@@ -356,7 +403,13 @@ export function Dashboard(props: DashboardProps) {
           )
           setEntries(rows)
           const entry = rows.find((row) => row.id === snapshot.entry.id)
-          if (entry && entryActions(entry.status).includes(snapshot.action)) {
+          if (
+            entry &&
+            (
+              entry.allowedActions ??
+              entryActions(entry.status, queue?.config.type)
+            ).includes(snapshot.action)
+          ) {
             setPending({ ...snapshot, entry, key: crypto.randomUUID() })
             commandRequest.current = null
             setCommandStale(false)
@@ -381,15 +434,7 @@ export function Dashboard(props: DashboardProps) {
       setBusy(false)
     }
   }
-  const nextEntry = entries.find(
-    (entry) =>
-      entry.status === 'waiting' &&
-      !queue?.readiness?.reasons.includes('inventory_refresh_required') &&
-      ((queue?.config.estimationMode !== 'active' &&
-        !queue?.config.resourceStateKnown &&
-        (!entry.preferredSpaceId || entry.preferredSpaceId === 'fastest')) ||
-        entry.callable === true),
-  )
+  const nextEntry = entries.find((entry) => entry.status === 'waiting')
   function openQueueOperation(action: NonNullable<typeof lifecycle>['action']) {
     if (!queue || busy || saving || lifecycle) return
     setLifecycle({
@@ -681,6 +726,7 @@ export function Dashboard(props: DashboardProps) {
             )}
           </div>
           {drawer === 'queue' &&
+            queue?.config.type !== 'restaurant' &&
             tab === 'active' &&
             permissions.includes('queue.operate') && (
               <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
@@ -691,10 +737,13 @@ export function Dashboard(props: DashboardProps) {
                       className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
                       disabled={busy || !nextEntry}
                       onClick={() => {
-                        if (nextEntry) selectCommand(nextEntry, 'call')
+                        commandTrigger.current =
+                          document.activeElement as HTMLElement
+                        if (nextEntry)
+                          void directCommand({ action: 'assign_next' })
                       }}
                     >
-                      Avanzar un turno <MoveRight aria-hidden="true" />
+                      Asignar próximo turno <MoveRight aria-hidden="true" />
                     </Button>
                   )}
               </DrawerFooter>
@@ -771,24 +820,46 @@ export function Dashboard(props: DashboardProps) {
                   {commandError}
                 </p>
               )}
-              {pending && ['call', 'restore'].includes(pending.action) && (
-                <label className="space-y-2 text-sm">
-                  {pending.action === 'restore'
-                    ? 'Motivo de restauración (obligatorio)'
-                    : 'Motivo de excepción al orden (opcional)'}
-                  <input
-                    className="w-full rounded border p-2"
-                    value={overrideReason}
-                    minLength={3}
-                    maxLength={300}
-                    onChange={(event) => setOverrideReason(event.target.value)}
-                  />
-                  <span className="text-muted-foreground">
-                    {pending.action === 'restore'
-                      ? 'Volverá a espera sin recuperar una mesa ya reasignada. Se auditará el motivo.'
-                      : 'Solo para una llamada deliberada fuera de orden. Se auditará.'}
-                  </span>
-                </label>
+              {pending?.action === 'call' && (
+                <div className="space-y-4">
+                  <p>
+                    {pending.entry.assignment?.available === false
+                      ? 'No hay una mesa compatible disponible.'
+                      : `Disponibilidad compatible${
+                          pending.entry.assignment?.spaceName
+                            ? ` · ${pending.entry.assignment.spaceName}`
+                            : ''
+                        }. El sistema asignará la mesa.`}
+                  </p>
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={arrivalMode === 'present'}
+                      disabled={busy}
+                      onChange={(event) =>
+                        setArrivalMode(
+                          event.target.checked ? 'present' : 'notify',
+                        )
+                      }
+                    />
+                    Cliente ya presente
+                  </label>
+                  {pending.entry.assignment?.priorityRequired && (
+                    <label className="space-y-2 text-sm">
+                      Motivo de prioridad (obligatorio)
+                      <input
+                        className="w-full rounded border p-2"
+                        value={overrideReason}
+                        minLength={3}
+                        maxLength={300}
+                        disabled={busy}
+                        onChange={(event) =>
+                          setOverrideReason(event.target.value)
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
               )}
               <SheetFooter className="gap-3 px-0">
                 <Button
@@ -798,7 +869,14 @@ export function Dashboard(props: DashboardProps) {
                       : ''
                   }`}
                   variant={pending?.action === 'cancel' ? 'outline' : 'default'}
-                  disabled={busy || commandStale}
+                  disabled={
+                    busy ||
+                    commandStale ||
+                    (pending?.action === 'call' &&
+                      (pending.entry.assignment?.available === false ||
+                        (!!pending.entry.assignment?.priorityRequired &&
+                          overrideReason.trim().length < 3)))
+                  }
                   onClick={() => void command()}
                 >
                   {busy

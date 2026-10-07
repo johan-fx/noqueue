@@ -26,7 +26,8 @@ export function TurnView({
 }) {
   const c = entry.customer!,
     es = locale === 'es',
-    phase = c.phase
+    phase = c.phase,
+    restaurant = c.service.type === 'restaurant'
   const arrived = phase === 'arrived',
     expired = phase === 'expired',
     cancelled = phase === 'cancelled',
@@ -56,8 +57,12 @@ export function TurnView({
       ? `Es un buen momento para ir acercándote con calma a ${c.service.venueName}.`
       : `Now is a good time to make your way to ${c.service.venueName}.`,
     called: es
-      ? 'Acércate al restaurante. El personal confirmará tu llegada.'
-      : 'Please come to the restaurant. Staff will confirm your arrival.',
+      ? `Acércate ${
+          restaurant ? 'al restaurante' : `a ${c.service.name}`
+        }. El personal confirmará tu llegada.`
+      : `Please come to ${
+          restaurant ? 'the restaurant' : c.service.name
+        }. Staff will confirm your arrival.`,
     arrived: es
       ? 'Esperamos que disfrutes de tu experiencia con nosotros.'
       : 'We hope you enjoy your experience with us.',
@@ -88,10 +93,22 @@ export function TurnView({
   const labels = es
     ? [
         'Lista virtual',
-        arrived ? 'Mesa asignada' : 'En marcha',
+        arrived
+          ? restaurant
+            ? 'Mesa asignada'
+            : 'Llegada confirmada'
+          : 'En marcha',
         '¡Es tu turno!',
       ]
-    : ['Waiting list', arrived ? 'Table assigned' : 'On your way', 'Your turn!']
+    : [
+        'Waiting list',
+        arrived
+          ? restaurant
+            ? 'Table assigned'
+            : 'Arrival confirmed'
+          : 'On your way',
+        'Your turn!',
+      ]
   return (
     <>
       <div className="flex flex-1 flex-col gap-6 px-4 pt-2 pb-6">
@@ -282,7 +299,7 @@ export function TurnView({
             </p>
           </div>
         )}
-        {approaching && (
+        {approaching && c.actions.includes('yield') && (
           <div className="flex items-start gap-3 rounded-lg bg-gray-50 p-4">
             <Timer className="mt-1 size-6 shrink-0" />
             <div>
@@ -327,28 +344,32 @@ export function TurnView({
           </div>
         )}
       </div>
-      {active && !called && (
+      {active && !called && c.actions.length > 0 && (
         <CustomerFooter>
-          <Button
-            variant="outline"
-            className="border-red-700 text-red-700"
-            onClick={() => onAction('cancel')}
-          >
-            {es ? 'Abandonar la lista' : 'Leave the list'}
-          </Button>
-          <Button
-            variant="outline"
-            className="border-gray-800"
-            onClick={() => onAction(approaching ? 'yield' : 'update')}
-          >
-            {approaching
-              ? es
-                ? 'Pasar turno'
-                : 'Yield turn'
-              : es
-              ? 'Modificar'
-              : 'Edit'}
-          </Button>
+          {c.actions.includes('cancel') && (
+            <Button
+              variant="outline"
+              className="border-red-700 text-red-700"
+              onClick={() => onAction('cancel')}
+            >
+              {es ? 'Abandonar la lista' : 'Leave the list'}
+            </Button>
+          )}
+          {c.actions.includes(approaching ? 'yield' : 'update') && (
+            <Button
+              variant="outline"
+              className="border-gray-800"
+              onClick={() => onAction(approaching ? 'yield' : 'update')}
+            >
+              {approaching
+                ? es
+                  ? 'Pasar turno'
+                  : 'Yield turn'
+                : es
+                ? 'Modificar'
+                : 'Edit'}
+            </Button>
+          )}
         </CustomerFooter>
       )}
       {(expired || cancelled) && (

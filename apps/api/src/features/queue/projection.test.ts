@@ -111,7 +111,7 @@ it('recalculates an expired group adjustment without a queue event and never fre
     entryId = crypto.randomUUID()
   const config = {
     name: 'Expiry',
-    type: 'reception',
+    type: 'restaurant',
     capacity: 99,
     averageMinutes: 30,
     graceMinutes: 5,
@@ -119,7 +119,14 @@ it('recalculates an expired group adjustment without a queue event and never fre
     twentyFourHours: true,
     schedules: [],
     receptionServices: ['check_in'],
-    spaces: [],
+    spaces: [
+      {
+        id: 'reception',
+        name: 'Room',
+        tables: 1,
+        tableTypes: [{ seats: 100, count: 1 }],
+      },
+    ],
     stations: 1,
     estimationMode: 'active',
     resourceStateKnown: true,

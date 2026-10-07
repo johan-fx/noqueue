@@ -38,7 +38,9 @@ export async function openingContext(
       .all<{ id: string; status: string; version: number }>()
   ).results
   const status = await readiness(env, queueId, state.config)
-  const groups = resourceGroups(state.config).map((group) => ({
+  const groups = (
+    state.config.type === 'restaurant' ? resourceGroups(state.config) : []
+  ).map((group) => ({
     ...group,
     allocated: state.allocations.filter(
       (a) =>
@@ -75,13 +77,16 @@ export async function openingContext(
       }),
     ),
     pendingCount: entries.filter((e) => e.status !== 'completed').length,
-    untrackedCount: entries.filter(
-      (e) =>
-        e.status !== 'waiting' &&
-        !state.allocations.some(
-          (a) => a.entry_id === e.id && a.released_at === null,
-        ),
-    ).length,
+    untrackedCount:
+      state.config.type !== 'restaurant'
+        ? 0
+        : entries.filter(
+            (e) =>
+              e.status !== 'waiting' &&
+              !state.allocations.some(
+                (a) => a.entry_id === e.id && a.released_at === null,
+              ),
+          ).length,
     readiness: status,
     groups,
   }
@@ -139,6 +144,11 @@ export async function runLifecycleCommand(
   const state = await loadQueueState(env, queueId),
     config = state.config!,
     now = Date.now()
+  if (
+    config.type !== 'restaurant' &&
+    ['confirm_inventory', 'occupancy', 'release_unit'].includes(input.action)
+  )
+    throw new HTTPException(409, { message: 'unsupported_action' })
   const legacyRestaurantOpen =
     input.action === 'open' && config.type === 'restaurant'
   if (legacyRestaurantOpen) {
@@ -230,10 +240,11 @@ export async function runLifecycleCommand(
     )
   }
   if (
-    input.action === 'declare_full' ||
-    input.action === 'open' ||
-    input.action === 'confirm_inventory' ||
-    input.action === 'occupancy'
+    config.type === 'restaurant' &&
+    (input.action === 'declare_full' ||
+      input.action === 'open' ||
+      input.action === 'confirm_inventory' ||
+      input.action === 'occupancy')
   ) {
     const answers =
       input.action === 'occupancy'
@@ -288,9 +299,10 @@ export async function runLifecycleCommand(
     }
   }
   if (
-    input.action === 'declare_full' ||
-    input.action === 'open' ||
-    input.action === 'confirm_inventory'
+    config.type === 'restaurant' &&
+    (input.action === 'declare_full' ||
+      input.action === 'open' ||
+      input.action === 'confirm_inventory')
   ) {
     const complete = configurationComplete(config)
     if (complete)

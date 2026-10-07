@@ -48,6 +48,7 @@ const entries: StaffEntry[] = [
   sequence: index,
   version: 0,
   calledAt: status === 'called' ? Date.now() - 120000 : null,
+  arrivalDeadlineAt: status === 'called' ? Date.now() + 120000 : null,
 }))
 function Harness({ canOperate = true, action = vi.fn() }) {
   const [tab, setTab] = useState('active')
@@ -87,7 +88,7 @@ it('separates active, completed and cancelled histories using accessible tabs', 
   expect(within(activePanel).getAllByRole('listitem')).toHaveLength(2)
   expect(screen.getByText('2 min')).toHaveAttribute(
     'title',
-    'Tiempo desde la llamada',
+    'Tiempo restante para llegar',
   )
   fireEvent.click(screen.getByRole('tab', { name: 'Completados' }))
   expect(screen.getByRole('tab', { name: 'Completados' })).toHaveAttribute(
@@ -103,8 +104,8 @@ it('separates active, completed and cancelled histories using accessible tabs', 
   ).toBeVisible()
   expect(within(completedPanel).getAllByRole('listitem')).toHaveLength(2)
   expect(
-    screen.getByRole('button', { name: 'Acciones del turno T2' }),
-  ).toBeVisible()
+    screen.queryByRole('button', { name: 'Acciones del turno T2' }),
+  ).not.toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: 'Acciones del turno T3' }),
   ).not.toBeInTheDocument()
@@ -124,8 +125,8 @@ it('expands permitted turn actions without making historical cards actionable', 
   const action = vi.fn()
   render(<Harness action={action} />)
   fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Llamar' }))
-  expect(action).toHaveBeenCalledWith(entries[0], 'call')
+  fireEvent.click(screen.getByRole('button', { name: 'Cancelar turno' }))
+  expect(action).toHaveBeenCalledWith(entries[0], 'cancel')
 })
 it('keeps the viewer read-only', () => {
   render(<Harness canOperate={false} />)
@@ -136,7 +137,7 @@ it('keeps the viewer read-only', () => {
 it('offers an explicit release after arrival', () => {
   render(
     <QueueView
-      queue={queue}
+      queue={{ ...queue, config: { ...queue.config, type: 'restaurant' } }}
       entries={[{ ...entries[2]!, resourceId: 'reception:100:0' }]}
       tab="completed"
       onTabChange={() => {}}
@@ -156,6 +157,7 @@ it('disables explicit calls while managed inventory needs a fresh survey', () =>
     <QueueView
       queue={{
         ...queue,
+        config: { ...queue.config, type: 'restaurant' },
         readiness: {
           state: 'pending',
           reasons: ['inventory_refresh_required'],
@@ -173,7 +175,7 @@ it('disables explicit calls while managed inventory needs a fresh survey', () =>
     />,
   )
   fireEvent.click(screen.getByRole('button', { name: /Acciones/ }))
-  expect(screen.getByRole('button', { name: 'Llamar' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Asignar turno' })).toBeDisabled()
 })
 
 it('numbers the whole active list including called turns, preserves ordinals when filtered and resets for another service', () => {
@@ -286,11 +288,11 @@ it('closes row actions when externally changing views or queues', () => {
     <QueueView {...props} queue={queue} tab="active" />,
   )
   fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
-  expect(screen.getByRole('button', { name: 'Llamar' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Cancelar turno' })).toBeVisible()
   rerender(<QueueView {...props} queue={queue} tab="completed" />)
   rerender(<QueueView {...props} queue={queue} tab="active" />)
   expect(
-    screen.queryByRole('button', { name: 'Llamar' }),
+    screen.queryByRole('button', { name: 'Cancelar turno' }),
   ).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
   rerender(
@@ -298,6 +300,6 @@ it('closes row actions when externally changing views or queues', () => {
   )
   rerender(<QueueView {...props} queue={queue} tab="active" />)
   expect(
-    screen.queryByRole('button', { name: 'Llamar' }),
+    screen.queryByRole('button', { name: 'Cancelar turno' }),
   ).not.toBeInTheDocument()
 })

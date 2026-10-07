@@ -1,9 +1,6 @@
+import { deliveryTraceStatement, purgeDeliveryTrace } from './delivery-trace'
 import { confirmEntry, confirmationExperimentEnabled } from './confirmation'
-import {
-  queueCoordinator,
-  experimentQueueId,
-  openExperimentRecipientAllowed,
-} from './experiment'
+import { queueCoordinator, openExperimentRecipientAllowed } from './experiment'
 import { z } from 'zod'
 import { createWhatsAppSender } from '../../integrations/360dialog'
 import { decryptPhone, recoveryToken } from './crypto'
@@ -26,8 +23,7 @@ export async function dispatchNotification(
   )
     .bind(id)
     .first<{ queue_id: string }>()
-  if (entry?.queue_id === experimentQueueId)
-    return queueCoordinator(env, entry.queue_id).dispatch(id)
+  if (entry?.queue_id) return queueCoordinator(env, entry.queue_id).dispatch(id)
   return dispatchNotificationSerialized(env, id)
 }
 
@@ -37,7 +33,7 @@ export async function dispatchNotificationSerialized(
 ) {
   if (env.WHATSAPP_ENABLED !== 'true') return
   const row = await env.DB.prepare(
-    `SELECT n.status,n.attempts,n.kind,n.position,e.status AS entry_status,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,c.phone_cipher,c.phone_hash,v.name AS venue
+    `SELECT n.status,n.attempts,n.kind,n.position,e.status AS entry_status,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,c.phone_cipher,c.phone_hash,v.name AS venue
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
     LEFT JOIN queue_confirmation f ON f.entry_id=e.id
     JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id WHERE n.id=?`,
@@ -46,6 +42,7 @@ export async function dispatchNotificationSerialized(
     .first<{
       status: string
       position: number | null
+      arrival_deadline_at: number | null
       entry_status: string
       queue_id: string
       sequence: number
@@ -61,6 +58,53 @@ export async function dispatchNotificationSerialized(
       venue: string
     }>()
   if (!row || row.status !== 'pending') return
+  const notice = ['ready', 'approaching', 'expired'].includes(row.kind)
+  let approaching = true
+  if (row.kind === 'approaching') {
+    const current = await env.DB.prepare(
+      `SELECT q.config,p.quality,p.predicted_at,
+      (SELECT COUNT(*) FROM queue_entry w WHERE w.queue_id=e.queue_id AND w.status='waiting' AND w.sequence<e.sequence) AS ahead
+      FROM queue_entry e JOIN queue q ON q.id=e.queue_id LEFT JOIN queue_projection p ON p.entry_id=e.id WHERE e.id=?`,
+    )
+      .bind(row.id)
+      .first<{
+        config: string | null
+        quality: string | null
+        predicted_at: number | null
+        ahead: number
+      }>()
+    const config = current?.config
+      ? (JSON.parse(current.config) as {
+          approachTurns?: number
+          approachMinutes?: number
+        })
+      : null
+    approaching =
+      !!current &&
+      !!config &&
+      (current.ahead <= (config.approachTurns ?? 2) ||
+        (current.quality !== 'unknown' &&
+          current.predicted_at !== null &&
+          current.predicted_at - Date.now() <=
+            (config.approachMinutes ?? 10) * 60000))
+  }
+  if (
+    notice &&
+    ((row.kind === 'ready' &&
+      (row.entry_status !== 'called' ||
+        (row.arrival_deadline_at ?? 0) <= Date.now())) ||
+      (row.kind === 'approaching' &&
+        (row.entry_status !== 'waiting' || !approaching)) ||
+      (row.kind === 'expired' && row.entry_status !== 'expired'))
+  ) {
+    await env.DB.batch([
+      env.DB.prepare(
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE id=? AND status='pending'",
+      ).bind(Date.now(), id),
+      deliveryTraceStatement(env, { notificationId: id, event: 'obsolete' }),
+    ])
+    return
+  }
   if (
     row.kind === 'confirmation' &&
     (!confirmationExperimentEnabled(env) || !row.payload)
@@ -125,10 +169,18 @@ export async function dispatchNotificationSerialized(
     .bind(now, id, now, now - 86400000, row.phone_hash)
     .run()
   if (!claim.meta.changes) return
+  await deliveryTraceStatement(env, {
+    notificationId: id,
+    event: 'attempt_started',
+    attempt: row.attempts + 1,
+  }).run()
   const result = await createWhatsAppSender(env).send({
     phone,
     locale: row.locale,
     venue: row.venue,
+    ...(notice
+      ? { notice: row.kind as 'ready' | 'approaching' | 'expired' }
+      : {}),
     code: row.code,
     token: await recoveryToken(env, row.id),
     ...(row.kind === 'position_update' && row.position !== null
@@ -138,6 +190,18 @@ export async function dispatchNotificationSerialized(
       ? { confirmationPayload: row.payload }
       : {}),
   })
+  await deliveryTraceStatement(env, {
+    notificationId: id,
+    event: result.kind,
+    attempt: row.attempts + 1,
+    ...(result.kind === 'accepted' ? { providerId: result.providerId } : {}),
+    ...(result.kind === 'failed'
+      ? {
+          httpStatus: result.diagnostic.httpStatus,
+          providerCode: result.diagnostic.providerCode,
+        }
+      : {}),
+  }).run()
   if (result.kind === 'failed') {
     console.warn({
       event: 'whatsapp_send_failed',
@@ -204,6 +268,7 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
       status: string
       phone_hash: string
       occurred_at: number
+      received_at: number
     }>()
   if (!event) return
   const now = Date.now()
@@ -224,7 +289,7 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
         AND entry_id IN (SELECT entry_id FROM queue_entry_contact WHERE phone_hash=?)`,
       ).bind(now, event.occurred_at + 999, event.phone_hash),
       env.DB.prepare(
-        `UPDATE consent SET revoked_at=? WHERE organization_id='demo-org' AND purpose IN ('queue_updates','confirmation_contact') AND revoked_at IS NULL AND (granted_at<=? OR entry_id IN (SELECT entry_id FROM queue_confirmation WHERE revoked_at IS NOT NULL))
+        `UPDATE consent SET revoked_at=? WHERE purpose IN ('queue_updates','confirmation_contact') AND revoked_at IS NULL AND (granted_at<=? OR entry_id IN (SELECT entry_id FROM queue_confirmation WHERE revoked_at IS NOT NULL))
         AND entry_id IN (SELECT entry_id FROM queue_entry_contact WHERE phone_hash=?)`,
       ).bind(now, event.occurred_at + 999, event.phone_hash),
       env.DB.prepare(
@@ -254,6 +319,14 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
     read: 5,
   }
   await env.DB.batch([
+    deliveryTraceStatement(env, {
+      id,
+      notificationId: notification.id,
+      event: event.status,
+      providerId: event.provider_id,
+      occurredAt: event.occurred_at,
+      recordedAt: event.received_at,
+    }),
     env.DB.prepare(
       `UPDATE notification_outbox SET status=?,updated_at=? WHERE id=? AND
       CASE status WHEN 'sending' THEN 0 WHEN 'unknown' THEN 0 WHEN 'accepted' THEN 1 WHEN 'failed' THEN 3 WHEN 'sent' THEN 2 WHEN 'delivered' THEN 4 WHEN 'read' THEN 5 ELSE 99 END < ?`,
@@ -266,11 +339,15 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
 }
 export async function reconcile(env: CloudflareBindings) {
   const now = Date.now()
-  await env.DB.prepare(
-    "UPDATE notification_outbox SET status='unknown',updated_at=? WHERE status='sending' AND updated_at<?",
-  )
-    .bind(now, now - 120000)
-    .run()
+  await purgeDeliveryTrace(env, now)
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT OR IGNORE INTO notification_trace(id,notification_id,event,attempt,recorded_at) SELECT id || ':unknown:' || attempts,id,'unknown',attempts,? FROM notification_outbox WHERE status='sending' AND updated_at<?",
+    ).bind(now, now - 120000),
+    env.DB.prepare(
+      "UPDATE notification_outbox SET status='unknown',updated_at=? WHERE status='sending' AND updated_at<?",
+    ).bind(now, now - 120000),
+  ])
   const notifications = await env.DB.prepare(
     "SELECT id FROM notification_outbox WHERE status='pending' AND next_attempt_at<=? ORDER BY updated_at LIMIT 100",
   )

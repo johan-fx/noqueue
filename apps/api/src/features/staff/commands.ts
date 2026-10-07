@@ -1,8 +1,9 @@
+import { assignmentContext } from './assignment'
+import { noticeStatement, publishNotice } from '../queue/notices'
 import { admissionState } from './availability'
 import { directoryConfigStatement } from '../discovery/configuration'
 import { expireArrivals } from '../queue/customer'
 import { topology } from '../queue/opening-state'
-import { eligibleResources } from '../queue/engine'
 import {
   loadQueueState,
   normalizeConfig,
@@ -12,6 +13,8 @@ import {
   queueCommandSchema,
   queueSettingsSchema,
   type QueueCommand,
+  type EntryCommand,
+  allowedEntryActions,
 } from '@noqueue/contracts/staff'
 import { HTTPException } from 'hono/http-exception'
 import { queueAccess, audit } from '../../auth/access'
@@ -21,12 +24,12 @@ export async function runQueueCommand(
   actor: string,
   queueId: string,
   key: string,
-  input: QueueCommand,
+  command: QueueCommand,
   now = Date.now(),
 ) {
   const access = await queueAccess(env, actor, queueId, 'queue.operate')
-  queueCommandSchema.parse(input)
-  const fingerprint = await hash(JSON.stringify({ queueId, input }))
+  queueCommandSchema.parse(command)
+  const fingerprint = await hash(JSON.stringify({ queueId, input: command }))
   const previous = await env.DB.prepare(
     'SELECT request_hash,result FROM staff_command WHERE actor_id=? AND request_key=?',
   )
@@ -39,6 +42,19 @@ export async function runQueueCommand(
     return JSON.parse(previous.result) as { ok: true }
   }
   await expireArrivals(env, queueId, now)
+  const state = await recalculateQueue(env, queueId, now)
+  const quick = state.config?.type !== 'restaurant'
+  let input: EntryCommand
+  if (command.action === 'assign_next') {
+    if (!quick) throw new HTTPException(409, { message: 'unsupported_action' })
+    const first = await env.DB.prepare(
+      "SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence,id LIMIT 1",
+    )
+      .bind(queueId)
+      .first<{ id: string; version: number }>()
+    if (!first) throw new HTTPException(409, { message: 'queue_empty' })
+    input = { action: 'call', entryId: first.id, version: first.version }
+  } else input = command
   const entry = await env.DB.prepare(
     'SELECT status,version,called_at,arrival_deadline_at FROM queue_entry WHERE id=? AND queue_id=?',
   )
@@ -52,6 +68,16 @@ export async function runQueueCommand(
   if (!entry) throw new HTTPException(404, { message: 'not_found' })
   if (entry.version !== input.version)
     throw new HTTPException(409, { message: 'version_conflict' })
+  if (
+    command.action !== 'assign_next' &&
+    !allowedEntryActions(
+      state.config?.type ?? 'reception',
+      entry.status,
+    ).includes(input.action) &&
+    !(input.action === 'no_show' && entry.status === 'called') &&
+    !(input.action === 'restore' && entry.status === 'expired')
+  )
+    throw new HTTPException(409, { message: 'unsupported_action' })
   const transitions: Record<string, readonly string[]> = {
     call: ['waiting'],
     complete: ['called'],
@@ -79,7 +105,7 @@ export async function runQueueCommand(
       throw new HTTPException(409, { message: 'arrival_grace_active' })
   }
   const status = {
-    call: 'called',
+    call: input.arrivalMode === 'present' ? 'completed' : 'called',
     complete: 'completed',
     release: 'served',
     cancel: 'cancelled',
@@ -87,51 +113,20 @@ export async function runQueueCommand(
     skip: 'waiting',
     restore: 'waiting',
   }[input.action]
-  const state = await recalculateQueue(env, queueId, now)
   const extra: D1PreparedStatement[] = []
-  const active = state.config?.estimationMode === 'active'
   const allocation = state.allocations.find(
     (a) => a.entry_id === input.entryId && a.released_at === null,
   )
-  if (input.action === 'call') {
+  if (input.action === 'call' && !quick) {
     if (state.inventorySafety.requiresSurvey)
       throw new HTTPException(409, { message: 'inventory_refresh_required' })
-    const party = state.parties.find((p) => p.id === input.entryId)!
-    const compatible = eligibleResources(
-      party,
-      state.resources,
-      state.config?.assignmentPreference,
-    )
-    const free = compatible
-      .filter(
-        (r) =>
-          r.callable &&
-          r.availableAt !== null &&
-          r.availableAt <= now &&
-          !state.allocations.some(
-            (a) => a.resource_id === r.id && a.released_at === null,
-          ),
-      )
-      .sort((a, b) => a.seats - b.seats || a.id.localeCompare(b.id))
-    const resource = free[0]
-    // Confirmed physical capacity is a safety invariant, independent of rollout/order enforcement.
-    if (
-      !resource &&
-      (active ||
-        state.inventorySafety.managed ||
-        (party.preferredSpaceId && party.preferredSpaceId !== 'fastest'))
-    )
+    const context = await assignmentContext(state, input.entryId, now)
+    if (input.assignmentToken && input.assignmentToken !== context.token)
+      throw new HTTPException(409, { message: 'assignment_context_changed' })
+    const resource = context.resource
+    if (!resource)
       throw new HTTPException(409, { message: 'no_free_compatible_resource' })
-    const oldest =
-      resource &&
-      state.parties.find((p) =>
-        eligibleResources(
-          p,
-          state.resources,
-          state.config?.assignmentPreference,
-        ).some((r) => r.id === resource.id),
-      )
-    if (active && oldest?.id !== input.entryId && !input.overrideReason)
+    if (context.priorityRequired && !input.overrideReason)
       throw new HTTPException(409, { message: 'oldest_compatible_required' })
     if (input.overrideReason)
       extra.push(
@@ -149,7 +144,7 @@ export async function runQueueCommand(
     if (resource)
       extra.push(
         env.DB.prepare(
-          'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET resource_id=excluded.resource_id,space_id=excluded.space_id,seats=excluded.seats,reserved_at=excluded.reserved_at,arrived_at=NULL,released_at=NULL,outcome=NULL WHERE queue_allocation.released_at IS NOT NULL',
+          'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET resource_id=excluded.resource_id,space_id=excluded.space_id,seats=excluded.seats,reserved_at=excluded.reserved_at,arrived_at=excluded.arrived_at,released_at=NULL,outcome=NULL WHERE queue_allocation.released_at IS NOT NULL',
         ).bind(
           input.entryId,
           queueId,
@@ -157,6 +152,7 @@ export async function runQueueCommand(
           resource.spaceId,
           resource.seats,
           now,
+          input.arrivalMode === 'present' ? now : null,
         ),
       )
   }
@@ -173,13 +169,17 @@ export async function runQueueCommand(
         now,
       ),
     )
-  if (input.action === 'complete' && allocation)
+  if (input.action === 'complete' && allocation && !quick)
     extra.push(
       env.DB.prepare(
         'UPDATE queue_allocation SET arrived_at=? WHERE entry_id=? AND released_at IS NULL',
       ).bind(now, input.entryId),
     )
-  if (allocation && ['release', 'cancel', 'no_show'].includes(input.action))
+  if (
+    allocation &&
+    (['release', 'cancel', 'no_show'].includes(input.action) ||
+      (quick && input.action === 'complete'))
+  )
     extra.push(
       env.DB.prepare(
         'UPDATE queue_allocation SET released_at=?,outcome=? WHERE entry_id=? AND released_at IS NULL',
@@ -212,6 +212,8 @@ export async function runQueueCommand(
       ),
     )
   }
+  if (input.action === 'call' && input.arrivalMode !== 'present')
+    extra.push(noticeStatement(env, input.entryId, 'ready', now))
   await env.DB.batch([
     ...extra,
     env.DB.prepare(
@@ -224,9 +226,9 @@ export async function runQueueCommand(
         ? null
         : entry.called_at,
       input.action,
-      state.config?.type === 'restaurant'
-        ? now + state.config.graceMinutes * 60000
-        : null,
+      input.arrivalMode === 'present'
+        ? null
+        : now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
       input.action,
       input.action,
       queueId,
@@ -251,7 +253,7 @@ export async function runQueueCommand(
       actor,
       access.organizationId,
       access.venueId,
-      `queue.${input.action}`,
+      `queue.${command.action}`,
       input.entryId,
     ),
     env.DB.prepare('INSERT INTO staff_command VALUES (?,?,?,?)').bind(
@@ -261,6 +263,8 @@ export async function runQueueCommand(
       JSON.stringify({ ok: true }),
     ),
   ])
+  if (input.action === 'call' && input.arrivalMode !== 'present')
+    await publishNotice(env, input.entryId, 'ready')
   await recalculateQueue(env, queueId, now)
   return { ok: true }
 }
@@ -284,6 +288,15 @@ export async function configureQueue(
     throw new HTTPException(409, { message: 'version_conflict' })
   const old = await loadQueueState(env, queueId)
   const config = normalizeConfig(rawConfig, old.config)
+  if (
+    config.graceMinutes !== old.config?.graceMinutes &&
+    (await env.DB.prepare(
+      "SELECT 1 FROM queue_entry WHERE queue_id=? AND status='called' AND arrival_deadline_at IS NULL LIMIT 1",
+    )
+      .bind(queueId)
+      .first())
+  )
+    throw new HTTPException(409, { message: 'legacy_arrival_deadline' })
   const approachChanged =
     (config.approachTurns ?? 2) !== (old.config?.approachTurns ?? 2) ||
     (config.approachMinutes ?? 10) !== (old.config?.approachMinutes ?? 10)
@@ -329,7 +342,7 @@ export async function configureQueue(
         a.expiresAt <= Date.now() ||
         a.expiresAt > Date.now() + 24 * 60 * 60000 ||
         (!(
-          config.type === 'reception' &&
+          config.type !== 'restaurant' &&
           a.spaceId === 'reception' &&
           a.seats === 100
         ) &&
@@ -342,8 +355,10 @@ export async function configureQueue(
   )
     throw new HTTPException(400, { message: 'invalid_adjustment' })
   for (const a of [
-    ...old.allocations.filter((a) => a.released_at === null),
-    ...old.holds,
+    ...(config.type === 'restaurant'
+      ? old.allocations.filter((a) => a.released_at === null)
+      : []),
+    ...(config.type === 'restaurant' ? old.holds : []),
   ]) {
     const space = config.spaces.find((s) => s.id === a.space_id)
     const type = space?.tableTypes?.find((t) => t.seats === a.seats)

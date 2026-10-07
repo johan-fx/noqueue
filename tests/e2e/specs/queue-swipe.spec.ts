@@ -3,7 +3,7 @@ import { test, expect, type Page, type Locator } from '@playwright/test'
 // Browser-level interaction test: local API fixtures isolate gestures from business mutations.
 async function openQueue(
   page: Page,
-  options: { viewer?: boolean; blocked?: boolean } = {},
+  options: { viewer?: boolean; blocked?: boolean; quick?: boolean } = {},
 ) {
   let commands = 0
   const queue = {
@@ -20,7 +20,7 @@ async function openQueue(
     },
     config: {
       name: 'Swipe queue',
-      type: 'pool',
+      type: options.quick ? 'pool' : 'restaurant',
       capacity: 40,
       averageMinutes: 10,
       graceMinutes: 5,
@@ -103,7 +103,9 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   const { drawer, commands } = await openQueue(page)
   const row = drawer.locator('[data-entry-code="T0"]')
   const called = drawer.locator('[data-entry-code="T1"]')
-  await expect(row.getByRole('button', { name: 'Llamar' })).toHaveCount(0)
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveCount(
+    0,
+  )
   await expect(row).toHaveCSS('user-select', 'none')
   await expect(surface(row)).toHaveCSS('touch-action', 'pan-y')
   const p = await mouseStart(page, row)
@@ -124,14 +126,14 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await expect.poll(() => offset(row)).toBe(0)
   await mouseSwipe(page, row, 180)
   await expect.poll(() => offset(row)).toBe(144)
-  await expect(row.getByRole('button', { name: 'Llamar' })).toBeVisible()
-  await expect(row.getByRole('button', { name: 'Llamar' })).toHaveClass(
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toBeVisible()
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveClass(
     /bg-yellow-400/,
   )
   await mouseSwipe(page, row, -110)
   await expect.poll(() => offset(row)).toBe(0)
   await mouseSwipe(page, row, -280)
-  await expect.poll(() => offset(row)).toBe(-208)
+  await expect.poll(() => offset(row)).toBe(-112)
   await expect(
     row.getByRole('button', { name: 'Cancelar turno' }),
   ).toBeVisible()
@@ -146,13 +148,19 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await called.getByRole('button', { name: /Acciones del turno/ }).click()
   await expect.poll(() => offset(called)).toBe(0)
   await expect(
-    called.getByRole('button', { name: 'No presentado' }),
+    called.getByRole('button', { name: 'Confirmar llegada' }),
   ).toBeVisible()
   await row.getByRole('button', { name: /Acciones del turno/ }).focus()
   await page.keyboard.press('Enter')
-  await expect(row.getByRole('button', { name: 'Llamar' })).toBeVisible()
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toBeVisible()
   await expect(
-    called.getByRole('button', { name: 'No presentado' }),
+    called.getByRole('button', { name: 'Confirmar llegada' }),
+  ).toHaveCount(0)
+  await mouseSwipe(page, called, 120)
+  await called.getByRole('button', { name: 'Confirmar llegada' }).click()
+  await expect.poll(commands).toBe(1)
+  await expect(
+    page.getByRole('dialog', { name: 'Confirmar llegada', exact: true }),
   ).toHaveCount(0)
 })
 
@@ -162,7 +170,9 @@ test('swipe call respects inventory and viewer cannot drag', async ({
   let setup = await openQueue(page, { blocked: true })
   let row = setup.drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 120)
-  await expect(row.getByRole('button', { name: 'Llamar' })).toBeDisabled()
+  await expect(
+    row.getByRole('button', { name: 'Asignar turno' }),
+  ).toBeDisabled()
   await page.unrouteAll()
   setup = await openQueue(page, { viewer: true })
   row = setup.drawer.locator('[data-entry-code="T0"]')
@@ -236,4 +246,26 @@ test('native mobile touch progressively reveals, cancels and preserves vertical 
   await expect(drawer).toBeVisible()
   expect(commands()).toBe(0)
   await context.close()
+})
+
+test('quick waiting swipes and keyboard expose only cancellation; footer assigns directly', async ({
+  page,
+}) => {
+  const { drawer, commands } = await openQueue(page, { quick: true })
+  const row = drawer.locator('[data-entry-code="T0"]')
+  await mouseSwipe(page, row, 160)
+  await expect.poll(() => offset(row)).toBe(0)
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveCount(
+    0,
+  )
+  await row.getByRole('button', { name: /Acciones del turno/ }).click()
+  await expect(
+    row.getByRole('button', { name: 'Cancelar turno' }),
+  ).toBeVisible()
+  expect(commands()).toBe(0)
+  await drawer.getByRole('button', { name: 'Asignar próximo turno' }).click()
+  await expect.poll(commands).toBe(1)
+  await expect(
+    page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
+  ).toHaveCount(0)
 })

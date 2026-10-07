@@ -14,6 +14,7 @@ export const readinessMessages: Record<
 }
 
 export function readinessNotice(service: {
+  config?: { type: string }
   open: number
   queueState?: 'active' | 'inactive' | 'paused'
   inventoryConfirmed?: boolean
@@ -21,7 +22,11 @@ export function readinessNotice(service: {
 }) {
   const reasons = service.readiness?.reasons ?? []
   const missing = reasons.includes('configuration_missing')
-  const needsInventory = !service.inventoryConfirmed && !missing
+  const needsInventory =
+    service.config?.type !== 'reception' &&
+    service.config?.type !== 'pool' &&
+    !service.inventoryConfirmed &&
+    !missing
   return {
     title:
       service.readiness?.state === 'disabled'
@@ -53,11 +58,13 @@ export function readinessNotice(service: {
 
 /** Retained holds remain correctable while closed; correction never confirms a fresh inventory. */
 export function occupancyAction(service: {
+  config?: { type: string }
   open: number
   queueState?: 'active' | 'inactive' | 'paused'
   inventoryConfirmed?: boolean
   readiness?: QueueReadiness
 }) {
+  if (service.config && service.config.type !== 'restaurant') return null
   if (
     service.inventoryConfirmed ||
     (service.queueState !== 'active' &&

@@ -25,7 +25,7 @@ const props: ComponentProps<typeof QueueEntryCard> = {
     version: 1,
     config: {
       name: 'Queue',
-      type: 'reception',
+      type: 'restaurant',
       capacity: 20,
       averageMinutes: 10,
       graceMinutes: 5,
@@ -46,18 +46,16 @@ const props: ComponentProps<typeof QueueEntryCard> = {
 }
 it('keeps both trays mounted but inaccessible while closed', () => {
   const { container } = render(<QueueEntryCard {...props} />)
-  expect(screen.getByText('Llamar').closest('[inert]')).not.toBeNull()
+  expect(screen.getByText('Asignar turno').closest('[inert]')).not.toBeNull()
+  expect(screen.getByText('Cancelar turno').closest('[inert]')).not.toBeNull()
   expect(
-    screen.getByText('Cancelar turno').closest('[inert]'),
-  ).not.toBeNull()
-  expect(
-    screen.queryByRole('button', { name: 'Llamar' }),
+    screen.queryByRole('button', { name: 'Asignar turno' }),
   ).not.toBeInTheDocument()
   expect(container.querySelector('li')).toHaveClass('select-none')
 })
 it('reveals a yellow call action on the right and closes before dispatch', () => {
   render(<QueueEntryCard {...props} revealed="right" />)
-  const call = screen.getByRole('button', { name: 'Llamar' })
+  const call = screen.getByRole('button', { name: 'Asignar turno' })
   expect(call).toHaveClass('bg-yellow-400', 'text-yellow-950')
   fireEvent.click(call)
   expect(props.onReveal).toHaveBeenCalledWith(null)
@@ -77,7 +75,7 @@ it('keeps inventory restrictions on the swipe call action', () => {
       }}
     />,
   )
-  expect(screen.getByRole('button', { name: 'Llamar' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Asignar turno' })).toBeDisabled()
 })
 it('provides a green accessible arrival action for called entries', () => {
   render(
@@ -87,11 +85,11 @@ it('provides a green accessible arrival action for called entries', () => {
       revealed="right"
     />,
   )
+  expect(screen.getByRole('button', { name: 'Confirmar llegada' })).toHaveClass(
+    'bg-green-600',
+  )
   expect(
-    screen.getByRole('button', { name: 'Confirmar llegada' }),
-  ).toHaveClass('bg-green-600')
-  expect(
-    screen.queryByRole('button', { name: 'Llamar' }),
+    screen.queryByRole('button', { name: 'Asignar turno' }),
   ).not.toBeInTheDocument()
 })
 it('does not expose lateral actions without permission or while busy', () => {
@@ -99,11 +97,11 @@ it('does not expose lateral actions without permission or while busy', () => {
     <QueueEntryCard {...props} revealed="right" canOperate={false} />,
   )
   expect(
-    screen.queryByRole('button', { name: 'Llamar' }),
+    screen.queryByRole('button', { name: 'Asignar turno' }),
   ).not.toBeInTheDocument()
   rerender(<QueueEntryCard {...props} revealed="right" busy />)
   expect(
-    screen.queryByRole('button', { name: 'Llamar' }),
+    screen.queryByRole('button', { name: 'Asignar turno' }),
   ).not.toBeInTheDocument()
 })
 
@@ -115,10 +113,8 @@ it('keeps completed entries in the explicit menu without lateral trays', () => {
       revealed="all"
     />,
   )
-  expect(
-    screen.getByRole('button', { name: 'Liberar recurso' }),
-  ).toBeVisible()
-  expect(screen.queryByText('Llamar')).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Liberar recurso' })).toBeVisible()
+  expect(screen.queryByText('Asignar turno')).not.toBeInTheDocument()
   expect(screen.queryByText('Cancelar turno')).not.toBeInTheDocument()
 })
 it('retains only cancellation on the left for called entries', () => {
@@ -129,11 +125,29 @@ it('retains only cancellation on the left for called entries', () => {
       revealed="left"
     />,
   )
-  expect(
-    screen.getByRole('button', { name: 'Cancelar turno' }),
-  ).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Cancelar turno' })).toBeVisible()
   expect(screen.queryByText('Pasar turno')).not.toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: 'Confirmar llegada' }),
   ).not.toBeInTheDocument()
 })
+
+it.each(['reception', 'pool'] as const)(
+  'keeps %s waiting actions cancellation-only for swipe and keyboard',
+  (type) => {
+    render(
+      <QueueEntryCard
+        {...props}
+        queue={{ ...props.queue, config: { ...props.queue.config, type } }}
+        revealed="all"
+      />,
+    )
+    expect(
+      screen.queryByRole('button', { name: 'Asignar turno' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText('Pasar turno')).not.toBeInTheDocument()
+    expect(
+      screen.getAllByRole('button', { name: 'Cancelar turno' }),
+    ).toHaveLength(1)
+  },
+)

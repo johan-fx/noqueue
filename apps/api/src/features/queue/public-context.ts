@@ -1,4 +1,4 @@
-import { serviceSchema } from '@noqueue/contracts/staff'
+import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { normalizeConfig } from './projection'
 import { admissionState, publicAdmission } from '../staff/availability'
 

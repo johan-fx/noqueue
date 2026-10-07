@@ -236,6 +236,15 @@ export const serviceSchema = z
     }
   })
 export type ServiceInput = z.infer<typeof serviceSchema>
+/** Only missing legacy values receive defaults; an explicit five is never reclassified. */
+export const storedServiceSchema = z.preprocess((input) => {
+  if (input && typeof input === 'object' && !('graceMinutes' in input)) {
+    const value = input as { type?: string }
+    return { ...input, graceMinutes: value.type === 'restaurant' ? 5 : 2 }
+  }
+  return input
+}, serviceSchema)
+
 export const provisionSchema = z.object({
   locationToken: z.string().min(1).max(6000),
   locationOperationId: z.uuid(),
@@ -279,7 +288,7 @@ export type StaffMember = {
   active: number
   canEditDetails: boolean
 }
-export const queueCommandSchema = z.object({
+export const entryCommandSchema = z.object({
   entryId: z.string().uuid(),
   version: z.number().int().min(0),
   action: z.enum([
@@ -292,8 +301,30 @@ export const queueCommandSchema = z.object({
     'restore',
   ]),
   overrideReason: z.string().trim().min(3).max(300).optional(),
+  arrivalMode: z.enum(['notify', 'present']).optional(),
+  assignmentToken: z.string().optional(),
 })
+export const queueCommandSchema = z.union([
+  z.object({ action: z.literal('assign_next') }).strict(),
+  entryCommandSchema,
+])
 export type QueueCommand = z.infer<typeof queueCommandSchema>
+export type EntryCommand = z.infer<typeof entryCommandSchema>
+export function defaultGraceMinutes(type: ServiceInput['type']) {
+  return type === 'restaurant' ? 5 : 2
+}
+export function allowedEntryActions(
+  type: ServiceInput['type'],
+  status: string,
+  canOperate = true,
+): EntryCommand['action'][] {
+  if (!canOperate) return []
+  if (status === 'waiting')
+    return type === 'restaurant' ? ['call', 'cancel'] : ['cancel']
+  if (status === 'called') return ['complete', 'cancel']
+  if (status === 'completed' && type === 'restaurant') return ['release']
+  return []
+}
 export const queueSettingsSchema = serviceSchema.extend({
   version: z.number().int().min(0),
   open: z.boolean(),
@@ -342,6 +373,14 @@ export type StaffEntry = {
   sequence: number
   version: number
   calledAt: number | null
+  arrivalDeadlineAt?: number | null
+  allowedActions?: EntryCommand['action'][]
+  assignment?: {
+    available: boolean
+    spaceName: string | null
+    priorityRequired: boolean
+    token: string
+  }
   position?: number
   etaMinutes?: number
   predictedAt?: number | null

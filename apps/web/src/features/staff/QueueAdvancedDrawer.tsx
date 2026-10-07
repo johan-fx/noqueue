@@ -39,6 +39,18 @@ export function QueueAdvancedDrawer({
   onClose: () => void
   onSaved: () => Promise<void> | void
 }) {
+  const [trace, setTrace] = useState<
+    | {
+        id: string
+        code: string
+        kind: string
+        event: string
+        recordedAt: number
+        attempt: number | null
+      }[]
+    | null
+  >(null)
+  const [traceBusy, setTraceBusy] = useState(false)
   const [child, setChild] = useState<Child | null>(null)
   const [childFocus, setChildFocus] = useState<HTMLElement | null>(null)
   const [busy, setBusy] = useState(false)
@@ -146,23 +158,25 @@ export function QueueAdvancedDrawer({
           )}
           {canOperate && (
             <>
-              <Button
-                variant="outline"
-                className="min-h-12 w-full"
-                disabled={
-                  busy ||
-                  needsReload ||
-                  queue.readiness?.reasons.includes('configuration_missing')
-                }
-                onClick={(e) =>
-                  open(
-                    occupancyAction(queue) ?? 'confirm_inventory',
-                    e.currentTarget,
-                  )
-                }
-              >
-                Desglose y correcciones de ocupación
-              </Button>
+              {queue.config.type === 'restaurant' && (
+                <Button
+                  variant="outline"
+                  className="min-h-12 w-full"
+                  disabled={
+                    busy ||
+                    needsReload ||
+                    queue.readiness?.reasons.includes('configuration_missing')
+                  }
+                  onClick={(e) =>
+                    open(
+                      occupancyAction(queue) ?? 'confirm_inventory',
+                      e.currentTarget,
+                    )
+                  }
+                >
+                  Desglose y correcciones de ocupación
+                </Button>
+              )}
               <Button
                 variant="outline"
                 className="min-h-12 w-full whitespace-normal"
@@ -181,6 +195,68 @@ export function QueueAdvancedDrawer({
                   : 'Desactivar gestión inteligente'}
               </Button>
             </>
+          )}
+          <Button
+            variant="outline"
+            className="min-h-12 w-full"
+            disabled={traceBusy}
+            onClick={async () => {
+              setTraceBusy(true)
+              try {
+                setTrace(await api(`/queues/${queue.id}/delivery-trace`))
+              } catch (e) {
+                setError(errorMessage(e))
+              } finally {
+                setTraceBusy(false)
+              }
+            }}
+          >
+            Trazabilidad de avisos (7 días)
+          </Button>
+          {trace && (
+            <section
+              aria-label="Trazabilidad de avisos"
+              className="space-y-2 text-sm"
+            >
+              <p>
+                Últimos 7 días. Aceptado no significa entregado; desconocido no
+                confirma recepción.
+              </p>
+              {!trace.length && (
+                <p>No hay eventos de entrega en este periodo.</p>
+              )}
+              <ol>
+                {trace.map((item) => (
+                  <li key={item.id} className="border-b py-2">
+                    {item.code} ·{' '}
+                    {(
+                      {
+                        ready: 'Asignación',
+                        approaching: 'Acercamiento',
+                        expired: 'Plazo agotado',
+                      } as Record<string, string>
+                    )[item.kind] ?? item.kind}{' '}
+                    ·{' '}
+                    {(
+                      {
+                        queued: 'Registrado',
+                        attempt_started: 'Intento iniciado',
+                        accepted: 'Aceptado',
+                        sent: 'Enviado',
+                        delivered: 'Entregado',
+                        read: 'Leído',
+                        failed: 'Fallido',
+                        unknown: 'Desconocido',
+                        rate_limited: 'Límite temporal',
+                        obsolete: 'Obsoleto',
+                      } as Record<string, string>
+                    )[item.event] ?? item.event}
+                    {item.attempt ? ` · Intento ${item.attempt}` : ''} ·{' '}
+                    {new Date(item.recordedAt).toLocaleString('es-ES')}
+                  </li>
+                ))}
+              </ol>
+            </section>
           )}
           {canConfigure && queue.config.type === 'restaurant' && (
             <Button

@@ -123,7 +123,9 @@ export function ServiceConfigDrawer({
     if (saveDisabled) return
     const parsed = serviceSchema.safeParse(pruneQueueBySeat(form.getValues()))
     if (!parsed.success) {
-      form.setError('root', { message: 'Revisa los datos antes de confirmar.' })
+      form.setError('root', {
+        message: 'Revisa los datos antes de confirmar.',
+      })
       return
     }
     await onSave({
@@ -258,6 +260,7 @@ export function ServiceConfigDrawer({
                   estimationMode: form.getValues('estimationMode'),
                   resourceStateKnown: form.getValues('resourceStateKnown'),
                   stations: form.getValues('stations'),
+                  graceMinutes: form.getValues('graceMinutes'),
                 }}
                 spaces={form.getValues('spaces')}
                 averageMinutes={form.getValues('averageMinutes')}
@@ -276,6 +279,10 @@ export function ServiceConfigDrawer({
                       options.resourceStateKnown,
                     )
                     form.setValue('stations', options.stations)
+                    if (options.graceMinutes !== undefined)
+                      form.setValue('graceMinutes', options.graceMinutes, {
+                        shouldDirty: true,
+                      })
                   }
                   setConfiguringQueue(false)
                 }}

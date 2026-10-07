@@ -107,3 +107,53 @@ it('retains confirmed arrival for a served turn', () => {
     screen.queryByRole('button', { name: 'Confirmar llegada' }),
   ).not.toBeInTheDocument()
 })
+
+it.each(['reception', 'pool'] as const)(
+  'uses %s arrival copy and only projected customer actions',
+  (type) => {
+    const turn = entry('called')
+    turn.customer!.service = { ...service, type, name: 'Atención' }
+    turn.customer!.actions = []
+    turn.customer!.arrivalDeadlineAt = 121000
+    const view = render(
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />,
+    )
+    expect(
+      screen.getByText(
+        'Acércate a Atención. El personal confirmará tu llegada.',
+      ),
+    ).toBeVisible()
+    expect(screen.getByText('2:00')).toBeVisible()
+    turn.customer!.phase = 'arrived'
+    view.rerender(
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />,
+    )
+    expect(screen.queryByText('Mesa asignada')).not.toBeInTheDocument()
+    turn.customer!.phase = 'approaching'
+    view.rerender(
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText('Puedes pasar turno o abandonar la lista.'),
+    ).not.toBeInTheDocument()
+  },
+)

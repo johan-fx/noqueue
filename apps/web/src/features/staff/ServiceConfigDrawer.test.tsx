@@ -216,7 +216,7 @@ describe('service configuration wizard', () => {
   })
 })
 
-it('keeps only the three basic settings visible and discards advanced changes on back', async () => {
+it('keeps arrival grace out of basic settings and discards advanced changes on back', async () => {
   render(
     <ServiceConfigDrawer
       open
@@ -239,7 +239,10 @@ it('keeps only the three basic settings visible and discards advanced changes on
   )
   await next()
   await next()
-  expect(screen.getAllByRole('spinbutton')).toHaveLength(5)
+  expect(screen.getAllByRole('spinbutton')).toHaveLength(4)
+  expect(
+    screen.queryByLabelText('Plazo de llegada (minutos)'),
+  ).not.toBeInTheDocument()
   expect(screen.getByLabelText('Turnos por delante')).toHaveValue(2)
   expect(screen.getByLabelText('Minutos de espera')).toHaveValue(10)
   expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
@@ -275,7 +278,6 @@ it('labels pool queue capacity in people rather than turns', async () => {
       onSave={vi.fn()}
     />,
   )
-  await next()
   await next()
   expect(screen.getByLabelText('Nº máximo de personas en lista')).toBeVisible()
   expect(

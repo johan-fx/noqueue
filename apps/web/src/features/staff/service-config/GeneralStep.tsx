@@ -1,5 +1,8 @@
 import { Controller, type UseFormReturn } from 'react-hook-form'
-import type { ServiceInput } from '@noqueue/contracts/staff'
+import {
+  defaultGraceMinutes,
+  type ServiceInput,
+} from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
@@ -43,6 +46,11 @@ export function GeneralStep({
                 value={field.value}
                 onChange={(type) => {
                   field.onChange(type)
+                  if (!form.getFieldState('graceMinutes').isDirty)
+                    form.setValue(
+                      'graceMinutes',
+                      defaultGraceMinutes(type as ServiceInput['type']),
+                    )
                   form.setValue('assignmentPreference', 'fastest')
                   if (type === 'reception') {
                     form.setValue('spaces', [])

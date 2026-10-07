@@ -1,3 +1,7 @@
+import { deliveryRetentionMs } from '../queue/delivery-trace'
+import { assignmentContext } from './assignment'
+import { allowedEntryActions, roleCapabilities } from '@noqueue/contracts/staff'
+import { loadQueueState } from '../queue/projection'
 import { directoryConfigStatement } from '../discovery/configuration'
 import {
   locationResolveSchema,
@@ -26,6 +30,7 @@ import {
   provisionSchema,
   queueCommandSchema,
   serviceSchema,
+  storedServiceSchema,
   type StaffMember,
 } from '@noqueue/contracts/staff'
 import { createAuth } from '../../auth/server'
@@ -485,7 +490,7 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
     await Promise.all(
       rows.results.map(async (row) => {
         const config = normalizeConfig(
-          serviceSchema.parse(JSON.parse(row.config)),
+          storedServiceSchema.parse(JSON.parse(row.config)),
         )
         return {
           ...row,
@@ -501,22 +506,28 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
   )
 })
 staffRoutes.get('/queues/:id/entries', async (c) => {
-  await queueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  const access = await queueAccess(
+    c.env,
+    c.get('actor').id,
+    c.req.param('id'),
+    'queue.read',
+  )
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    `SELECT id,code,party_size AS partySize,status,sequence,version,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS resourceId,(SELECT space_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
+    `SELECT id,code,party_size AS partySize,status,sequence,version,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,arrival_deadline_at AS arrivalDeadlineAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS resourceId,(SELECT space_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
     .all()
   const stored = await c.env.DB.prepare('SELECT config FROM queue WHERE id=?')
     .bind(c.req.param('id'))
     .first<{ config: string | null }>()
-  const parsedConfig = serviceSchema.safeParse(
+  const parsedConfig = storedServiceSchema.safeParse(
     stored?.config ? JSON.parse(stored.config) : null,
   )
   const config = parsedConfig.success
     ? normalizeConfig(parsedConfig.data)
     : null
+  const state = await loadQueueState(c.env, c.req.param('id'))
   const resourceSpaces = new Map<string, string>()
   for (const space of config?.spaces ?? [])
     for (const type of space.tableTypes?.length
@@ -545,6 +556,21 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
         return {
           ...entry,
           ...projection,
+          allowedActions: allowedEntryActions(
+            config?.type ?? 'reception',
+            String(row.status),
+            !isCommercial(c.get('actor').role) &&
+              roleCapabilities[access.role].includes('queue.operate'),
+          ),
+          ...(config?.type === 'restaurant' && row.status === 'waiting'
+            ? {
+                assignment: await assignmentContext(
+                  state,
+                  String(row.id),
+                  Date.now(),
+                ),
+              }
+            : {}),
           displayName: displayNameCipher
             ? await decryptDisplayName(
                 c.env.PII_ENCRYPTION_KEY,
@@ -651,6 +677,17 @@ staffRoutes.patch('/queues/:id', async (c) => {
     await c.req.json(),
   )
   return c.json(result.body, result.status as 200)
+})
+staffRoutes.get('/queues/:id/delivery-trace', async (c) => {
+  await queueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  const rows = await c.env.DB.prepare(
+    `SELECT t.id,e.code,n.kind,t.event,t.attempt,t.http_status AS httpStatus,t.provider_code AS providerCode,t.occurred_at AS occurredAt,t.recorded_at AS recordedAt
+    FROM notification_trace t JOIN notification_outbox n ON n.id=t.notification_id JOIN queue_entry e ON e.id=n.entry_id
+    WHERE e.queue_id=? AND t.recorded_at>=? ORDER BY t.recorded_at DESC,t.id LIMIT 200`,
+  )
+    .bind(c.req.param('id'), Date.now() - deliveryRetentionMs)
+    .all()
+  return c.json(rows.results)
 })
 staffRoutes.get('/venues/:id/audit', async (c) => {
   await canManage(c, c.req.param('id'))

@@ -10,6 +10,7 @@ export interface OutboundWhatsAppMessage {
   code: string
   token: string
   confirmationPayload?: string
+  notice?: 'ready' | 'approaching' | 'expired'
   position?: number
 }
 export type ProviderSendResult =
@@ -56,10 +57,27 @@ export function createWhatsAppSender(
       if (confirmation && !confirmationExperimentEnabled(env))
         return configurationFailure()
       const sandbox = env.WHATSAPP_MODE === 'sandbox'
-      const name =
-        message.locale === 'es'
-          ? env.WHATSAPP_QUEUE_JOINED_TEMPLATE_ES
-          : env.WHATSAPP_QUEUE_JOINED_TEMPLATE_EN
+      const noticeTemplates = env as CloudflareBindings &
+        Partial<
+          Record<
+            `WHATSAPP_QUEUE_${'READY' | 'APPROACHING' | 'EXPIRED'}_TEMPLATE_${
+              | 'ES'
+              | 'EN'}`,
+            string
+          >
+        >
+      const name = message.notice
+        ? noticeTemplates[
+            `WHATSAPP_QUEUE_${
+              message.notice.toUpperCase() as
+                | 'READY'
+                | 'APPROACHING'
+                | 'EXPIRED'
+            }_TEMPLATE_${message.locale.toUpperCase() as 'ES' | 'EN'}`
+          ]
+        : message.locale === 'es'
+        ? env.WHATSAPP_QUEUE_JOINED_TEMPLATE_ES
+        : env.WHATSAPP_QUEUE_JOINED_TEMPLATE_EN
       if (
         !confirmation &&
         !positionUpdate &&
@@ -117,10 +135,29 @@ export function createWhatsAppSender(
             to: message.phone.slice(1),
             type: 'text',
             text: {
-              body:
-                message.locale === 'es'
-                  ? `${message.venue}: tu turno es ${message.code}. ${link}`
-                  : `${message.venue}: your waiting list code is ${message.code}. ${link}`,
+              body: message.notice
+                ? `${message.venue} · ${message.code}: ${
+                    message.locale === 'es'
+                      ? {
+                          ready:
+                            'Tu turno está asignado. Acude ahora; consulta tu plazo en el enlace.',
+                          approaching:
+                            'Tu turno se acerca. Todavía no está asignado.',
+                          expired:
+                            'El plazo de llegada ha terminado. Puedes volver a inscribirte.',
+                        }[message.notice]
+                      : {
+                          ready:
+                            'Your turn is assigned. Come now; check your deadline using the link.',
+                          approaching:
+                            'Your turn is approaching but has not been assigned yet.',
+                          expired:
+                            'The arrival deadline has passed. You can join again.',
+                        }[message.notice]
+                  } ${link}`
+                : message.locale === 'es'
+                ? `${message.venue}: tu turno es ${message.code}. ${link}`
+                : `${message.venue}: your waiting list code is ${message.code}. ${link}`,
             },
           }
         : {
@@ -343,7 +380,10 @@ const rateLimitBody = z.object({
   error: z
     .union([
       z.string(),
-      z.object({ message: z.string().optional(), code: z.number().optional() }),
+      z.object({
+        message: z.string().optional(),
+        code: z.number().optional(),
+      }),
     ])
     .optional(),
 })

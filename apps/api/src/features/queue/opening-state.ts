@@ -1,12 +1,12 @@
 import { directoryConfigStatement } from '../discovery/configuration'
 import {
-  serviceSchema,
+  storedServiceSchema as serviceSchema,
   type ServiceInput,
   type QueueReadiness,
 } from '@noqueue/contracts/staff'
 
 export function resourceGroups(config: ServiceInput) {
-  if (config.type === 'reception')
+  if (config.type !== 'restaurant')
     return [
       {
         spaceId: 'reception',
@@ -41,7 +41,7 @@ export function topology(config: ServiceInput) {
 }
 export function configurationComplete(config: ServiceInput) {
   return (
-    config.type === 'reception' ||
+    config.type !== 'restaurant' ||
     (config.spaces.length > 0 &&
       config.spaces.every((s) => !!s.id && !!s.tableTypes?.length))
   )
@@ -52,6 +52,8 @@ export async function inventorySafety(
   queueId: string,
   config: ServiceInput | null,
 ) {
+  if (config && config.type !== 'restaurant')
+    return { managed: false, requiresSurvey: false }
   const evidence = await env.DB.prepare(
     `SELECT
     EXISTS(SELECT 1 FROM queue_opening WHERE queue_id=? AND complete=1)
@@ -89,8 +91,10 @@ export async function readiness(
   const reasons: QueueReadiness['reasons'] = []
   if (safety.requiresSurvey) reasons.push('inventory_refresh_required')
   if (!configurationComplete(config)) reasons.push('configuration_missing')
-  if (row?.topology !== topology(config)) reasons.push('inventory_required')
-  if (row?.untracked) reasons.push('legacy_occupancy')
+  if (config.type === 'restaurant' && row?.topology !== topology(config))
+    reasons.push('inventory_required')
+  if (config.type === 'restaurant' && row?.untracked)
+    reasons.push('legacy_occupancy')
   return {
     state:
       config.intelligencePolicy === 'disabled'
@@ -122,23 +126,27 @@ export async function activateIfReady(
   const source = JSON.stringify({
     ...parsed.data,
     estimationMode: 'active',
-    resourceStateKnown: true,
+    resourceStateKnown: parsed.data.type === 'restaurant',
   })
   await env.DB.batch([
     env.DB.prepare(
       'UPDATE queue SET config=?,version=version+1 WHERE id=?',
     ).bind(source, queueId),
     directoryConfigStatement(env, queueId, source),
-    env.DB.prepare(
-      'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
-    ).bind(
-      crypto.randomUUID(),
-      queueId,
-      'system',
-      'activated',
-      '{}',
-      Date.now(),
-    ),
+    ...(parsed.data.type === 'restaurant'
+      ? [
+          env.DB.prepare(
+            'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
+          ).bind(
+            crypto.randomUUID(),
+            queueId,
+            'system',
+            'activated',
+            '{}',
+            Date.now(),
+          ),
+        ]
+      : []),
   ])
 }
 
@@ -148,6 +156,7 @@ export async function inventoryConfirmed(
   queueId: string,
   config: ServiceInput,
 ) {
+  if (config.type !== 'restaurant') return false
   const record = await env.DB.prepare(
     'SELECT topology FROM queue_opening WHERE queue_id=? AND complete=1',
   )

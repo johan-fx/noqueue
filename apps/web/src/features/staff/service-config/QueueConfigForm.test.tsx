@@ -72,7 +72,7 @@ it('edits identical sizes independently and preserves stable identities', () => 
   )
 })
 
-it('supports pool groups without inventing table capacity settings', () => {
+it('uses points of attention for pool without editing physical legacy groups', () => {
   render(
     <QueueConfigForm
       type="pool"
@@ -89,8 +89,11 @@ it('supports pool groups without inventing table capacity settings', () => {
       onConfirm={vi.fn()}
     />,
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Grupos de 3' }))
-  expect(screen.getByLabelText('Piscina · 3 plazas (min)')).toHaveValue(60)
+  expect(
+    screen.queryByRole('button', { name: 'Grupos de 3' }),
+  ).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Opciones de operación' }))
+  expect(screen.getByLabelText('Puestos de atención')).toHaveValue(1)
   expect(screen.queryByLabelText(/máximo/i)).not.toBeInTheDocument()
 })
 
@@ -125,4 +128,18 @@ it('rejects an invalid adjustment even when the operation section is collapsed',
   fireEvent.submit(document.getElementById('queue-config')!)
   expect(confirm).not.toHaveBeenCalled()
   expect(screen.getByRole('alert')).toBeVisible()
+})
+
+it('keeps the per-queue arrival grace in advanced configuration and preserves explicit five', () => {
+  render(
+    <QueueConfigForm
+      spaces={[]}
+      averageMinutes={5}
+      saved={undefined}
+      type="pool"
+      options={{ graceMinutes: 5 }}
+      onConfirm={vi.fn()}
+    />,
+  )
+  expect(screen.getByLabelText('Plazo de llegada (minutos)')).toHaveValue(5)
 })

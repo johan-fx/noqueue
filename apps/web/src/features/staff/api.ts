@@ -65,6 +65,12 @@ const messages: Record<string, string> = {
     'Revisa el grupo y la caducidad del ajuste: debe estar entre ahora y las próximas 24 horas.',
   operational_initialization_required:
     'Inicializa los recursos desde la cuenta del establecimiento después de crear el servicio.',
+  legacy_arrival_deadline:
+    'Resuelve los turnos asignados antiguos antes de cambiar el plazo de llegada. Puedes guardar los demás ajustes.',
+  assignment_context_changed: 'La disponibilidad o el orden han cambiado.',
+  unsupported_action:
+    'Esta acción no está disponible para este servicio y estado.',
+  queue_empty: 'No hay personas en espera.',
   arrival_grace_active: 'Todavía no ha terminado el tiempo de llegada.',
   rate_limited: 'Demasiados intentos. Espera un minuto.',
   username_unavailable:

@@ -3,7 +3,7 @@ import { useState, useEffect } from 'react'
 import { Plus, Users, LogIn, LogOut, BadgeHelp } from 'lucide-react'
 import { QueueEntryCard } from './QueueEntryCard'
 import type {
-  QueueCommand,
+  EntryCommand as QueueCommand,
   QueueSummary,
   StaffEntry,
 } from '@noqueue/contracts/staff'

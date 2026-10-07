@@ -206,7 +206,7 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
   let executed = 0
   await fc.assert(
     fc.asyncProperty(
-      fc.array(fc.constantFrom('skip', 'cancel', 'serve', 'no_show'), {
+      fc.array(fc.constantFrom('cancel', 'serve', 'no_show'), {
         minLength: length,
         maxLength: length,
       }),
@@ -233,8 +233,7 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
             }
           await runQueueCommand(env, t.actor, t.queue, key, command, now)
           await runQueueCommand(env, t.actor, t.queue, key, command, now)
-          if (action === 'skip') waiting.push(id)
-          else if (action === 'serve') {
+          if (action === 'serve') {
             await runQueueCommand(
               env,
               t.actor,
@@ -295,10 +294,9 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
               .bind(id)
               .all<{ kind: string }>()
           ).results
-          if (action !== 'skip')
-            expect(events.filter((e) => e.kind === 'called')).toHaveLength(
-              action === 'cancel' ? 0 : 1,
-            )
+          expect(events.filter((e) => e.kind === 'called')).toHaveLength(
+            action === 'cancel' ? 0 : 1,
+          )
           executed++
         }
       },

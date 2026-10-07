@@ -1,7 +1,7 @@
 import { customerPhase } from './customer'
 import { publicService } from './public-context'
 import { normalizeConfig, recalculateQueue, readProjection } from './projection'
-import { serviceSchema } from '@noqueue/contracts/staff'
+import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
 import { admissionState } from '../staff/availability'
 import {
@@ -73,7 +73,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   const projection = await readProjection(env, entry.id)
   const service = await publicService(env, entry.queue_id)
   let customer
-  if (service?.type === 'restaurant') {
+  if (service) {
     const detail = await env.DB.prepare(
       `SELECT e.display_name_cipher,e.party_size,e.preferred_space_id,e.locale,e.version,e.created_at,e.called_at,e.arrival_deadline_at,q.config,(SELECT MAX(created_at) FROM queue_event WHERE entry_id=e.id AND kind='completed') AS arrived_at FROM queue_entry e JOIN queue q ON q.id=e.queue_id WHERE e.id=?`,
     )
@@ -117,7 +117,9 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         arrivedAt: detail.arrived_at,
         phase,
         actions:
-          phase === 'waiting'
+          service.type !== 'restaurant'
+            ? []
+            : phase === 'waiting'
             ? ['update', 'cancel']
             : phase === 'approaching'
             ? ['update', 'cancel', 'yield']

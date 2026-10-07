@@ -1,6 +1,10 @@
+import { noticeStatement } from './notices'
 import { expireArrivals } from './customer'
 import { activateIfReady, inventorySafety } from './opening-state'
-import { serviceSchema, type ServiceInput } from '@noqueue/contracts/staff'
+import {
+  storedServiceSchema as serviceSchema,
+  type ServiceInput,
+} from '@noqueue/contracts/staff'
 import { groupMinutes, projectQueue, type Resource } from './engine'
 
 export function normalizeConfig(
@@ -98,9 +102,10 @@ export async function loadQueueState(
         preferredSpaceId: string | null
       }>()
   ).results
+  const quick = !!config && config.type !== 'restaurant'
   const resources: Resource[] = []
   const spaces =
-    config?.type === 'reception'
+    config && config.type !== 'restaurant'
       ? [
           {
             id: 'reception',
@@ -164,10 +169,12 @@ export async function loadQueueState(
       )
       for (let i = 0; i < type.count; i++) {
         const id = `${space.id}:${type.seats}:${i}`
-        const occupied = allocations.find(
-          (a) => a.resource_id === id && a.released_at === null,
-        )
-        const external = holds.some((h) => h.resource_id === id)
+        const occupied = quick
+          ? undefined
+          : allocations.find(
+              (a) => a.resource_id === id && a.released_at === null,
+            )
+        const external = !quick && holds.some((h) => h.resource_id === id)
         const expected = occupied?.arrived_at
           ? occupied.arrived_at + averageMinutes * 60000
           : null
@@ -177,7 +184,7 @@ export async function loadQueueState(
           ? expected !== null && expected > now
             ? Math.max(expected, blockedUntil)
             : null
-          : config?.resourceStateKnown
+          : quick || config?.resourceStateKnown
           ? Math.max(now, blockedUntil)
           : null
         resources.push({
@@ -187,11 +194,11 @@ export async function loadQueueState(
           averageMinutes,
           known:
             !external &&
-            !!config?.resourceStateKnown &&
+            !!(quick || config?.resourceStateKnown) &&
             !!space.tableTypes?.length,
           availableAt,
           callable:
-            !!config?.resourceStateKnown &&
+            !!(quick || config?.resourceStateKnown) &&
             !occupied &&
             !external &&
             blockedUntil <= now,
@@ -238,9 +245,22 @@ export async function recalculateQueue(
 ) {
   await expireArrivals(env, queueId, now)
   await activateIfReady(env, queueId)
+  // Preserve history, but retire physical occupancy left by the former quick workflow.
+  await env.DB.prepare(
+    "UPDATE queue_allocation SET released_at=?,outcome='completed' WHERE queue_id=? AND released_at IS NULL AND entry_id IN (SELECT id FROM queue_entry WHERE status IN ('completed','served')) AND EXISTS(SELECT 1 FROM queue WHERE id=? AND json_extract(config,'$.type') IN ('reception','pool'))",
+  )
+    .bind(now, queueId, queueId)
+    .run()
   const state = await loadQueueState(env, queueId, now)
   const statements: D1PreparedStatement[] = []
   for (const p of state.projections) {
+    if (
+      state.config &&
+      (Math.max(p.position - 1, 0) <= (state.config?.approachTurns ?? 2) ||
+        (p.quality !== 'unknown' &&
+          p.etaMinutes <= (state.config?.approachMinutes ?? 10)))
+    )
+      statements.push(noticeStatement(env, p.id, 'approaching', now))
     const prior = await env.DB.prepare(
       'SELECT position,predicted_at,quality,resource_id,callable,revision FROM queue_projection WHERE entry_id=?',
     )

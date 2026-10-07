@@ -18,6 +18,7 @@ export const stepLabels: Record<StepId, string> = {
 
 /** Reception has no spaces, so it skips the assignment step. */
 export function stepsFor(type: ServiceInput['type']): StepId[] {
+  if (type === 'pool') return ['general', 'queue', 'summary']
   if (type === 'reception') return ['general', 'capacity', 'queue', 'summary']
   return ['general', 'capacity', 'queue', 'preference', 'summary']
 }

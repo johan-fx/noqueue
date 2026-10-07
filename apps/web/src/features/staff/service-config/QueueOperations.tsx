@@ -17,7 +17,7 @@ export function QueueOperations({
     .filter((space) => !spaceId || (space.id ?? space.name) === spaceId)
   const adjustments = form.watch('adjustments') ?? []
   const groups =
-    type === 'reception'
+    type !== 'restaurant'
       ? [{ spaceId: 'reception', seats: 100, label: 'Recepción' }]
       : spaces.flatMap((space) =>
           (space.tableTypes ?? []).map((group) => ({
@@ -28,7 +28,7 @@ export function QueueOperations({
         )
   return (
     <div className="space-y-5">
-      {type === 'reception' && (
+      {type !== 'restaurant' && (
         <Field>
           <FieldLabel htmlFor="stations">Puestos de atención</FieldLabel>
           <Input

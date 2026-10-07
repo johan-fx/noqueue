@@ -20,7 +20,6 @@ export function QueueStep({
         ? 'Tiempo medio del cliente en mesa'
         : 'Tiempo medio del cliente',
     ],
-    ['graceMinutes', 'Tiempo para llegar después del aviso'],
     [
       'capacity',
       type === 'pool'
@@ -71,8 +70,8 @@ export function QueueStep({
         </fieldset>
       )}
       <p className="text-sm text-muted-foreground">
-        El tiempo para llegar solo se aplica a llamadas futuras; no cambia
-        plazos ya iniciados.
+        El plazo configurado en ajustes avanzados se aplica a asignaciones
+        futuras; no cambia plazos ya iniciados.
       </p>
       {onConfigure && (
         <Button

@@ -281,29 +281,25 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   // Calling uses the binding preferred space; confirmation is only available once called.
   await swipe(page, maria, 'right')
   await maria.getByRole('button', { name: /Acciones del turno/ }).click()
-  await maria.getByRole('button', { name: 'Llamar', exact: true }).click()
+  await maria
+    .getByRole('button', { name: 'Asignar turno', exact: true })
+    .click()
   await page
-    .getByRole('dialog', { name: 'Llamar', exact: true })
+    .getByRole('dialog', { name: 'Asignar turno', exact: true })
     .getByRole('button', { name: 'Confirmar', exact: true })
     .click()
-  await expect(maria.getByText('Llamado', { exact: true })).toBeVisible()
+  await expect(
+    maria.getByText('Pendiente de llegada', { exact: true }),
+  ).toBeVisible()
   await maria.getByRole('button', { name: /Acciones del turno/ }).click()
   await swipe(page, maria, 'right')
   await expect(drawer).toBeVisible()
   await maria
     .getByRole('button', { name: 'Confirmar llegada', exact: true })
     .click()
-  const arrival = page.getByRole('dialog', {
-    name: 'Confirmar llegada',
-    exact: true,
-  })
-  await expect(arrival).toHaveCSS('opacity', '1')
-  await page.screenshot({
-    path: testInfo.outputPath('arrival-sheet-mobile.png'),
-    fullPage: false,
-    animations: 'disabled',
-  })
-  await arrival.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(
+    page.getByRole('dialog', { name: 'Confirmar llegada', exact: true }),
+  ).toHaveCount(0)
   await expect(drawer.getByText('María López')).toHaveCount(0)
   await drawer.getByRole('tab', { name: 'Completados' }).click()
   await expect(drawer.getByText('Terraza · Asignado')).toBeVisible()
@@ -435,7 +431,9 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     'aria-selected',
     'true',
   )
-  const poolAdvance = drawer.getByRole('button', { name: 'Avanzar un turno' })
+  const poolAdvance = drawer.getByRole('button', {
+    name: 'Asignar próximo turno',
+  })
   await expect(poolAdvance).toBeVisible()
   await expect(drawer).toHaveCSS('opacity', '1')
   await expect
@@ -458,6 +456,11 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await swipe(page, poolRow, 'right')
   await expect(
     poolRow.getByRole('button', { name: 'Confirmar llegada' }),
+  ).toHaveCount(0)
+  await poolAdvance.click()
+  await expect(poolRow.getByText('Pendiente de llegada')).toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
   ).toHaveCount(0)
   await swipe(page, poolRow, 'left')
   await poolRow

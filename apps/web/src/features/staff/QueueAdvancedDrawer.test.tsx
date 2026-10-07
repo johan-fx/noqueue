@@ -87,3 +87,30 @@ it('keeps reminder settings in a nested draft and protects navigation while savi
   await waitFor(() => expect(saved).toHaveBeenCalled())
   expect(close).not.toHaveBeenCalled()
 })
+
+it('loads delivery evidence only inside advanced settings and labels the retention', async () => {
+  vi.mocked(api).mockResolvedValue([
+    {
+      id: 'trace',
+      code: 'T1',
+      kind: 'ready',
+      event: 'delivered',
+      recordedAt: Date.now(),
+    },
+  ])
+  render(
+    <QueueAdvancedDrawer
+      queue={queue}
+      canOperate
+      canConfigure
+      returnFocus={null}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Trazabilidad de avisos (7 días)' }),
+  )
+  expect(await screen.findByText(/Entregado/)).toBeVisible()
+  expect(api).toHaveBeenCalledWith('/queues/q/delivery-trace')
+})

@@ -504,6 +504,17 @@ describe('manual username authentication and scoped provisioning', () => {
     const t = await tenant(),
       entryId = crypto.randomUUID(),
       now = Date.now()
+    await configureAndOpen(t, t.queueId, {
+      ...input().services[0]!,
+      spaces: [
+        {
+          id: 'main',
+          name: 'Main',
+          tables: 1,
+          tableTypes: [{ seats: 4, count: 1 }],
+        },
+      ],
+    })
     await env.DB.prepare(
       `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence) VALUES (?,?,?,?,?,?,2,'es',?,1)`,
     )
@@ -858,7 +869,7 @@ it('reserves capacity at call, retains it at arrival and frees it only at releas
   expect((await command(ids[1]!, 0, 'call')).status).toBe(200)
 })
 
-it('audits explicit order overrides and preserves cancellation, no-show and skip semantics', async () => {
+it('audits explicit priority, preserves cancellation and legacy no-show, and rejects skip', async () => {
   const t = await tenant()
   const config = {
     ...input().services[0]!,
@@ -928,13 +939,13 @@ it('audits explicit order overrides and preserves cancellation, no-show and skip
   expect((await command(2, 1, 'no_show')).status).toBe(200)
   expect((await command(1, 0, 'call')).status).toBe(200)
   expect((await command(1, 1, 'cancel')).status).toBe(200)
-  expect((await command(0, 0, 'skip')).status).toBe(200)
+  expect((await command(0, 0, 'skip')).status).toBe(409)
   const row = await env.DB.prepare(
     'SELECT sequence,status FROM queue_entry WHERE id=?',
   )
     .bind(ids[0]!)
     .first<{ sequence: number; status: string }>()
-  expect(row).toMatchObject({ status: 'waiting', sequence: 4 })
+  expect(row).toMatchObject({ status: 'waiting', sequence: 1 })
   expect(
     (
       await env.DB.prepare(
@@ -1091,17 +1102,10 @@ it('does not activate enforcement over untracked shadow occupancy', async () => 
     )
       .bind(id, t.queueId, id, 'hash', id, id, Date.now(), i)
       .run()
-    expect(
-      (
-        await request(
-          `/staff/queues/${t.queueId}/commands`,
-          t.owner.cookie,
-          'POST',
-          { entryId: id, version: 0, action: 'call' },
-          crypto.randomUUID(),
-        )
-      ).status,
-    ).toBe(200)
+    // Legacy occupancy is fixture data, never created by a new unsafe assignment.
+    await env.DB.prepare("UPDATE queue_entry SET status='called' WHERE id=?")
+      .bind(id)
+      .run()
   }
   await configureAndOpen(t, t.queueId, config)
   const context = await request(
@@ -1717,7 +1721,7 @@ it('manual consent passes through the coordinator and durably queues encrypted c
   expect((await create()).status).toBe(201)
   expect((await create()).status).toBe(200)
   const rows = await env.DB.prepare(
-    `SELECT e.id,p.phone_cipher,c.version,c.purpose,n.status FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN consent c ON c.entry_id=e.id JOIN notification_outbox n ON n.entry_id=e.id WHERE e.queue_id=?`,
+    `SELECT e.id,p.phone_cipher,c.version,c.purpose,n.status FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN consent c ON c.entry_id=e.id JOIN notification_outbox n ON n.entry_id=e.id WHERE e.queue_id=? AND n.kind='queue_joined'`,
   )
     .bind(t.queueId)
     .all<{
@@ -2343,7 +2347,10 @@ it('restricts both geocoders and location saves to global commercial ownership o
         '/staff/locations/' + route,
         actor.cookie,
         'POST',
-        { text: 'Calle Dos 2 Madrid', scope: { kind: 'venue', id: t.venueId } },
+        {
+          text: 'Calle Dos 2 Madrid',
+          scope: { kind: 'venue', id: t.venueId },
+        },
       )
       expect(response.status).toBe(200)
       token = ((await response.json()) as { candidates: { token: string }[] })
@@ -2422,7 +2429,11 @@ describe('scoped staff identity details', () => {
       )
         .bind(staff.id)
         .first(),
-    ).toEqual({ name: 'Updated Staff', username: next, displayUsername: next })
+    ).toEqual({
+      name: 'Updated Staff',
+      username: next,
+      displayUsername: next,
+    })
     expect(
       await env.DB.prepare(
         'SELECT role,active FROM venue_membership WHERE user_id=? AND venue_id=?',
@@ -2461,7 +2472,11 @@ describe('scoped staff identity details', () => {
       other = await member(t),
       outsider = await identity()
     const path = `/staff/venues/${t.venueId}/members/${staff.id}/details`
-    const values = { name: 'Changed', username: other.username, role: 'viewer' }
+    const values = {
+      name: 'Changed',
+      username: other.username,
+      role: 'viewer',
+    }
     expect((await request(path, t.owner.cookie, 'PATCH', values)).status).toBe(
       409,
     )
@@ -2654,7 +2669,9 @@ it('revokes sessions when assigning the first username to eligible staff', async
   )
   expect(
     (
-      (await listing.json()) as { members: { id: string; username: string }[] }
+      (await listing.json()) as {
+        members: { id: string; username: string }[]
+      }
     ).members.find((m) => m.id === staff.id)?.username,
   ).toBe('')
   expect(

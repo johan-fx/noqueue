@@ -1,7 +1,11 @@
 import { useId } from 'react'
 import { Controller, useFieldArray, useForm, useWatch } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { serviceSchema, type ServiceInput } from '@noqueue/contracts/staff'
+import {
+  defaultGraceMinutes,
+  serviceSchema,
+  type ServiceInput,
+} from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel, FieldError } from '@/components/ui/field'
@@ -77,7 +81,10 @@ export function ServiceForm({
     resolver: zodResolver(serviceSchema),
     defaultValues: initial,
   })
-  const schedules = useFieldArray({ control: form.control, name: 'schedules' }),
+  const schedules = useFieldArray({
+      control: form.control,
+      name: 'schedules',
+    }),
     spaces = useFieldArray({ control: form.control, name: 'spaces' })
   const type = useWatch({ control: form.control, name: 'type' }),
     always = useWatch({ control: form.control, name: 'twentyFourHours' }),
@@ -112,7 +119,17 @@ export function ServiceForm({
                 <Choice
                   label="Tipo de servicio"
                   value={field.value}
-                  onChange={field.onChange}
+                  onChange={(value) => {
+                    field.onChange(value)
+                    if (
+                      initial === defaultService &&
+                      !form.getFieldState('graceMinutes').isDirty
+                    )
+                      form.setValue(
+                        'graceMinutes',
+                        defaultGraceMinutes(value as ServiceInput['type']),
+                      )
+                  }}
                   items={{
                     restaurant: 'Restaurante',
                     reception: 'Recepción',
@@ -128,7 +145,6 @@ export function ServiceForm({
             [
               ['capacity', 'Máximo de grupos/personas en espera'],
               ['averageMinutes', 'Duración media (minutos)'],
-              ['graceMinutes', 'Plazo de llegada (minutos)'],
               [
                 'cutoffMinutes',
                 'Cierre de inscripciones antes del cierre (minutos)',

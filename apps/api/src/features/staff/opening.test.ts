@@ -448,11 +448,12 @@ it.each(['manual_disabled', 'legacy_pending'] as const)(
       group: { spaceId: 'terrace', seats: 4, occupied: 0 },
       reason: 'Table released',
     })
-    // Shadow ordering stays permissive, but every call now needs a real free resource.
+    // Priority requires a reason even with manual or shadow estimation.
     await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
       entryId: second,
       version: 0,
       action: 'call',
+      overrideReason: 'Explicit priority',
     })
     expect(
       (await loadQueueState(env, t.queue)).allocations.some(
@@ -468,15 +469,17 @@ it.each(['manual_disabled', 'legacy_pending'] as const)(
     ).rejects.toThrow('no_free_compatible_resource')
   },
 )
-it('preserves legacy unknown-inventory calls without inventing allocations', async () => {
+it('rejects restaurant assignments without compatible known inventory', async () => {
   const t = await setup(),
     id = await entry(t.queue)
   await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?').bind(t.queue).run()
-  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    entryId: id,
-    version: 0,
-    action: 'call',
-  })
+  await expect(
+    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      entryId: id,
+      version: 0,
+      action: 'call',
+    }),
+  ).rejects.toThrow('no_free_compatible_resource')
   expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
 })
 it('repairs projection failure after the lifecycle commit with the same key without repeating inventory writes', async () => {
@@ -1052,7 +1055,7 @@ it('persists encrypted service details, binds projection/calls, audits manual jo
   ).toBe(1)
   expect(
     (await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=?',
+      "SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='queue_joined'",
     )
       .bind(row!.id)
       .first<{ n: number }>())!.n,
@@ -1320,7 +1323,7 @@ it('recovers committed manual joins after WhatsApp is disabled without sending a
   ).toBe(1)
   expect(
     (await env.DB.prepare(
-      'SELECT COUNT(*) AS n FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE e.queue_id=?',
+      "SELECT COUNT(*) AS n FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE e.queue_id=? AND n.kind='queue_joined'",
     )
       .bind(t.queue)
       .first<{ n: number }>())!.n,
@@ -1928,7 +1931,10 @@ it('additive admission migration preserves tickets, allocations and external occ
   const insert = migration.queries.find((sql) =>
     sql.includes('INSERT INTO queue_admission'),
   )!
-  await env.DB.prepare(insert).run()
+  // Replay only over this migration fixture; other tests retain already-migrated queues.
+  await env.DB.prepare(insert.replace(/;\s*$/, '') + ' AND q.id IN (?,?)')
+    .bind(restaurant.queue, pool.queue)
+    .run()
   expect(
     await env.DB.prepare('SELECT * FROM queue_entry WHERE id=?')
       .bind(ticket)

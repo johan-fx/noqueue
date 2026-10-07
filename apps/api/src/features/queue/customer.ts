@@ -1,3 +1,4 @@
+import { noticeStatement, publishNotice } from './notices'
 import { HTTPException } from 'hono/http-exception'
 import {
   customerCommandSchema,
@@ -38,6 +39,7 @@ export async function expireArrivals(
     .all<{ id: string }>()
   if (!due.results.length) return
   const statements = due.results.flatMap(({ id }) => [
+    noticeStatement(env, id, 'expired', now),
     env.DB.prepare(
       "INSERT INTO queue_event(id,entry_id,kind,created_at) SELECT ?,id,'expired',? FROM queue_entry WHERE id=? AND status='called'",
     ).bind(crypto.randomUUID(), now, id),
@@ -49,6 +51,7 @@ export async function expireArrivals(
     ).bind(id, now),
   ])
   await env.DB.batch(statements)
+  for (const { id } of due.results) await publishNotice(env, id, 'expired')
 }
 
 export async function runCustomerCommand(
@@ -65,7 +68,12 @@ export async function runCustomerCommand(
     'SELECT id,status,version,sequence FROM queue_entry WHERE recovery_hash=? AND queue_id=?',
   )
     .bind(await hash(token), queueId)
-    .first<{ id: string; status: string; version: number; sequence: number }>()
+    .first<{
+      id: string
+      status: string
+      version: number
+      sequence: number
+    }>()
   if (!entry) throw new HTTPException(404, { message: 'not_found' })
   // Keyed fingerprints do not reveal names through offline dictionary attacks.
   const fingerprint = await hmac(env.RECOVERY_TOKEN_KEY, JSON.stringify(input))

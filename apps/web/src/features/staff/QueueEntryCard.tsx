@@ -15,10 +15,9 @@ import {
   LogIn,
   LogOut,
   BadgeHelp,
-  SkipForward,
 } from 'lucide-react'
 import type {
-  QueueCommand,
+  EntryCommand as QueueCommand,
   QueueSummary,
   StaffEntry,
 } from '@noqueue/contracts/staff'
@@ -31,7 +30,7 @@ import {
 } from './queue-labels'
 const statusLabels: Record<string, string> = {
   waiting: 'En espera',
-  called: 'Llamado',
+  called: 'Pendiente de llegada',
   completed: 'En servicio',
   served: 'Completado',
   cancelled: 'Cancelado',
@@ -59,7 +58,8 @@ export function QueueEntryCard({
   onReveal: (direction: 'left' | 'right' | 'all' | null) => void
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
-  const actions = entryActions(entry.status)
+  const actions =
+    entry.allowedActions ?? entryActions(entry.status, queue.config.type)
   const operable = canOperate && !busy && actions.length > 0
   const active = ['waiting', 'called'].includes(entry.status)
   const draggable = operable && active
@@ -126,9 +126,9 @@ export function QueueEntryCard({
     setMoving(false)
     const direction =
       !cancelled && draggable
-        ? x.get() > widths.left * 0.4
+        ? widths.left > 0 && x.get() > widths.left * 0.4
           ? 'right'
-          : x.get() < -widths.right * 0.4
+          : widths.right > 0 && x.get() < -widths.right * 0.4
           ? 'left'
           : null
         : null
@@ -173,15 +173,15 @@ export function QueueEntryCard({
             inert={!draggable || moving || revealed !== 'right'}
             aria-hidden={!draggable || moving || revealed !== 'right'}
           >
-            {entry.status === 'waiting' ? (
+            {actions.includes('call') ? (
               <Button
                 className="h-full w-36 rounded-none bg-yellow-400 text-yellow-950 hover:bg-yellow-500"
                 disabled={callDisabled}
                 onClick={() => act('call')}
               >
-                Llamar
+                Asignar turno
               </Button>
-            ) : (
+            ) : actions.includes('complete') ? (
               <Button
                 aria-label="Confirmar llegada"
                 className="h-full w-36 rounded-none bg-green-600 text-white hover:bg-green-700"
@@ -189,9 +189,9 @@ export function QueueEntryCard({
                 onClick={() => act('complete')}
               >
                 <Check aria-hidden="true" />
-                Confirmar
+                Confirmar llegada
               </Button>
-            )}
+            ) : null}
           </div>
           <div
             ref={rightTray}
@@ -199,16 +199,6 @@ export function QueueEntryCard({
             inert={!draggable || moving || revealed !== 'left'}
             aria-hidden={!draggable || moving || revealed !== 'left'}
           >
-            {entry.status === 'waiting' && (
-              <Button
-                className="h-full w-24 flex-col rounded-none whitespace-normal bg-muted text-foreground"
-                disabled={busy}
-                onClick={() => act('skip')}
-              >
-                <SkipForward aria-hidden="true" />
-                Pasar turno
-              </Button>
-            )}
             <Button
               variant="destructive"
               className="h-full w-28 flex-col rounded-none whitespace-normal bg-red-700 text-white hover:bg-red-800"
@@ -310,13 +300,12 @@ export function QueueEntryCard({
             )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            {queue.config.type === 'reception' &&
-              entry.receptionService && (
-                <span className="flex items-center gap-1">
-                  <ReceptionIcon className="size-4" aria-hidden="true" />
-                  {receptionLabels[entry.receptionService]}
-                </span>
-              )}
+            {queue.config.type === 'reception' && entry.receptionService && (
+              <span className="flex items-center gap-1">
+                <ReceptionIcon className="size-4" aria-hidden="true" />
+                {receptionLabels[entry.receptionService]}
+              </span>
+            )}
             {queue.config.type === 'restaurant' && (
               <span className="flex min-w-0 flex-wrap items-center gap-1">
                 <Users className="size-4" aria-hidden="true" />
@@ -362,15 +351,18 @@ export function QueueEntryCard({
                     : ''
                 }
               >
-                {statusLabels[entry.status] ?? entry.status}
+                {entry.status === 'completed' &&
+                queue.config.type !== 'restaurant'
+                  ? 'Completado'
+                  : statusLabels[entry.status] ?? entry.status}
               </span>
             )}
-            {entry.status === 'called' && entry.calledAt != null && (
-              <Badge variant="secondary" title="Tiempo desde la llamada">
+            {entry.status === 'called' && entry.arrivalDeadlineAt != null && (
+              <Badge variant="secondary" title="Tiempo restante para llegar">
                 <Clock className="size-3" aria-hidden="true" />
                 {Math.max(
                   0,
-                  Math.floor((now - entry.calledAt) / 60000),
+                  Math.ceil((entry.arrivalDeadlineAt! - now) / 60000),
                 )}{' '}
                 min
               </Badge>

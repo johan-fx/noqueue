@@ -1,11 +1,11 @@
 import { defineConfig } from '@playwright/test'
 import base from './playwright.config.js'
 
-if (!process.env.QUEUE_DEMO_DIR) throw new Error('Use pnpm demo:queue:order; demo output directory is required')
+if (!process.env.QUEUE_DEMO_DIR) throw new Error('Use pnpm demo:queue:all; demo output directory is required')
 export default defineConfig({
   ...base,
   testDir: './demo',
-  timeout: 150_000,
+  timeout: 600_000,
   retries: 0,
   workers: 1,
   fullyParallel: false,

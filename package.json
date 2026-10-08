@@ -18,7 +18,11 @@
     "mobile:android": "pnpm mobile:sync && pnpm --filter @noqueue/mobile native:run:android",
     "test:queue": "node scripts/queue-verification/run.mjs",
     "test:queue:extended": "node scripts/queue-verification/run.mjs --extended",
-    "demo:queue:order": "node scripts/queue-demo/run.mjs"
+    "demo:queue:order": "node scripts/queue-demo/run.mjs reception",
+    "demo:queue:restaurant": "node scripts/queue-demo/run.mjs restaurant",
+    "demo:queue:reception": "node scripts/queue-demo/run.mjs reception",
+    "demo:queue:pool": "node scripts/queue-demo/run.mjs pool",
+    "demo:queue:all": "node scripts/queue-demo/run.mjs all"
   },
   "devDependencies": {
     "turbo": "2.10.12",

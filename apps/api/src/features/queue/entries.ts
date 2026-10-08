@@ -1,8 +1,13 @@
+import {
+  copyVersion,
+  whatsappV3Catalog,
+  v3TemplateReady,
+} from '../../integrations/whatsapp-copy-v3'
 import { maintainServiceEntries } from './service-expiry'
 import { customerPhase } from './customer'
 import { publicService } from './public-context'
 import { normalizeConfig, recalculateQueue, readProjection } from './projection'
-import type { QueueNoticeSnapshot } from './notices'
+import { unavailableCopyStatement, type QueueNoticeSnapshot } from './notices'
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
 import { admissionState, serviceDeadline } from '../staff/availability'
@@ -168,6 +173,12 @@ function whatsappAdmissionReady(
     !['sandbox', 'cloud'].includes(env.WHATSAPP_MODE)
   )
     return false
+  const profile = copyVersion(env)
+  if (profile === null) return false
+  if (env.WHATSAPP_MODE === 'cloud' && profile === 3)
+    return whatsappV3Catalog
+      .filter((template) => template.locale === locale)
+      .every((template) => v3TemplateReady(env, template))
   if (env.WHATSAPP_MODE === 'cloud') {
     const templates = env as CloudflareBindings &
       Partial<
@@ -253,6 +264,7 @@ export async function joinQueue(
       },
     }
   }
+  const selectedCopyVersion = copyVersion(env)
   // Admission guards apply to new turns, never to recovery of a committed request.
   if (source === 'public-service' && !input.displayName?.trim())
     return { status: 400, body: { error: 'name_required' } }
@@ -334,6 +346,14 @@ export async function joinQueue(
       sequence: number
     }>()
   if (!queue) return { status: 404, body: { error: 'queue_not_found' } }
+  if (
+    !experiment &&
+    input.whatsapp.consent &&
+    selectedCopyVersion !== 2 &&
+    !queue.config &&
+    manualJoinRequiresWhatsapp(env)
+  )
+    return { status: 503, body: { error: 'whatsapp_unavailable' } }
   let snapshot: { windowId: string; endsAt: number | null } | null = null
   if (queue.config) {
     const config = normalizeConfig(
@@ -458,7 +478,9 @@ export async function joinQueue(
         experiment ? 'confirmation-experiment-v1' : input.whatsapp.version,
         now,
       ),
-      env.DB.prepare(
+      !experiment && selectedCopyVersion !== 2 && !queue.config
+        ? unavailableCopyStatement(env, id, 'queue_joined', now, `joined:${id}`, id)
+        : env.DB.prepare(
         'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind) VALUES (?,?,?,?,?,?)',
       ).bind(
         id,
@@ -488,6 +510,17 @@ export async function joinQueue(
     if (projection) {
       const snapshot: QueueNoticeSnapshot = {
         schemaVersion: 2,
+        approachRecommended:
+          customerPhase(
+            'waiting',
+            projection.position,
+            projection.etaMinutes,
+            projection.quality,
+            {
+              approachTurns: projectionState.config.approachTurns ?? 2,
+              approachMinutes: projectionState.config.approachMinutes ?? 10,
+            },
+          ) === 'approaching',
         serviceName: projectionState.config.name,
         ahead: Math.max(0, projection.position - 1),
         etaMinutes:
@@ -501,7 +534,10 @@ export async function joinQueue(
         "UPDATE notification_outbox SET payload_version=2,payload_snapshot=?,revision=?,updated_at=? WHERE id=? AND kind='queue_joined' AND status='pending'",
       )
         .bind(
-          JSON.stringify(snapshot),
+          JSON.stringify({
+            ...snapshot,
+            copyVersion: selectedCopyVersion ?? 'invalid',
+          }),
           revision?.revision ?? 0,
           Date.now(),
           id,

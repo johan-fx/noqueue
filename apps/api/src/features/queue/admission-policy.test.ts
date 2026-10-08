@@ -1,3 +1,4 @@
+import { whatsappV3Catalog } from '../../integrations/whatsapp-copy-v3'
 import { describe, expect, it } from 'vitest'
 import { publicWhatsappAdmissionError } from './entries'
 
@@ -77,4 +78,47 @@ describe('public WhatsApp admission policy', () => {
       ),
     ).toBeNull()
   })
+})
+
+it('requires the explicit v3 locale manifest approval and rejects invalid profiles', () => {
+  expect(
+    publicWhatsappAdmissionError(
+      bindings({ WHATSAPP_COPY_VERSION: '3' }),
+      contact,
+      'es',
+    ),
+  ).toBe('whatsapp_unavailable')
+  expect(
+    publicWhatsappAdmissionError(
+      bindings({ WHATSAPP_COPY_VERSION: 'invalid' }),
+      contact,
+      'es',
+    ),
+  ).toBe('whatsapp_unavailable')
+})
+
+it('requires every selected-locale v3 variant and keeps locale readiness independent', () => {
+  const configured = Object.fromEntries(
+    whatsappV3Catalog
+      .filter((t) => t.locale === 'es')
+      .map((t) => [t.binding, t.name]),
+  )
+  const ready = bindings({
+    ...configured,
+    WHATSAPP_COPY_VERSION: '3',
+    WHATSAPP_V3_TEMPLATES_APPROVED: 'true',
+  })
+  expect(publicWhatsappAdmissionError(ready, contact, 'es')).toBeNull()
+  expect(publicWhatsappAdmissionError(ready, contact, 'en')).toBe(
+    'whatsapp_unavailable',
+  )
+  for (const spec of whatsappV3Catalog.filter((t) => t.locale === 'es')) {
+    expect(
+      publicWhatsappAdmissionError(
+        { ...ready, [spec.binding]: '' },
+        contact,
+        'es',
+      ),
+    ).toBe('whatsapp_unavailable')
+  }
 })

@@ -82,7 +82,16 @@ export async function expireArrivals(
       arrivalDeadlineAt: entry.arrival_deadline_at,
     }
     return [
-    noticeStatement(env, entry.id, 'expired', now, snapshot, 0, entry.call_cycle),
+    noticeStatement(
+      env,
+      entry.id,
+      'expired',
+      now,
+      snapshot,
+      0,
+      entry.call_cycle,
+      !!entry.config,
+    ),
     env.DB.prepare(
       "INSERT INTO queue_event(id,entry_id,kind,created_at) SELECT ?,id,'expired',? FROM queue_entry WHERE id=? AND status='called'",
     ).bind(crypto.randomUUID(), now, entry.id),
@@ -182,7 +191,9 @@ export async function runCustomerCommand(
       reason: 'customer_cancel',
     }
     statements.push(
-      noticeStatement(env, entry.id, 'cancelled', now, snapshot),
+      noticeStatement(
+        env, entry.id, 'cancelled', now, snapshot, 0, 0, !!state.config,
+      ),
       env.DB.prepare(
         "INSERT OR IGNORE INTO notification_trace(id,notification_id,event,recorded_at) SELECT id||':obsolete',id,'obsolete',? FROM notification_outbox WHERE entry_id=? AND kind IN ('queue_joined','approaching','delayed','improved') AND status='pending'",
       ).bind(now, entry.id),

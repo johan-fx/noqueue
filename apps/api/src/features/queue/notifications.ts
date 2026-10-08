@@ -139,7 +139,16 @@ export async function dispatchNotificationSerialized(
   if (row.payload_version === 2 && row.payload_snapshot) {
     try {
       const parsed = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot
-      if (parsed.schemaVersion === 2 && typeof parsed.serviceName === 'string')
+      if (
+        parsed.schemaVersion === 2 &&
+        typeof parsed.serviceName === 'string' &&
+        (parsed.copyVersion === undefined ||
+          parsed.copyVersion === 2 ||
+          parsed.copyVersion === 3) &&
+        (parsed.copyVersion !== 3 ||
+          typeof parsed.approachRecommended === 'boolean' ||
+          row.kind !== 'improved')
+      )
         snapshot = parsed
     } catch {
       // Invalid immutable payloads fail closed below; never reconstruct PII.
@@ -342,6 +351,8 @@ export async function dispatchNotificationSerialized(
     ...(row.payload_version === 2
       ? {
           payloadVersion: 2 as const,
+          copyVersion: snapshot?.copyVersion ?? 2,
+          approachRecommended: snapshot?.approachRecommended ?? false,
           notificationId: id,
           serviceName: snapshot?.serviceName ?? row.venue,
           ahead: snapshot?.ahead ?? null,

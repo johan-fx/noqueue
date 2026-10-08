@@ -237,17 +237,26 @@ export async function runQueueCommand(
       .first()
     if (consent) {
       extra.push(
-        noticeStatement(env, input.entryId, 'cancelled', now, {
-          schemaVersion: 2,
-          serviceName: state.config?.name ?? 'Service',
-          ahead: null,
-          etaMinutes: null,
-          predictedAt: null,
-          estimateQuality: 'unknown',
-          resourceName: null,
-          arrivalDeadlineAt: null,
-          reason: 'staff_cancel',
-        }),
+        noticeStatement(
+          env,
+          input.entryId,
+          'cancelled',
+          now,
+          {
+            schemaVersion: 2,
+            serviceName: state.config?.name ?? 'Service',
+            ahead: null,
+            etaMinutes: null,
+            predictedAt: null,
+            estimateQuality: 'unknown',
+            resourceName: null,
+            arrivalDeadlineAt: null,
+            reason: 'staff_cancel',
+          },
+          0,
+          0,
+          !!state.config,
+        ),
       )
       notifyCancellation = true
     }
@@ -274,6 +283,7 @@ export async function runQueueCommand(
         snapshot,
         0,
         entry.call_cycle + 1,
+        !!state.config,
       ),
     )
   }

@@ -1,3 +1,4 @@
+import { lifecycleV3, renderLifecycleV3, v3TemplateReady } from './whatsapp-copy-v3'
 import {
   confirmationExperimentEnabled,
   liveConfirmationEnabled,
@@ -10,6 +11,8 @@ export interface OutboundWhatsAppMessage {
   code: string
   token: string
   payloadVersion?: 1 | 2
+  copyVersion?: 2 | 3
+  approachRecommended?: boolean
   notificationId?: string
   serviceName?: string
   ahead?: number | null
@@ -159,12 +162,28 @@ export function createWhatsAppSender(
           >
         >
       const version2 = message.payloadVersion === 2
+      const version3 = version2 && message.copyVersion === 3
+      if (
+        message.copyVersion !== undefined &&
+        ![2, 3].includes(message.copyVersion)
+      )
+        return configurationFailure()
+      let natural: ReturnType<typeof lifecycleV3> | undefined
+      if (version3) {
+        try {
+          natural = lifecycleV3(message)
+        } catch {
+          return configurationFailure()
+        }
+        if (!sandbox && !v3TemplateReady(env, natural.template))
+          return configurationFailure()
+      }
       if (
         version2 &&
         (!message.notice || !z.uuid().safeParse(message.notificationId).success)
       )
         return configurationFailure()
-      const name = message.notice
+      const name = natural ? natural.template.name : message.notice
         ? version2
           ? lifecycleTemplates[
               `WHATSAPP_QUEUE_V2_${message.notice.toUpperCase() as
@@ -198,7 +217,7 @@ export function createWhatsAppSender(
         !sandbox &&
         (!name ||
           env.STAGING_CONSENT_APPROVED !== 'true' ||
-          (version2 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
+          (version2 && !version3 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
       )
         return configurationFailure()
       const linkUrl = new URL(`/t/${message.token}`, env.PUBLIC_APP_ORIGIN)
@@ -233,7 +252,7 @@ export function createWhatsAppSender(
         : 'check the link'
       const destination = message.resourceName ?? ''
       const reason = message.cancellationReason ?? ''
-      const templateParameters = [
+      const templateParameters = (natural ? natural.parameters : [
         serviceName,
         message.code,
         ahead,
@@ -241,7 +260,7 @@ export function createWhatsAppSender(
         destination,
         deadline,
         reason,
-      ].map((text) => ({ type: 'text', text }))
+      ]).map((text) => ({ type: 'text', text }))
       const payload = positionUpdate
         ? {
             messaging_product: 'whatsapp',
@@ -291,7 +310,7 @@ export function createWhatsAppSender(
             to: message.phone.slice(1),
             type: 'text',
             text: {
-              body: sandboxLifecycleCopy(message, {
+              body: version3 ? renderLifecycleV3(message, link) : sandboxLifecycleCopy(message, {
                 serviceName,
                 ahead,
                 eta,

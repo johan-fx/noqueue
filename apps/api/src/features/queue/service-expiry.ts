@@ -80,7 +80,9 @@ export async function maintainServiceEntries(
       "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE status='pending' AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?)",
     ).bind(now, queueId, now),
     ...dueEntries.results.map(({ id }) =>
-      noticeStatement(env, id, 'service_ended', now, snapshot),
+      noticeStatement(
+        env, id, 'service_ended', now, snapshot, 0, 0, !!configured?.config,
+      ),
     ),
     env.DB.prepare(
       "UPDATE queue_allocation SET released_at=?,outcome='cancelled' WHERE released_at IS NULL AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?)",

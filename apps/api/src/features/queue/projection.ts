@@ -295,6 +295,7 @@ export async function recalculateQueue(
     const snapshot: QueueNoticeSnapshot | null = state.config
       ? {
           schemaVersion: 2,
+          approachRecommended: approachingNow,
           serviceName: state.config.name,
           ahead: Math.max(0, p.position - 1),
           etaMinutes: p.quality === 'unknown' ? null : p.etaMinutes,
@@ -318,6 +319,8 @@ export async function recalculateQueue(
           now,
           snapshot,
           revision,
+          0,
+          !!state.config,
         ),
       )
     const notificationState = await env.DB.prepare(
@@ -340,7 +343,9 @@ export async function recalculateQueue(
     })
     if (correction && snapshot)
       statements.push(
-        noticeStatement(env, p.id, correction, now, snapshot, revision),
+        noticeStatement(
+          env, p.id, correction, now, snapshot, revision, 0, !!state.config,
+        ),
       )
     statements.push(
       env.DB.prepare(

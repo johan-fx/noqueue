@@ -31,6 +31,11 @@ it('requires a name and shares compatible group/space selection for editing', as
   fireEvent.change(screen.getByLabelText('Nombre'), {
     target: { value: 'María' },
   })
+  fireEvent.change(
+    screen.getByLabelText('Teléfono con prefijo internacional'),
+    { target: { value: '+34600000000' } },
+  )
+  fireEvent.click(screen.getByRole('checkbox'))
   fireEvent.click(screen.getByRole('button', { name: 'Más comensales' }))
   fireEvent.click(screen.getByRole('button', { name: 'Más comensales' }))
   expect(screen.getByRole('radio', { name: 'Barra' })).toBeDisabled()

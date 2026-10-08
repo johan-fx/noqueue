@@ -154,6 +154,11 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
         partySize: 4,
         preferredSpaceId: 'fastest',
         locale: 'es',
+        whatsapp: {
+          consent: true,
+          phone: '+34600000000',
+          version: 'whatsapp-public-service-updates-v1',
+        },
       },
     },
   )

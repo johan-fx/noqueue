@@ -61,6 +61,45 @@ customerRoutes.get('/venues/:id/services', async (c) => {
   }
   return c.json({ ...venue, services })
 })
+customerRoutes.post(
+  '/entries/:token/notices/:notificationId/opened',
+  async (c) => {
+    const token = z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .safeParse(c.req.param('token'))
+    const notificationId = z.uuid().safeParse(c.req.param('notificationId'))
+    if (!token.success || !notificationId.success)
+      return c.json({ error: 'not_found' }, 404)
+    const entry = await c.env.DB.prepare(
+      `SELECT e.id FROM queue_entry e
+      JOIN notification_outbox n ON n.entry_id=e.id
+      WHERE e.recovery_hash=? AND n.id=? AND n.payload_version=2 AND n.accepted_at IS NOT NULL`,
+    )
+      .bind(await hash(token.data), notificationId.data)
+      .first<{ id: string }>()
+    if (!entry) return c.json({ error: 'not_found' }, 404)
+    const openedAt = Date.now()
+    await c.env.DB.batch([
+      c.env.DB.prepare(
+        `UPDATE notification_outbox SET opened_at=COALESCE(opened_at,?)
+        WHERE id=? AND entry_id=? AND payload_version=2 AND accepted_at IS NOT NULL`,
+      ).bind(openedAt, notificationId.data, entry.id),
+      c.env.DB.prepare(
+        `INSERT OR IGNORE INTO notification_trace(id,notification_id,event,recorded_at)
+        SELECT ?,id,'opened',? FROM notification_outbox
+        WHERE id=? AND entry_id=? AND payload_version=2 AND accepted_at IS NOT NULL AND opened_at=?`,
+      ).bind(
+        `${notificationId.data}:opened`,
+        openedAt,
+        notificationId.data,
+        entry.id,
+        openedAt,
+      ),
+    ])
+    return c.body(null, 204)
+  },
+)
 customerRoutes.post('/entries/:token/commands', async (c) => {
   if (c.req.header('Origin') !== c.env.PUBLIC_APP_ORIGIN)
     return c.json({ error: 'origin_not_allowed' }, 403)

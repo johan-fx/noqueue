@@ -4,6 +4,8 @@ import { queueCoordinator, openExperimentRecipientAllowed } from './experiment'
 import { z } from 'zod'
 import { createWhatsAppSender } from '../../integrations/360dialog'
 import { decryptPhone, recoveryToken } from './crypto'
+import { evaluateEstimateNotice } from './estimate-notices'
+import type { QueueNoticeSnapshot } from './notices'
 export const jobSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('dispatch-notification'),
@@ -14,6 +16,56 @@ export const jobSchema = z.discriminatedUnion('kind', [
     webhookEventId: z.string().uuid(),
   }),
 ])
+
+function acceptedNoticeStateStatement(
+  env: CloudflareBindings,
+  input: {
+    entryId: string
+    predictedAt: number
+    acceptedAt: number
+    revision: number
+    callCycle: number
+    notificationId: string
+    kind: string
+  },
+) {
+  return env.DB.prepare(
+    `INSERT INTO queue_notification_state(
+       entry_id,last_accepted_predicted_at,last_correction_accepted_at,updated_at,
+       last_accepted_at,last_accepted_call_cycle,last_accepted_revision,last_accepted_notification_id
+     ) VALUES (?,?,?,?,?,?,?,?)
+     ON CONFLICT(entry_id) DO UPDATE SET
+       last_accepted_predicted_at=excluded.last_accepted_predicted_at,
+       last_correction_accepted_at=CASE WHEN ? IN ('delayed','improved') THEN excluded.last_correction_accepted_at ELSE queue_notification_state.last_correction_accepted_at END,
+       updated_at=excluded.updated_at,
+       last_accepted_at=excluded.last_accepted_at,
+       last_accepted_call_cycle=excluded.last_accepted_call_cycle,
+       last_accepted_revision=excluded.last_accepted_revision,
+       last_accepted_notification_id=excluded.last_accepted_notification_id
+     WHERE excluded.last_accepted_at>COALESCE(queue_notification_state.last_accepted_at,-1)
+       OR (excluded.last_accepted_at=queue_notification_state.last_accepted_at AND (
+         excluded.last_accepted_call_cycle>queue_notification_state.last_accepted_call_cycle
+         OR (excluded.last_accepted_call_cycle=queue_notification_state.last_accepted_call_cycle AND (
+           excluded.last_accepted_revision>queue_notification_state.last_accepted_revision
+           OR (excluded.last_accepted_revision=queue_notification_state.last_accepted_revision AND
+               excluded.last_accepted_notification_id>queue_notification_state.last_accepted_notification_id)
+         ))
+       ))`,
+  ).bind(
+    input.entryId,
+    input.predictedAt,
+    input.kind === 'delayed' || input.kind === 'improved'
+      ? input.acceptedAt
+      : null,
+    input.acceptedAt,
+    input.acceptedAt,
+    input.callCycle,
+    input.revision,
+    input.notificationId,
+    input.kind,
+  )
+}
+
 export async function dispatchNotification(
   env: CloudflareBindings,
   id: string,
@@ -33,10 +85,13 @@ export async function dispatchNotificationSerialized(
 ) {
   if (env.WHATSAPP_ENABLED !== 'true') return
   const row = await env.DB.prepare(
-    `SELECT n.status,n.attempts,n.kind,n.position,e.status AS entry_status,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,c.phone_cipher,c.phone_hash,v.name AS venue
+    `SELECT n.status,n.attempts,n.kind,n.position,n.payload_version,n.payload_snapshot,n.revision,n.call_cycle,n.accepted_at,
+    e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,
+    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
     LEFT JOIN queue_confirmation f ON f.entry_id=e.id
-    JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id WHERE n.id=?`,
+    JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id
+    LEFT JOIN queue_projection p ON p.entry_id=e.id WHERE n.id=?`,
   )
     .bind(id)
     .first<{
@@ -47,6 +102,11 @@ export async function dispatchNotificationSerialized(
       queue_id: string
       sequence: number
       kind: string
+      payload_version: number
+      payload_snapshot: string | null
+      revision: number
+      call_cycle: number
+      accepted_at: number | null
       payload: string | null
       expires_at: number | null
       attempts: number
@@ -56,9 +116,35 @@ export async function dispatchNotificationSerialized(
       phone_cipher: string
       phone_hash: string
       venue: string
+      queue_config: string | null
+      projection_revision: number | null
+      current_predicted_at: number | null
+      current_quality: 'estimated' | 'provisional' | 'unknown' | null
+      current_eta: number | null
+      entry_call_cycle: number
     }>()
   if (!row || row.status !== 'pending') return
-  const notice = ['ready', 'approaching', 'expired'].includes(row.kind)
+  const notice =
+    [
+      'ready',
+      'approaching',
+      'delayed',
+      'improved',
+      'expired',
+      'cancelled',
+      'service_ended',
+    ].includes(row.kind) ||
+    (row.kind === 'queue_joined' && row.payload_version === 2)
+  let snapshot: QueueNoticeSnapshot | null = null
+  if (row.payload_version === 2 && row.payload_snapshot) {
+    try {
+      const parsed = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot
+      if (parsed.schemaVersion === 2 && typeof parsed.serviceName === 'string')
+        snapshot = parsed
+    } catch {
+      // Invalid immutable payloads fail closed below; never reconstruct PII.
+    }
+  }
   let approaching = true
   if (row.kind === 'approaching') {
     const current = await env.DB.prepare(
@@ -88,14 +174,76 @@ export async function dispatchNotificationSerialized(
           current.predicted_at - Date.now() <=
             (config.approachMinutes ?? 10) * 60000))
   }
+  let correctionIsCurrent = true
+  if (row.kind === 'delayed' || row.kind === 'improved') {
+    const baseline = await env.DB.prepare(
+      'SELECT last_accepted_predicted_at,last_correction_accepted_at FROM queue_notification_state WHERE entry_id=?',
+    )
+      .bind(row.id)
+      .first<{
+        last_accepted_predicted_at: number | null
+        last_correction_accepted_at: number | null
+      }>()
+    correctionIsCurrent =
+      evaluateEstimateNotice({
+        previousAcceptedAt: baseline?.last_accepted_predicted_at ?? null,
+        currentPredictedAt: row.current_predicted_at,
+        quality: row.current_quality ?? 'unknown',
+        lastCorrectionAcceptedAt:
+          baseline?.last_correction_accepted_at ?? null,
+        thresholdMinutes: (() => {
+          try {
+            return (
+              JSON.parse(row.queue_config ?? '{}') as {
+                etaChangeThresholdMinutes?: number
+              }
+            ).etaChangeThresholdMinutes ?? 5
+          } catch {
+            return 5
+          }
+        })(),
+        cooldownMinutes: (() => {
+          try {
+            return (
+              JSON.parse(row.queue_config ?? '{}') as {
+                notificationCooldownMinutes?: number
+              }
+            ).notificationCooldownMinutes ?? 10
+          } catch {
+            return 10
+          }
+        })(),
+        now: Date.now(),
+      }) === row.kind
+  }
   if (
     notice &&
-    ((row.kind === 'ready' &&
+    (row.payload_version === 2 && !snapshot ||
+      (row.kind === 'ready' &&
       (row.entry_status !== 'called' ||
-        (row.arrival_deadline_at ?? 0) <= Date.now())) ||
+        (row.arrival_deadline_at ?? 0) <= Date.now() ||
+        row.call_cycle !== row.entry_call_cycle)) ||
+      (row.kind === 'queue_joined' &&
+        (row.entry_status !== 'waiting' ||
+          (row.payload_version === 2 &&
+            row.revision !== row.projection_revision))) ||
       (row.kind === 'approaching' &&
-        (row.entry_status !== 'waiting' || !approaching)) ||
-      (row.kind === 'expired' && row.entry_status !== 'expired'))
+        (row.entry_status !== 'waiting' || !approaching ||
+          (row.payload_version === 2 && row.revision !== row.projection_revision))) ||
+      ((row.kind === 'delayed' || row.kind === 'improved') &&
+        (row.entry_status !== 'waiting' ||
+          row.current_quality === 'unknown' ||
+          row.current_predicted_at === null ||
+          row.revision !== row.projection_revision ||
+          !correctionIsCurrent)) ||
+      (row.kind === 'expired' && row.entry_status !== 'expired') ||
+      (row.kind === 'cancelled' && row.entry_status !== 'cancelled') ||
+      (row.kind === 'service_ended' &&
+        (row.entry_status !== 'cancelled' ||
+          !(await env.DB.prepare("SELECT 1 FROM queue_event WHERE entry_id=? AND kind='service_ended' LIMIT 1")
+            .bind(row.id)
+            .first())))
+    )
   ) {
     await env.DB.batch([
       env.DB.prepare(
@@ -179,8 +327,33 @@ export async function dispatchNotificationSerialized(
     locale: row.locale,
     venue: row.venue,
     ...(notice
-      ? { notice: row.kind as 'ready' | 'approaching' | 'expired' }
+      ? {
+          notice: row.kind as
+            | 'queue_joined'
+            | 'ready'
+            | 'approaching'
+            | 'delayed'
+            | 'improved'
+            | 'expired'
+            | 'cancelled'
+            | 'service_ended',
+        }
       : {}),
+    ...(row.payload_version === 2
+      ? {
+          payloadVersion: 2 as const,
+          notificationId: id,
+          serviceName: snapshot?.serviceName ?? row.venue,
+          ahead: snapshot?.ahead ?? null,
+          etaMinutes: snapshot?.etaMinutes ?? null,
+          estimateQuality: snapshot?.estimateQuality ?? 'unknown',
+          resourceName: snapshot?.resourceName ?? null,
+          arrivalDeadlineAt: snapshot?.arrivalDeadlineAt ?? null,
+          ...(snapshot?.reason
+            ? { cancellationReason: snapshot.reason }
+            : {}),
+        }
+      : { payloadVersion: 1 as const }),
     code: row.code,
     token: await recoveryToken(env, row.id),
     ...(row.kind === 'position_update' && row.position !== null
@@ -211,11 +384,25 @@ export async function dispatchNotificationSerialized(
     })
   }
   if (result.kind === 'accepted') {
-    await env.DB.prepare(
-      "UPDATE notification_outbox SET status='accepted',provider_id=?,updated_at=? WHERE id=? AND status IN ('sending','unknown')",
-    )
-      .bind(result.providerId, Date.now(), id)
-      .run()
+    const acceptedAt = Date.now()
+    const accepted: D1PreparedStatement[] = [
+      env.DB.prepare(
+        "UPDATE notification_outbox SET status='accepted',provider_id=?,accepted_at=COALESCE(accepted_at,?),updated_at=? WHERE id=? AND status IN ('sending','unknown')",
+      ).bind(result.providerId, acceptedAt, acceptedAt, id),
+    ]
+    if (snapshot?.predictedAt !== null && snapshot?.predictedAt !== undefined)
+      accepted.push(
+        acceptedNoticeStateStatement(env, {
+          entryId: row.id,
+          predictedAt: snapshot.predictedAt,
+          acceptedAt,
+          revision: row.revision,
+          callCycle: row.call_cycle,
+          notificationId: id,
+          kind: row.kind,
+        }),
+      )
+    await env.DB.batch(accepted)
     const early = await env.DB.prepare(
       "SELECT id FROM webhook_event WHERE (provider_id=? OR context_id=? OR (kind='confirmation' AND phone_hash=?)) AND processed_at IS NULL ORDER BY occurred_at",
     )
@@ -303,10 +490,18 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
     return
   }
   const notification = await env.DB.prepare(
-    'SELECT id FROM notification_outbox WHERE provider_id=?',
+    'SELECT id,entry_id,kind,payload_snapshot,accepted_at,revision,call_cycle FROM notification_outbox WHERE provider_id=?',
   )
     .bind(event.provider_id)
-    .first<{ id: string }>()
+    .first<{
+      id: string
+      entry_id: string
+      kind: string
+      payload_snapshot: string | null
+      accepted_at: number | null
+      revision: number
+      call_cycle: number
+    }>()
   // An event may precede the POST response. Keep it pending until acceptance can correlate it.
   if (!notification) return
   const rank: Record<string, number> = {
@@ -318,7 +513,7 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
     delivered: 4,
     read: 5,
   }
-  await env.DB.batch([
+  const webhookStatements: D1PreparedStatement[] = [
     deliveryTraceStatement(env, {
       id,
       notificationId: notification.id,
@@ -335,7 +530,34 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
       now,
       id,
     ),
-  ])
+  ]
+  if (
+    ['sent', 'delivered', 'read'].includes(event.status) &&
+    notification.accepted_at !== null &&
+    notification.payload_snapshot
+  ) {
+    try {
+      const snapshot = JSON.parse(
+        notification.payload_snapshot,
+      ) as QueueNoticeSnapshot
+      if (snapshot.schemaVersion === 2 && snapshot.predictedAt !== null) {
+        webhookStatements.push(
+          acceptedNoticeStateStatement(env, {
+            entryId: notification.entry_id,
+            predictedAt: snapshot.predictedAt,
+            acceptedAt: notification.accepted_at,
+            revision: notification.revision,
+            callCycle: notification.call_cycle,
+            notificationId: notification.id,
+            kind: notification.kind,
+          }),
+        )
+      }
+    } catch {
+      // Malformed historical payloads are not allowed to change the ETA baseline.
+    }
+  }
+  await env.DB.batch(webhookStatements)
 }
 export async function reconcile(env: CloudflareBindings) {
   const now = Date.now()

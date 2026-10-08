@@ -274,14 +274,22 @@ export function Dashboard(props: DashboardProps) {
         setLastSync('')
         setSelected(result.id)
       } else if (drawer === 'edit' && queue) {
-        const approachChanged =
+        const noticePolicyChanged =
           (config.approachTurns ?? 2) !== (queue.config.approachTurns ?? 2) ||
           (config.approachMinutes ?? 10) !==
-            (queue.config.approachMinutes ?? 10)
+            (queue.config.approachMinutes ?? 10) ||
+          (config.etaChangeThresholdMinutes ?? 5) !==
+            (queue.config.etaChangeThresholdMinutes ?? 5) ||
+          (config.notificationCooldownMinutes ?? 10) !==
+            (queue.config.notificationCooldownMinutes ?? 10)
+        const hasActiveWaiting = entries.some(
+          (entry) => entry.status === 'waiting',
+        )
         if (
-          approachChanged &&
+          noticePolicyChanged &&
+          hasActiveWaiting &&
           !window.confirm(
-            'Los nuevos umbrales de acercamiento se aplicarán a los turnos en espera. ¿Quieres continuar?',
+            'La política de avisos se actualizará para los turnos en espera. El plazo de llegada solo cambiará en futuras asignaciones. ¿Quieres continuar?',
           )
         )
           return
@@ -289,7 +297,7 @@ export function Dashboard(props: DashboardProps) {
           ...config,
           version: queue.version,
           open: !!queue.open,
-          applyApproachToActive: approachChanged,
+          applyApproachToActive: noticePolicyChanged && hasActiveWaiting,
         })
       } else return
       setDrawer(null)
@@ -583,6 +591,7 @@ export function Dashboard(props: DashboardProps) {
         queues.find((q) => q.id === advanced.queueId) && (
           <QueueAdvancedDrawer
             queue={queues.find((q) => q.id === advanced.queueId)!}
+            activeWaitingCount={waitingCounts[advanced.queueId] ?? 0}
             canOperate={permissions.includes('queue.operate')}
             canConfigure={permissions.includes('queue.configure')}
             returnFocus={advanced.trigger}
@@ -624,6 +633,7 @@ export function Dashboard(props: DashboardProps) {
           {advanced?.insideDrawer && queue && (
             <QueueAdvancedDrawer
               queue={queue}
+              activeWaitingCount={waitingCounts[queue.id] ?? 0}
               canOperate={permissions.includes('queue.operate')}
               canConfigure={permissions.includes('queue.configure')}
               returnFocus={advanced.trigger}

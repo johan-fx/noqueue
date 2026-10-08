@@ -1,10 +1,19 @@
 import { useRef, useState, type FormEvent } from 'react'
-import type { PublicService, ServiceJoin } from '@noqueue/contracts/queue'
+import {
+  publicServiceConsentVersion,
+  type PublicService,
+  type PublicServiceJoin,
+  type ServiceJoin,
+} from '@noqueue/contracts/queue'
 import { Minus, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CustomerFooter, type Locale } from './shared'
 import { SpaceSelector } from './SpaceSelector'
+import {
+  PublicWhatsAppConsentFields,
+  validPublicWhatsAppConsent,
+} from './PublicWhatsAppConsentFields'
 
 export function RestaurantForm({
   service,
@@ -18,11 +27,13 @@ export function RestaurantForm({
   locale: Locale
   initial?: ServiceJoin
   disabled?: boolean
-  onSubmit: (input: ServiceJoin, key: string) => Promise<void>
+  onSubmit: (input: ServiceJoin | PublicServiceJoin, key: string) => Promise<void>
   onCancel?: () => void
 }) {
   const es = locale === 'es'
   const [name, setName] = useState(initial?.displayName ?? '')
+  const [phone, setPhone] = useState('')
+  const [consent, setConsent] = useState(false)
   const [size, setSize] = useState(initial?.partySize ?? 1)
   const [space, setSpace] = useState(initial?.preferredSpaceId ?? 'fastest')
   const [hasAttempt, setHasAttempt] = useState(false)
@@ -48,18 +59,28 @@ export function RestaurantForm({
       lock.current ||
       (disabled && !request.current) ||
       !name.trim() ||
-      !compatible
+      !compatible ||
+      (!initial && !validPublicWhatsAppConsent(phone, consent))
     )
       return
     setHasAttempt(true)
     lock.current = true
     setBusy(true)
     setError('')
-    const input = {
+    const input: ServiceJoin | PublicServiceJoin = {
       displayName: name.trim(),
       partySize: size,
       preferredSpaceId: space,
       locale,
+      ...(!initial
+        ? {
+            whatsapp: {
+              consent: true as const,
+              phone,
+              version: publicServiceConsentVersion,
+            },
+          }
+        : {}),
     }
     const payload = JSON.stringify(input)
     if (request.current?.payload !== payload)
@@ -153,6 +174,22 @@ export function RestaurantForm({
             disabled={busy || disabled}
             onChange={setSpace}
           />
+          {!initial && (
+            <PublicWhatsAppConsentFields
+              locale={locale}
+              phone={phone}
+              consent={consent}
+              disabled={busy || disabled}
+              onPhoneChange={(value) => {
+                setPhone(value)
+                setHasAttempt(false)
+              }}
+              onConsentChange={(value) => {
+                setConsent(value)
+                setHasAttempt(false)
+              }}
+            />
+          )}
           {!compatible && (
             <p role="status">
               {es
@@ -191,7 +228,12 @@ export function RestaurantForm({
         )}
         <Button
           type="submit"
-          disabled={busy || (disabled && !hasAttempt) || !compatible}
+          disabled={
+            busy ||
+            (disabled && !hasAttempt) ||
+            !compatible ||
+            (!initial && !validPublicWhatsAppConsent(phone, consent))
+          }
         >
           {busy
             ? es

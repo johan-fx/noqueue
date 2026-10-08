@@ -1,4 +1,5 @@
 import { resolveFixtureLocation } from '../helpers/location.js'
+import { fillPublicWhatsAppConsent } from '../helpers/queue-actions.js'
 import { test, expect, type Page, type Locator } from '@playwright/test'
 type QueueSummary = { id: string; config: { type: string } }
 type StaffEntry = { id: string; code: string }
@@ -170,6 +171,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   const guest = await page.context().newPage()
   await guest.goto(`/q/${restaurant.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('María López')
+  await fillPublicWhatsAppConsent(guest)
   for (let i = 0; i < 3; i++)
     await guest.getByRole('button', { name: 'Más comensales' }).click()
   await guest.getByRole('radio', { name: 'Terraza' }).check()
@@ -325,10 +327,10 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   // Reception public form captures enabled subtypes; no restaurant fields leak across services.
   await guest.goto(`/q/${reception.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('Ana Recepción')
-  await guest.getByRole('combobox', { name: 'Tipo de gestión' }).click()
-  await guest.getByRole('option', { name: 'Check-out' }).click()
+  await fillPublicWhatsAppConsent(guest)
+  await guest.getByRole('radio', { name: 'Check-out', exact: true }).check()
   await expect(guest.getByLabel('Espacio', { exact: true })).toHaveCount(0)
-  await guest.getByRole('button', { name: 'Unirme a la lista' }).click()
+  await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await page
     .getByRole('article', { name: 'Servicio Recepción', exact: true })
@@ -383,7 +385,8 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await drawer.getByRole('button', { name: 'Volver', exact: true }).click()
   await guest.goto(`/q/${pool.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('Piscina Cliente')
-  await guest.getByRole('button', { name: 'Unirme a la lista' }).click()
+  await fillPublicWhatsAppConsent(guest)
+  await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await page
     .getByRole('article', { name: 'Servicio Bar piscina', exact: true })

@@ -41,37 +41,9 @@ export function QueueStep({
           <FieldError errors={[form.formState.errors[name]]} />
         </Field>
       ))}
-      {type === 'restaurant' && (
-        <fieldset className="space-y-4">
-          <legend className="mb-3 font-medium">Aviso de acercamiento</legend>
-          <p className="text-sm text-muted-foreground">
-            Se activa al cumplir cualquiera de los dos umbrales. Los cambios se
-            aplican a los turnos en espera.
-          </p>
-          {(
-            [
-              ['approachTurns', 'Turnos por delante', 2, 100],
-              ['approachMinutes', 'Minutos de espera', 10, 1440],
-            ] as const
-          ).map(([name, label, fallback, max]) => (
-            <Field key={name}>
-              <FieldLabel htmlFor={name}>{label}</FieldLabel>
-              <Input
-                id={name}
-                type="number"
-                min={0}
-                max={max}
-                defaultValue={form.getValues(name) ?? fallback}
-                {...form.register(name, { valueAsNumber: true })}
-              />
-              <FieldError errors={[form.formState.errors[name]]} />
-            </Field>
-          ))}
-        </fieldset>
-      )}
       <p className="text-sm text-muted-foreground">
-        El plazo configurado en ajustes avanzados se aplica a asignaciones
-        futuras; no cambia plazos ya iniciados.
+        Los umbrales de acercamiento, los avisos de cambios de estimación y el
+        plazo de llegada se ajustan en Configuración avanzada.
       </p>
       {onConfigure && (
         <Button

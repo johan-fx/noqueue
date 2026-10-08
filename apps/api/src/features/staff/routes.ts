@@ -1,4 +1,7 @@
-import { deliveryRetentionMs } from '../queue/delivery-trace'
+import {
+  deliveryRetentionMs,
+  notificationDeliverySummary,
+} from '../queue/delivery-trace'
 import { assignmentContext } from './assignment'
 import { allowedEntryActions, roleCapabilities } from '@noqueue/contracts/staff'
 import { loadQueueState } from '../queue/projection'
@@ -681,14 +684,19 @@ staffRoutes.patch('/queues/:id', async (c) => {
 })
 staffRoutes.get('/queues/:id/delivery-trace', async (c) => {
   await queueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  const queueId = c.req.param('id')
+  const since = Date.now() - deliveryRetentionMs
   const rows = await c.env.DB.prepare(
     `SELECT t.id,e.code,n.kind,t.event,t.attempt,t.http_status AS httpStatus,t.provider_code AS providerCode,t.occurred_at AS occurredAt,t.recorded_at AS recordedAt
     FROM notification_trace t JOIN notification_outbox n ON n.id=t.notification_id JOIN queue_entry e ON e.id=n.entry_id
     WHERE e.queue_id=? AND t.recorded_at>=? ORDER BY t.recorded_at DESC,t.id LIMIT 200`,
   )
-    .bind(c.req.param('id'), Date.now() - deliveryRetentionMs)
+    .bind(queueId, since)
     .all()
-  return c.json(rows.results)
+  return c.json({
+    summary: await notificationDeliverySummary(c.env, queueId, since),
+    events: rows.results,
+  })
 })
 staffRoutes.get('/venues/:id/audit', async (c) => {
   await canManage(c, c.req.param('id'))

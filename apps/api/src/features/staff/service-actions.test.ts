@@ -66,6 +66,21 @@ async function entry(queue: string, status = 'waiting') {
   )
     .bind(id, queue, id, id, id, id, Date.now(), queue, status)
     .run()
+  const organization = await env.DB.prepare(
+    'SELECT v.organization_id FROM queue q JOIN venue v ON v.id=q.venue_id WHERE q.id=?',
+  )
+    .bind(queue)
+    .first<{ organization_id: string }>()
+  await env.DB.prepare('INSERT INTO consent VALUES (?,?,?,?,?,?,NULL)')
+    .bind(
+      crypto.randomUUID(),
+      id,
+      organization!.organization_id,
+      'queue_updates',
+      'test-explicit-consent',
+      Date.now(),
+    )
+    .run()
   return id
 }
 async function open(t: Awaited<ReturnType<typeof setup>>, occupied = 1) {
@@ -401,6 +416,70 @@ it('keeps assigned deadlines immutable through config changes and provider deliv
         .first()
     )?.status,
   ).toBe('expired')
+})
+
+it('reissues a ready notice with a new call-cycle after expiry, restoration, and recall', async () => {
+  const { expireArrivals } = await import('../queue/customer')
+  const t = await setup({
+      ...config,
+      type: 'pool',
+      spaces: [],
+      graceMinutes: 2,
+    }),
+    id = await entry(t.queue),
+    now = Date.now()
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'assign_next',
+  }, now)
+  await expireArrivals(env, t.queue, now + 120000)
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'restore',
+    entryId: id,
+    version: 2,
+    overrideReason: 'Customer returned before service ended',
+  }, now + 120001)
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'assign_next',
+  }, now + 120002)
+  const notices = await env.DB.prepare(
+    "SELECT call_cycle,payload_version,payload_snapshot FROM notification_outbox WHERE entry_id=? AND kind='ready' ORDER BY call_cycle",
+  )
+    .bind(id)
+    .all<{
+      call_cycle: number
+      payload_version: number
+      payload_snapshot: string
+    }>()
+  expect(notices.results.map((notice) => notice.call_cycle)).toEqual([1, 2])
+  expect(notices.results.every((notice) => notice.payload_version === 2)).toBe(
+    true,
+  )
+  expect(
+    JSON.parse(notices.results[0]!.payload_snapshot).resourceName,
+  ).toBe('Piscina / bar')
+})
+
+it('cancels a pending joined notice atomically when the turn is assigned', async () => {
+  const t = await setup({ ...config, type: 'pool', spaces: [] })
+  const id = await entry(t.queue)
+  const notificationId = crypto.randomUUID()
+  await env.DB.prepare(
+    "INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot) VALUES (?,?,?,'pending',?,'queue_joined',2,'{}')",
+  )
+    .bind(notificationId, id, `${id}:queue_joined:v2:r0:c0`, Date.now())
+    .run()
+
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'assign_next',
+  })
+
+  expect(
+    (
+      await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+        .bind(notificationId)
+        .first()
+    )?.status,
+  ).toBe('cancelled')
 })
 
 it('suppresses an obsolete approaching intent if the configured threshold no longer applies', async () => {

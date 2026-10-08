@@ -1,5 +1,5 @@
 import { useLocale, usePublicResource } from './public-resource'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
 import { entrySchema, type CustomerCommand } from '@noqueue/contracts/queue'
 import { DemoEntry } from '@/features/join-queue/web/DemoQueue'
@@ -22,6 +22,7 @@ function CustomerTurnContent({
   const location = useLocation()
   const [locale, setLocale] = useLocale(),
     es = locale === 'es'
+  const recordedNotice = useRef('')
   const {
     data: entry,
     updatedAt,
@@ -38,6 +39,28 @@ function CustomerTurnContent({
     phase: NonNullable<ReturnType<typeof parse>['customer']>['phase'] | null
   } | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!recoveryToken || !/^[a-f0-9]{64}$/.test(recoveryToken)) return
+    const params = new URLSearchParams(location.search)
+    const noticeId = params.get('notice')
+    if (
+      params.get('source') !== 'whatsapp' ||
+      params.getAll('source').length !== 1 ||
+      !noticeId ||
+      params.getAll('notice').length !== 1 ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        noticeId,
+      )
+    )
+      return
+    const key = `${recoveryToken}:${noticeId}`
+    if (recordedNotice.current === key) return
+    recordedNotice.current = key
+    void fetch(
+      `/api/v1/public/entries/${recoveryToken}/notices/${noticeId}/opened`,
+      { method: 'POST', keepalive: true },
+    ).catch(() => undefined)
+  }, [location.search, recoveryToken])
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000)
     return () => clearInterval(timer)

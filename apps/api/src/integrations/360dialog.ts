@@ -9,8 +9,25 @@ export interface OutboundWhatsAppMessage {
   venue: string
   code: string
   token: string
+  payloadVersion?: 1 | 2
+  notificationId?: string
+  serviceName?: string
+  ahead?: number | null
+  etaMinutes?: number | null
+  estimateQuality?: 'estimated' | 'provisional' | 'unknown'
+  resourceName?: string | null
+  arrivalDeadlineAt?: number | null
+  cancellationReason?: 'customer_cancel' | 'staff_cancel' | 'service_ended'
   confirmationPayload?: string
-  notice?: 'ready' | 'approaching' | 'expired'
+  notice?:
+    | 'queue_joined'
+    | 'ready'
+    | 'approaching'
+    | 'delayed'
+    | 'improved'
+    | 'expired'
+    | 'cancelled'
+    | 'service_ended'
   position?: number
 }
 export type ProviderSendResult =
@@ -26,6 +43,66 @@ export type ProviderSendResult =
     }
 export interface WhatsAppSender {
   send(message: OutboundWhatsAppMessage): Promise<ProviderSendResult>
+}
+type LifecycleCopyContext = {
+  serviceName: string
+  ahead: string
+  eta: string
+  destination: string
+  deadline: string
+  link: string
+}
+export function sandboxLifecycleCopy(
+  message: OutboundWhatsAppMessage,
+  context: LifecycleCopyContext,
+) {
+  const header = `${message.venue} · ${context.serviceName} · ${message.code}`
+  const footer =
+    message.locale === 'es'
+      ? 'Envía BAJA para dejar de recibir avisos.'
+      : 'Reply STOP to stop receiving updates.'
+  if (message.locale === 'es') {
+    switch (message.notice) {
+      case 'queue_joined':
+        return `${header}: estás en la lista. Quedan ${context.ahead} turnos por delante. Tiempo estimado: ${context.eta}. ${context.link} ${footer}`
+      case 'approaching':
+        return `${header}: tu turno se acerca; todavía no está asignado. Quedan ${context.ahead} turnos por delante. Tiempo estimado: ${context.eta}. ${context.link} ${footer}`
+      case 'delayed':
+        return `${header}: el tiempo estimado ha cambiado. Nueva estimación: ${context.eta}. ${context.link} ${footer}`
+      case 'improved':
+        return `${header}: la estimación de tu turno ha mejorado. Nueva estimación: ${context.eta}. ${context.link} ${footer}`
+      case 'ready':
+        return `${header}: tu turno está asignado${context.destination ? ` en ${context.destination}` : ''}. Acude ahora y llega antes de las ${context.deadline}. ${context.link} ${footer}`
+      case 'expired':
+        return `${header}: el plazo de llegada ha terminado. Puedes volver a inscribirte: ${context.link} ${footer}`
+      case 'cancelled':
+        return `${header}: ${message.cancellationReason === 'customer_cancel' ? 'has cancelado tu turno' : 'el establecimiento ha cancelado tu turno'}. ${context.link} ${footer}`
+      case 'service_ended':
+        return `${header}: el servicio ha terminado por hoy. Puedes volver a inscribirte cuando esté disponible: ${context.link} ${footer}`
+      default:
+        return `${header}: tu turno es ${message.code}. ${context.link} ${footer}`
+    }
+  }
+  switch (message.notice) {
+    case 'queue_joined':
+      return `${header}: you are on the list. ${context.ahead} turns are ahead of you. Estimated wait: ${context.eta}. ${context.link} ${footer}`
+    case 'approaching':
+      return `${header}: your turn is approaching but has not been assigned. ${context.ahead} turns are ahead of you. Estimated wait: ${context.eta}. ${context.link} ${footer}`
+    case 'delayed':
+      return `${header}: your estimated wait has changed. New estimate: ${context.eta}. ${context.link} ${footer}`
+    case 'improved':
+      return `${header}: your estimated wait has improved. New estimate: ${context.eta}. ${context.link} ${footer}`
+    case 'ready':
+      return `${header}: your turn is assigned${context.destination ? ` at ${context.destination}` : ''}. Come now and arrive before ${context.deadline}. ${context.link} ${footer}`
+    case 'expired':
+      return `${header}: your arrival window has ended. You can join again: ${context.link} ${footer}`
+    case 'cancelled':
+      return `${header}: ${message.cancellationReason === 'customer_cancel' ? 'you cancelled your turn' : 'the venue cancelled your turn'}. ${context.link} ${footer}`
+    case 'service_ended':
+      return `${header}: service has ended for today. You can join again when it is available: ${context.link} ${footer}`
+    default:
+      return `${header}: your queue code is ${message.code}. ${context.link} ${footer}`
+  }
 }
 const receipt = z.object({
   messages: z.array(z.object({ id: z.string().min(1).max(512) })).min(1),
@@ -66,8 +143,44 @@ export function createWhatsAppSender(
             string
           >
         >
+      const lifecycleTemplates = env as CloudflareBindings &
+        Partial<
+          Record<
+            `WHATSAPP_QUEUE_V2_${
+              | 'QUEUE_JOINED'
+              | 'READY'
+              | 'APPROACHING'
+              | 'DELAYED'
+              | 'IMPROVED'
+              | 'EXPIRED'
+              | 'CANCELLED'
+              | 'SERVICE_ENDED'}_TEMPLATE_${'ES' | 'EN'}`,
+            string
+          >
+        >
+      const version2 = message.payloadVersion === 2
+      if (
+        version2 &&
+        (!message.notice || !z.uuid().safeParse(message.notificationId).success)
+      )
+        return configurationFailure()
       const name = message.notice
-        ? noticeTemplates[
+        ? version2
+          ? lifecycleTemplates[
+              `WHATSAPP_QUEUE_V2_${message.notice.toUpperCase() as
+                | 'QUEUE_JOINED'
+                | 'READY'
+                | 'APPROACHING'
+                | 'DELAYED'
+                | 'IMPROVED'
+                | 'EXPIRED'
+                | 'CANCELLED'
+                | 'SERVICE_ENDED'}_TEMPLATE_${message.locale.toUpperCase() as 'ES' | 'EN'}`
+            ]
+          : message.notice === 'ready' ||
+            message.notice === 'approaching' ||
+            message.notice === 'expired'
+          ? noticeTemplates[
             `WHATSAPP_QUEUE_${
               message.notice.toUpperCase() as
                 | 'READY'
@@ -75,6 +188,7 @@ export function createWhatsAppSender(
                 | 'EXPIRED'
             }_TEMPLATE_${message.locale.toUpperCase() as 'ES' | 'EN'}`
           ]
+          : undefined
         : message.locale === 'es'
         ? env.WHATSAPP_QUEUE_JOINED_TEMPLATE_ES
         : env.WHATSAPP_QUEUE_JOINED_TEMPLATE_EN
@@ -82,10 +196,52 @@ export function createWhatsAppSender(
         !confirmation &&
         !positionUpdate &&
         !sandbox &&
-        (!name || env.STAGING_CONSENT_APPROVED !== 'true')
+        (!name ||
+          env.STAGING_CONSENT_APPROVED !== 'true' ||
+          (version2 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
       )
         return configurationFailure()
-      const link = `${env.PUBLIC_APP_ORIGIN}/t/${message.token}`
+      const linkUrl = new URL(`/t/${message.token}`, env.PUBLIC_APP_ORIGIN)
+      linkUrl.searchParams.set('lang', message.locale)
+      linkUrl.searchParams.set('source', 'whatsapp')
+      if (version2 && message.notificationId)
+        linkUrl.searchParams.set('notice', message.notificationId)
+      const link = linkUrl.toString()
+      const templateLinkParameter = `${linkUrl.pathname.slice('/t/'.length)}${linkUrl.search}`
+      const serviceName = message.serviceName ?? message.venue
+      const ahead =
+        message.ahead == null
+          ? message.locale === 'es'
+            ? 'no disponible'
+            : 'not available'
+          : String(message.ahead)
+      const eta =
+        message.etaMinutes == null || message.estimateQuality === 'unknown'
+          ? message.locale === 'es'
+            ? 'sin estimación'
+            : 'not available'
+          : message.locale === 'es'
+          ? `${message.etaMinutes} min`
+          : `${message.etaMinutes} min`
+      const deadline = message.arrivalDeadlineAt
+        ? new Intl.DateTimeFormat(message.locale === 'es' ? 'es-ES' : 'en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+          }).format(message.arrivalDeadlineAt)
+        : message.locale === 'es'
+        ? 'consulta el enlace'
+        : 'check the link'
+      const destination = message.resourceName ?? ''
+      const reason = message.cancellationReason ?? ''
+      const templateParameters = [
+        serviceName,
+        message.code,
+        ahead,
+        eta,
+        destination,
+        deadline,
+        reason,
+      ].map((text) => ({ type: 'text', text }))
       const payload = positionUpdate
         ? {
             messaging_product: 'whatsapp',
@@ -129,35 +285,57 @@ export function createWhatsAppSender(
               ],
             },
           }
+        : sandbox && version2
+        ? {
+            messaging_product: 'whatsapp',
+            to: message.phone.slice(1),
+            type: 'text',
+            text: {
+              body: sandboxLifecycleCopy(message, {
+                serviceName,
+                ahead,
+                eta,
+                destination,
+                deadline,
+                link,
+              }),
+            },
+          }
         : sandbox
         ? {
             messaging_product: 'whatsapp',
             to: message.phone.slice(1),
             type: 'text',
             text: {
-              body: message.notice
-                ? `${message.venue} · ${message.code}: ${
-                    message.locale === 'es'
-                      ? {
-                          ready:
-                            'Tu turno está asignado. Acude ahora; consulta tu plazo en el enlace.',
-                          approaching:
-                            'Tu turno se acerca. Todavía no está asignado.',
-                          expired:
-                            'El plazo de llegada ha terminado. Puedes volver a inscribirte.',
-                        }[message.notice]
-                      : {
-                          ready:
-                            'Your turn is assigned. Come now; check your deadline using the link.',
-                          approaching:
-                            'Your turn is approaching but has not been assigned yet.',
-                          expired:
-                            'The arrival deadline has passed. You can join again.',
-                        }[message.notice]
-                  } ${link}`
-                : message.locale === 'es'
-                ? `${message.venue}: tu turno es ${message.code}. ${link}`
-                : `${message.venue}: your waiting list code is ${message.code}. ${link}`,
+              body:
+                message.notice === 'ready'
+                  ? `${message.venue} · ${message.code}: ${message.locale === 'es' ? 'Tu turno está asignado. Acude ahora; consulta tu plazo en el enlace.' : 'Your turn is assigned. Come now; check your deadline using the link.'} ${link}`
+                  : message.notice === 'approaching'
+                  ? `${message.venue} · ${message.code}: ${message.locale === 'es' ? 'Tu turno se acerca. Todavía no está asignado.' : 'Your turn is approaching but has not been assigned yet.'} ${link}`
+                  : message.notice === 'expired'
+                  ? `${message.venue} · ${message.code}: ${message.locale === 'es' ? 'El plazo de llegada ha terminado. Puedes volver a inscribirte.' : 'The arrival deadline has passed. You can join again.'} ${link}`
+                  : message.locale === 'es'
+                  ? `${message.venue}: tu turno es ${message.code}. ${link}`
+                  : `${message.venue}: your waiting list code is ${message.code}. ${link}`
+            },
+          }
+        : version2
+        ? {
+            messaging_product: 'whatsapp',
+            to: message.phone.slice(1),
+            type: 'template',
+            template: {
+              name,
+              language: { code: message.locale === 'es' ? 'es_ES' : 'en_US' },
+              components: [
+                { type: 'body', parameters: templateParameters },
+                {
+                  type: 'button',
+                  sub_type: 'url',
+                  index: '0',
+                  parameters: [{ type: 'text', text: templateLinkParameter }],
+                },
+              ],
             },
           }
         : {

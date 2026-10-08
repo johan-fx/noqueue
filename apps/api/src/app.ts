@@ -252,6 +252,7 @@ app.on(
     if (!parsed.success) return context.json({ error: 'invalid_join' }, 400)
     const input = parsed.data
     if (
+      experiment &&
       input.whatsapp.consent &&
       !openExperimentRecipientAllowed(
         context.env,
@@ -264,13 +265,6 @@ app.on(
         .includes(input.whatsapp.phone)
     )
       return context.json({ error: 'recipient_not_allowed' }, 403)
-    if (
-      input.whatsapp.consent &&
-      !experiment &&
-      context.env.WHATSAPP_MODE === 'cloud' &&
-      context.env.STAGING_CONSENT_APPROVED !== 'true'
-    )
-      return context.json({ error: 'consent_not_approved' }, 403)
     const bucket = String(Math.floor(Date.now() / 60000))
     const rate = await context.env.DB.prepare(
       'INSERT INTO pilot_rate(bucket,count) VALUES (?,1) ON CONFLICT(bucket) DO UPDATE SET count=count+1 RETURNING count',
@@ -292,6 +286,7 @@ app.on(
       key.data,
       input,
       experiment,
+      experiment ? 'legacy' : 'public-queue',
     )
     return Response.json(result.body, {
       status: result.status,

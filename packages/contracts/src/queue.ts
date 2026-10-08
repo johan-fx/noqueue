@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 export const consentVersion = 'whatsapp-queue-updates-v1'
+export const publicServiceConsentVersion = 'whatsapp-public-service-updates-v1'
 export const manualConsentVersion = 'whatsapp-manual-queue-updates-v2'
 export const phoneSchema = z.string().regex(/^\+[1-9]\d{7,14}$/)
 export const receptionServiceSchema = z.enum(['check_in', 'check_out', 'other'])
@@ -12,6 +13,15 @@ export const serviceJoinSchema = z.strictObject({
   locale: z.enum(['es', 'en']),
 })
 export type ServiceJoin = z.infer<typeof serviceJoinSchema>
+export const publicServiceJoinSchema = serviceJoinSchema.extend({
+  displayName: z.string().trim().min(1).max(100),
+  whatsapp: z.strictObject({
+    consent: z.literal(true),
+    phone: phoneSchema,
+    version: z.literal(publicServiceConsentVersion),
+  }),
+})
+export type PublicServiceJoin = z.infer<typeof publicServiceJoinSchema>
 export const admissionFields = {
   serviceOpen: z.boolean().optional(),
   queueState: z.enum(['inactive', 'active', 'paused']).optional(),
@@ -54,7 +64,7 @@ export const joinQueueSchema = serviceJoinSchema.extend({
     z.strictObject({
       consent: z.literal(true),
       phone: phoneSchema,
-      version: z.literal(consentVersion),
+      version: z.enum([consentVersion, publicServiceConsentVersion]),
     }),
   ]),
 })
@@ -66,7 +76,11 @@ export const manualJoinSchema = joinQueueSchema.extend({
       z.strictObject({
         consent: z.literal(true),
         phone: phoneSchema,
-        version: z.enum([consentVersion, manualConsentVersion]),
+        version: z.enum([
+          consentVersion,
+          publicServiceConsentVersion,
+          manualConsentVersion,
+        ]),
       }),
     ])
     .default({ consent: false }),

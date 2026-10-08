@@ -1,5 +1,6 @@
 import { maintainServiceEntries } from './service-expiry'
-import { noticeStatement } from './notices'
+import { noticeStatement, type QueueNoticeSnapshot } from './notices'
+import { evaluateEstimateNotice } from './estimate-notices'
 import { expireArrivals } from './customer'
 import { activateIfReady, inventorySafety } from './opening-state'
 import {
@@ -256,19 +257,13 @@ export async function recalculateQueue(
   const state = await loadQueueState(env, queueId, now)
   const statements: D1PreparedStatement[] = []
   for (const p of state.projections) {
-    if (
-      state.config &&
-      (Math.max(p.position - 1, 0) <= (state.config?.approachTurns ?? 2) ||
-        (p.quality !== 'unknown' &&
-          p.etaMinutes <= (state.config?.approachMinutes ?? 10)))
-    )
-      statements.push(noticeStatement(env, p.id, 'approaching', now))
     const prior = await env.DB.prepare(
-      'SELECT position,predicted_at,quality,resource_id,callable,revision FROM queue_projection WHERE entry_id=?',
+      'SELECT position,eta_minutes,predicted_at,quality,resource_id,callable,revision FROM queue_projection WHERE entry_id=?',
     )
       .bind(p.id)
       .first<{
         position: number
+        eta_minutes: number
         predicted_at: number | null
         quality: string
         resource_id: string | null
@@ -285,6 +280,68 @@ export async function recalculateQueue(
       Math.floor((prior.predicted_at ?? 0) / 60000) !==
         Math.floor((p.predictedAt ?? 0) / 60000)
     const revision = (prior?.revision ?? 0) + Number(changed)
+    const approachingNow =
+      !!state.config &&
+      (Math.max(p.position - 1, 0) <= (state.config.approachTurns ?? 2) ||
+        (p.quality !== 'unknown' &&
+          p.etaMinutes <= (state.config.approachMinutes ?? 10)))
+    const approachingBefore =
+      !!state.config &&
+      !!prior &&
+      (Math.max(prior.position - 1, 0) <= (state.config.approachTurns ?? 2) ||
+        (prior.quality !== 'unknown' &&
+          prior.predicted_at !== null &&
+          prior.eta_minutes <= (state.config.approachMinutes ?? 10)))
+    const snapshot: QueueNoticeSnapshot | null = state.config
+      ? {
+          schemaVersion: 2,
+          serviceName: state.config.name,
+          ahead: Math.max(0, p.position - 1),
+          etaMinutes: p.quality === 'unknown' ? null : p.etaMinutes,
+          predictedAt: p.predictedAt,
+          estimateQuality: p.quality,
+          resourceName: null,
+          arrivalDeadlineAt: null,
+        }
+      : null
+    if (
+      snapshot &&
+      approachingNow &&
+      !approachingBefore &&
+      prior
+    )
+      statements.push(
+        noticeStatement(
+          env,
+          p.id,
+          'approaching',
+          now,
+          snapshot,
+          revision,
+        ),
+      )
+    const notificationState = await env.DB.prepare(
+      'SELECT last_accepted_predicted_at,last_correction_accepted_at FROM queue_notification_state WHERE entry_id=?',
+    )
+      .bind(p.id)
+      .first<{
+        last_accepted_predicted_at: number | null
+        last_correction_accepted_at: number | null
+      }>()
+    const correction = evaluateEstimateNotice({
+      previousAcceptedAt: notificationState?.last_accepted_predicted_at ?? null,
+      currentPredictedAt: p.predictedAt,
+      quality: p.quality,
+      lastCorrectionAcceptedAt:
+        notificationState?.last_correction_accepted_at ?? null,
+      thresholdMinutes: state.config?.etaChangeThresholdMinutes ?? 5,
+      cooldownMinutes: state.config?.notificationCooldownMinutes ?? 10,
+      now,
+    })
+    if (correction && snapshot)
+      statements.push(
+        noticeStatement(env, p.id, correction, now, snapshot, revision),
+      )
     statements.push(
       env.DB.prepare(
         'INSERT INTO queue_projection(entry_id,position,eta_minutes,predicted_at,quality,resource_id,callable,revision,updated_at) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET position=excluded.position,eta_minutes=excluded.eta_minutes,predicted_at=excluded.predicted_at,quality=excluded.quality,resource_id=excluded.resource_id,callable=excluded.callable,revision=excluded.revision,updated_at=excluded.updated_at',
@@ -317,6 +374,14 @@ export async function recalculateQueue(
           'INSERT OR IGNORE INTO queue_estimate_intent(entry_id,revision,payload,created_at) VALUES (?,?,?,?)',
         ).bind(p.id, revision, JSON.stringify(p), now),
       )
+    // Apply policy to the latest projection and retire any older pending
+    // estimates in the same transaction; they must not remain an unconsumed
+    // backlog or emit notices for stale revisions.
+    statements.push(
+      env.DB.prepare(
+        "UPDATE queue_estimate_intent SET status='policy_evaluated' WHERE entry_id=? AND status='policy_pending' AND revision<=?",
+      ).bind(p.id, revision),
+    )
   }
   if (statements.length) await env.DB.batch(statements)
   return state

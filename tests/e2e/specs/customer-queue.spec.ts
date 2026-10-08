@@ -1,5 +1,9 @@
 import { test, expect } from '@playwright/test'
-import { setup, join } from '../helpers/queue-actions.js'
+import {
+  fillPublicWhatsAppConsent,
+  setup,
+  join,
+} from '../helpers/queue-actions.js'
 import { selectCustomerLanguage } from '../helpers/customer-language.js'
 import type {
   Entry,
@@ -50,6 +54,11 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
             partySize: 4,
             preferredSpaceId: 'fastest',
             locale: 'es',
+            whatsapp: {
+              consent: true,
+              phone: '+34600000000',
+              version: 'whatsapp-public-service-updates-v1',
+            },
           },
         },
       )
@@ -61,6 +70,7 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
     ).toBeVisible()
     await client.getByRole('link', { name: /Restaurant/ }).click()
     await client.getByLabel('Nombre', { exact: true }).fill('María Cliente')
+    await fillPublicWhatsAppConsent(client)
     await client.getByRole('button', { name: 'Ponerme en lista' }).click()
     await expect(client).toHaveURL(/\/t\//)
     await expect(client.getByText('4 turnos')).toBeVisible()
@@ -94,6 +104,11 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
           partySize: 2,
           preferredSpaceId: 'fastest',
           locale: 'es',
+          whatsapp: {
+            consent: true,
+            phone: '+34600000000',
+            version: 'whatsapp-public-service-updates-v1',
+          },
         },
       },
     )
@@ -616,7 +631,13 @@ for (const type of ['reception', 'pool'] as const) {
           .getByRole('radio', { name: 'Check-in', exact: true })
           .check()
       } else await expect(client.getByRole('radio')).toHaveCount(0)
-      await expect(client.getByRole('button', { name: 'Ponerme en lista' })).toBeEnabled()
+      await expect(
+        client.getByRole('button', { name: 'Ponerme en lista' }),
+      ).toBeDisabled()
+      await fillPublicWhatsAppConsent(client)
+      await expect(
+        client.getByRole('button', { name: 'Ponerme en lista' }),
+      ).toBeEnabled()
       await client.getByRole('heading', { name: 'Introduce tus datos' }).click()
       for (const width of [390, 1280]) {
         await client.setViewportSize({ width, height: 844 })
@@ -662,6 +683,11 @@ for (const type of ['reception', 'pool'] as const) {
             displayName: 'Next guest',
             partySize: 1,
             locale: 'es',
+            whatsapp: {
+              consent: true,
+              phone: '+34600000000',
+              version: 'whatsapp-public-service-updates-v1',
+            },
             ...(type === 'reception' ? { receptionService: 'check_out' } : {}),
           },
         },

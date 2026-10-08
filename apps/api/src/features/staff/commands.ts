@@ -57,7 +57,7 @@ export async function runQueueCommand(
     input = { action: 'call', entryId: first.id, version: first.version }
   } else input = command
   const entry = await env.DB.prepare(
-    'SELECT status,version,called_at,arrival_deadline_at,service_window_id,service_ends_at FROM queue_entry WHERE id=? AND queue_id=?',
+    'SELECT status,version,called_at,arrival_deadline_at,service_window_id,service_ends_at,call_cycle FROM queue_entry WHERE id=? AND queue_id=?',
   )
     .bind(input.entryId, queueId)
     .first<{
@@ -67,6 +67,7 @@ export async function runQueueCommand(
       arrival_deadline_at: number | null
       service_window_id: string | null
       service_ends_at: number | null
+      call_cycle: number
     }>()
   if (!entry) throw new HTTPException(404, { message: 'not_found' })
   if (entry.version !== input.version)
@@ -124,6 +125,7 @@ export async function runQueueCommand(
   const allocation = state.allocations.find(
     (a) => a.entry_id === input.entryId && a.released_at === null,
   )
+  let assignedResourceName: string | null = null
   if (input.action === 'call' && !quick) {
     if (state.inventorySafety.requiresSurvey)
       throw new HTTPException(409, { message: 'inventory_refresh_required' })
@@ -149,6 +151,10 @@ export async function runQueueCommand(
         ),
       )
     if (resource)
+      assignedResourceName =
+        state.config?.spaces.find((space) => space.id === resource.spaceId)
+          ?.name ?? null
+    if (resource)
       extra.push(
         env.DB.prepare(
           'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET resource_id=excluded.resource_id,space_id=excluded.space_id,seats=excluded.seats,reserved_at=excluded.reserved_at,arrived_at=excluded.arrived_at,released_at=NULL,outcome=NULL WHERE queue_allocation.released_at IS NOT NULL',
@@ -163,6 +169,9 @@ export async function runQueueCommand(
         ),
       )
   }
+  if (input.action === 'call' && quick)
+    assignedResourceName =
+      state.config?.type === 'pool' ? 'Piscina / bar' : 'Recepción'
   if (input.action === 'restore')
     extra.push(
       env.DB.prepare(
@@ -219,14 +228,72 @@ export async function runQueueCommand(
       ),
     )
   }
-  if (input.action === 'call' && input.arrivalMode !== 'present')
-    extra.push(noticeStatement(env, input.entryId, 'ready', now))
+  let notifyCancellation = false
+  if (input.action === 'cancel') {
+    const consent = await env.DB.prepare(
+      "SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL LIMIT 1",
+    )
+      .bind(input.entryId)
+      .first()
+    if (consent) {
+      extra.push(
+        noticeStatement(env, input.entryId, 'cancelled', now, {
+          schemaVersion: 2,
+          serviceName: state.config?.name ?? 'Service',
+          ahead: null,
+          etaMinutes: null,
+          predictedAt: null,
+          estimateQuality: 'unknown',
+          resourceName: null,
+          arrivalDeadlineAt: null,
+          reason: 'staff_cancel',
+        }),
+      )
+      notifyCancellation = true
+    }
+  }
+  if (input.action === 'call' && input.arrivalMode !== 'present') {
+    const serviceName = state.config?.name ?? 'Servicio'
+    const snapshot = {
+      schemaVersion: 2 as const,
+      serviceName,
+      ahead: null,
+      etaMinutes: null,
+      predictedAt: null,
+      estimateQuality: 'unknown' as const,
+      resourceName: assignedResourceName,
+      arrivalDeadlineAt:
+        now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
+    }
+    extra.push(
+      noticeStatement(
+        env,
+        input.entryId,
+        'ready',
+        now,
+        snapshot,
+        0,
+        entry.call_cycle + 1,
+      ),
+    )
+  }
+  if (status !== 'waiting') {
+    extra.push(
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO notification_trace(id,notification_id,event,recorded_at) SELECT id||':obsolete',id,'obsolete',? FROM notification_outbox WHERE entry_id=? AND kind IN ('queue_joined','approaching','delayed','improved') AND status='pending'",
+      ).bind(now, input.entryId),
+      env.DB.prepare(
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND kind IN ('queue_joined','approaching','delayed','improved') AND status='pending'",
+      ).bind(now, input.entryId),
+    )
+  }
   await env.DB.batch([
     ...extra,
     env.DB.prepare(
-      `UPDATE queue_entry SET status=?,version=version+1,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
+      `UPDATE queue_entry SET status=?,version=version+1,call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
     ).bind(
       status,
+      input.action,
       input.action === 'call'
         ? now
         : input.action === 'restore'
@@ -272,6 +339,8 @@ export async function runQueueCommand(
   ])
   if (input.action === 'call' && input.arrivalMode !== 'present')
     await publishNotice(env, input.entryId, 'ready')
+  if (notifyCancellation)
+    await publishNotice(env, input.entryId, 'cancelled')
   await recalculateQueue(env, queueId, now)
   return { ok: true }
 }
@@ -307,7 +376,11 @@ export async function configureQueue(
     throw new HTTPException(409, { message: 'legacy_arrival_deadline' })
   const approachChanged =
     (config.approachTurns ?? 2) !== (old.config?.approachTurns ?? 2) ||
-    (config.approachMinutes ?? 10) !== (old.config?.approachMinutes ?? 10)
+    (config.approachMinutes ?? 10) !== (old.config?.approachMinutes ?? 10) ||
+    (config.etaChangeThresholdMinutes ?? 5) !==
+      (old.config?.etaChangeThresholdMinutes ?? 5) ||
+    (config.notificationCooldownMinutes ?? 10) !==
+      (old.config?.notificationCooldownMinutes ?? 10)
   if (approachChanged && old.parties.length && !applyApproachToActive)
     throw new HTTPException(409, {
       message: 'active_approach_confirmation_required',

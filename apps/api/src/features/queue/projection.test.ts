@@ -71,6 +71,14 @@ it('persists shared projections and deduplicated intents without delivery', asyn
         .first<{ n: number }>()
     )?.n,
   ).toBe(3)
+  const policyStates = await env.DB.prepare(
+    'SELECT DISTINCT status FROM queue_estimate_intent WHERE entry_id IN (SELECT id FROM queue_entry WHERE queue_id=?)',
+  )
+    .bind(id)
+    .all<{ status: string }>()
+  expect(policyStates.results.map((row) => row.status)).toEqual([
+    'policy_evaluated',
+  ])
 })
 
 it('keeps unknown legacy spaces provisional and inherits size defaults independently', async () => {
@@ -162,6 +170,91 @@ it('recalculates an expired group adjustment without a queue event and never fre
   const overdue = await recalculateQueue(env, id, now + 31 * 60000)
   expect(overdue.resources[0]?.availableAt).toBeNull()
   expect(overdue.allocations[0]?.released_at).toBeNull()
+})
+it('emits approaching when a fixed forecast crosses the threshold between consecutive projections', async () => {
+  const start = 1_800_000_000_000
+  const queueId = crypto.randomUUID()
+  const activeEntryId = crypto.randomUUID()
+  const waitingEntryIds = Array.from({ length: 4 }, () => crypto.randomUUID())
+  const config = {
+    name: 'Approach threshold',
+    type: 'restaurant',
+    capacity: 20,
+    averageMinutes: 3,
+    graceMinutes: 5,
+    cutoffMinutes: 0,
+    twentyFourHours: true,
+    schedules: [],
+    receptionServices: [],
+    estimationMode: 'active',
+    resourceStateKnown: true,
+    approachTurns: 2,
+    approachMinutes: 10,
+    spaces: [
+      {
+        id: 'desk',
+        name: 'Desk',
+        tables: 1,
+        tableTypes: [{ seats: 100, count: 1, averageMinutes: 3 }],
+      },
+    ],
+  }
+  await env.DB.prepare(
+    "INSERT INTO queue(id,venue_id,capacity,average_minutes,open,name,config) VALUES (?,'demo-venue',20,3,1,'Approach threshold',?)",
+  )
+    .bind(queueId, JSON.stringify(config))
+    .run()
+  await env.DB.prepare(
+    "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,1,'en',?,0,'arrived')",
+  )
+    .bind(activeEntryId, queueId, activeEntryId, 'hash', activeEntryId, 'ACTIVE', start)
+    .run()
+  for (const [index, entryId] of waitingEntryIds.entries())
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,1,'en',?,?,'waiting')",
+    )
+      .bind(entryId, queueId, entryId, 'hash', entryId, `WAIT${index}`, start, index + 1)
+      .run()
+  await env.DB.prepare(
+    'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,? ,\'desk:100:0\',\'desk\',100,?,?)',
+  )
+    .bind(activeEntryId, queueId, start - 60_000, start - 60_000)
+    .run()
+  const venue = await env.DB.prepare(
+    'SELECT organization_id FROM venue WHERE id=\'demo-venue\'',
+  ).first<{ organization_id: string }>()
+  await env.DB.prepare('INSERT INTO consent VALUES (?,?,?,?,?,?,NULL)')
+    .bind(
+      crypto.randomUUID(),
+      waitingEntryIds[3],
+      venue!.organization_id,
+      'queue_updates',
+      'test-explicit-consent',
+      start,
+    )
+    .run()
+
+  const before = await recalculateQueue(env, queueId, start)
+  const targetBefore = before.projections.find(
+    (projection) => projection.id === waitingEntryIds[3],
+  )
+  expect(targetBefore?.predictedAt).toBe(start + 11 * 60_000)
+  expect(targetBefore?.etaMinutes).toBe(11)
+  await recalculateQueue(env, queueId, start + 60_000)
+  const emitted = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='approaching'",
+  )
+    .bind(waitingEntryIds[3])
+    .first<{ n: number }>()
+  expect(emitted?.n).toBe(1)
+
+  await recalculateQueue(env, queueId, start + 2 * 60_000)
+  const stillDeduplicated = await env.DB.prepare(
+    "SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='approaching'",
+  )
+    .bind(waitingEntryIds[3])
+    .first<{ n: number }>()
+  expect(stillDeduplicated?.n).toBe(1)
 })
 it('preserves legacy group identities when an older client reorders spaces without IDs', async () => {
   const { normalizeConfig } = await import('./projection')

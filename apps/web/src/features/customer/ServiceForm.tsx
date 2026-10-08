@@ -1,9 +1,18 @@
 import { useRef, useState, type FormEvent } from 'react'
-import type { PublicService, ServiceJoin } from '@noqueue/contracts/queue'
+import {
+  publicServiceConsentVersion,
+  type PublicService,
+  type PublicServiceJoin,
+  type ServiceJoin,
+} from '@noqueue/contracts/queue'
 import { Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CustomerFooter, type Locale } from './shared'
+import {
+  PublicWhatsAppConsentFields,
+  validPublicWhatsAppConsent,
+} from './PublicWhatsAppConsentFields'
 
 /** Single-person public admission for reception and pool services. */
 export function ServiceForm({
@@ -15,11 +24,13 @@ export function ServiceForm({
   service: PublicService
   locale: Locale
   disabled?: boolean
-  onSubmit: (input: ServiceJoin, key: string) => Promise<void>
+  onSubmit: (input: PublicServiceJoin, key: string) => Promise<void>
 }) {
   const es = locale === 'es'
   const reception = service.type === 'reception'
   const [name, setName] = useState('')
+  const [phone, setPhone] = useState('')
+  const [consent, setConsent] = useState(false)
   const [task, setTask] = useState<ServiceJoin['receptionService']>()
   const selected =
     task && service.receptionServices.includes(task)
@@ -30,20 +41,29 @@ export function ServiceForm({
   const [busy, setBusy] = useState(false)
   const [hasAttempt, setHasAttempt] = useState(false)
   const [error, setError] = useState('')
-  const request = useRef<{ input: ServiceJoin; key: string } | null>(null)
+  const request = useRef<{ input: PublicServiceJoin; key: string } | null>(null)
   const lock = useRef(false)
   const unavailable = reception && !selected
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (
       lock.current ||
-      (!request.current && (disabled || unavailable || !name.trim()))
+      (!request.current &&
+        (disabled ||
+          unavailable ||
+          !name.trim() ||
+          !validPublicWhatsAppConsent(phone, consent)))
     )
       return
-    const input: ServiceJoin = {
+    const input: PublicServiceJoin = {
       displayName: name.trim(),
       partySize: 1,
       locale,
+      whatsapp: {
+        consent: true,
+        phone,
+        version: publicServiceConsentVersion,
+      },
       ...(reception ? { receptionService: selected } : {}),
     }
     // Retry the frozen intent even if polling changed admission or configuration.
@@ -144,6 +164,22 @@ export function ServiceForm({
                 : 'No reception services are available.'}
             </p>
           )}
+          <PublicWhatsAppConsentFields
+            locale={locale}
+            phone={phone}
+            consent={consent}
+            disabled={busy || disabled}
+            onPhoneChange={(value) => {
+              setPhone(value)
+              request.current = null
+              setHasAttempt(false)
+            }}
+            onConsentChange={(value) => {
+              setConsent(value)
+              request.current = null
+              setHasAttempt(false)
+            }}
+          />
           {error && (
             <p role="alert" className="text-destructive">
               {error}
@@ -155,7 +191,12 @@ export function ServiceForm({
         <Button
           type="submit"
           disabled={
-            busy || (!hasAttempt && (disabled || unavailable || !name.trim()))
+            busy ||
+            (!hasAttempt &&
+              (disabled ||
+                unavailable ||
+                !name.trim() ||
+                !validPublicWhatsAppConsent(phone, consent)))
           }
         >
           {busy

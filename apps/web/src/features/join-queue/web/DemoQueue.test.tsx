@@ -8,12 +8,16 @@ import {
 } from '@testing-library/react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
+import {
+  publicServiceConsentVersion,
+} from '@noqueue/contracts/queue'
+import { whatsappConsentNotice } from '@/features/consent/whatsapp-consent-copy'
 import { DemoQueue } from './DemoQueue'
 afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
-it('uses controlled Base UI locale and consent without changing form payloads', async () => {
+it('requires explicit public consent and submits the current notice version', async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: false })
   vi.stubGlobal('fetch', fetch)
   render(
@@ -31,32 +35,29 @@ it('uses controlled Base UI locale and consent without changing form payloads', 
     fireEvent.click(option, { detail: 1 })
   }
   const consent = screen.getByRole('checkbox')
-  expect(consent).toHaveAttribute('data-slot', 'checkbox')
   expect(consent).not.toBeChecked()
-  fireEvent.click(consent)
-  expect(screen.getByLabelText('Phone with country code')).toBeVisible()
-  fireEvent.click(consent)
-  expect(
-    screen.queryByLabelText('Phone with country code'),
-  ).not.toBeInTheDocument()
+  expect(screen.getByText(whatsappConsentNotice.en.consent)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Join waiting list' })).toBeDisabled()
+  expect(screen.getByLabelText('Phone number with international prefix')).toBeVisible()
   fireEvent.change(screen.getByLabelText('Pilot access code'), {
     target: { value: 'pilot' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
-  await waitFor(() => expect(fetch).toHaveBeenCalled())
-  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toMatchObject({
-    locale: 'en',
-    whatsapp: { consent: false },
-  })
-  await screen.findByRole('alert')
-  fireEvent.click(consent)
-  fireEvent.change(screen.getByLabelText('Phone with country code'), {
+  expect(fetch).not.toHaveBeenCalled()
+  fireEvent.change(screen.getByLabelText('Phone number with international prefix'), {
     target: { value: '+34600000000' },
   })
+  fireEvent.click(consent)
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
-  await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
-  expect(JSON.parse(fetch.mock.calls[1]![1].body)).toMatchObject({
+  await waitFor(() => expect(fetch).toHaveBeenCalled())
+  expect(JSON.parse(fetch.mock.calls[0]![1].body)).toEqual({
+    partySize: 2,
     locale: 'en',
-    whatsapp: { consent: true, phone: '+34600000000' },
+    whatsapp: {
+      consent: true,
+      phone: '+34600000000',
+      version: publicServiceConsentVersion,
+    },
   })
+  await screen.findByRole('alert')
 })

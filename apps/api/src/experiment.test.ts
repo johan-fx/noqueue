@@ -11,6 +11,8 @@ import {
 } from './features/queue/notifications'
 import { createWhatsAppSender } from './integrations/360dialog'
 import { experimentQueueId } from './features/queue/experiment'
+import { joinQueue } from './features/queue/entries'
+import { publicServiceConsentVersion } from '@noqueue/contracts/queue'
 const network = setupNetwork()
 beforeAll(() => network.enable())
 afterAll(() => network.disable())
@@ -381,6 +383,36 @@ const localEuNamespace = new Proxy(env.QUEUE_COORDINATOR, {
     return typeof value === 'function' ? value.bind(target) : value
   },
 })
+function publicQueueStagingBindings(bindings: typeof env) {
+  const namespace = {
+    jurisdiction: (jurisdiction: string) => {
+      expect(jurisdiction).toBe('eu')
+      return namespace
+    },
+    getByName: () => ({
+      join: (
+        queueId: string,
+        key: string,
+        value: Parameters<typeof joinQueue>[3],
+        experiment = false,
+        source: Parameters<typeof joinQueue>[6] = 'public-queue',
+      ) =>
+        joinQueue(
+          bindings,
+          queueId,
+          key,
+          value,
+          experiment,
+          undefined,
+          source,
+        ),
+    }),
+  }
+  return {
+    ...bindings,
+    QUEUE_COORDINATOR: namespace as unknown as typeof env.QUEUE_COORDINATOR,
+  }
+}
 
 it('opens recipients only for authenticated, consented staging experiment enrollment', async () => {
   const staging = {
@@ -389,6 +421,7 @@ it('opens recipients only for authenticated, consented staging experiment enroll
     WHATSAPP_MODE: 'cloud',
     STAGING_EXPERIMENT_APPROVED: 'true',
     STAGING_EXPERIMENT_OPEN_RECIPIENTS: 'true',
+    WHATSAPP_RECIPIENT_ALLOWLIST: '',
     QUEUE_COORDINATOR: localEuNamespace,
   }
   const body = { ...input, phone: '+34611111111' }
@@ -416,27 +449,36 @@ it('opens recipients only for authenticated, consented staging experiment enroll
   ).toBe(400)
   expect((await join(staging, body, headers(), 'demo-queue')).status).toBe(404)
   expect((await join({ ...staging, APP_ENV: 'sandbox' })).status).toBe(404)
-  expect(
-    (
-      await app.request(
-        'http://localhost/api/v1/public/queues/demo-queue/entries',
-        {
-          method: 'POST',
-          headers: headers(),
-          body: JSON.stringify({
-            partySize: 2,
-            locale: 'es',
-            whatsapp: {
-              consent: true,
-              phone: body.phone,
-              version: 'whatsapp-queue-updates-v1',
-            },
-          }),
+  const publicJoinKey = crypto.randomUUID()
+  const publicQueueBindings = publicQueueStagingBindings(staging as typeof env)
+  const publicAdmission = await app.request(
+    `${staging.PUBLIC_APP_ORIGIN}/api/v1/public/queues/demo-queue/entries`,
+    {
+      method: 'POST',
+      headers: {
+        ...headers(publicJoinKey),
+        Origin: staging.PUBLIC_APP_ORIGIN,
+      },
+      body: JSON.stringify({
+        partySize: 2,
+        locale: 'es',
+        whatsapp: {
+          consent: true,
+          phone: body.phone,
+          version: publicServiceConsentVersion,
         },
-        staging,
-      )
-    ).status,
-  ).toBe(403)
+      }),
+    },
+    publicQueueBindings,
+  )
+  expect(publicAdmission.status).toBe(503)
+  expect(
+    await env.DB.prepare(
+      'SELECT COUNT(*) AS count FROM queue_entry WHERE idempotency_key=?',
+    )
+      .bind(publicJoinKey)
+      .first(),
+  ).toEqual({ count: 0 })
   expect((await join()).status).toBe(201)
   let calls = 0
   network.use(

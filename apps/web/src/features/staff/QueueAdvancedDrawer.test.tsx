@@ -9,7 +9,28 @@ import {
 import { afterEach, expect, it, vi } from 'vitest'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { api } from './api'
-import type { QueueSummary } from '@noqueue/contracts/staff'
+import type { QueueSummary, ServiceInput } from '@noqueue/contracts/staff'
+vi.mock('./ServiceConfigDrawer', () => ({
+  ServiceConfigDrawer: ({
+    open,
+    initial,
+    onSave,
+  }: {
+    open: boolean
+    initial: ServiceInput
+    onSave: (config: ServiceInput) => Promise<void>
+  }) =>
+    open ? (
+      <button
+        type="button"
+        onClick={() =>
+          void onSave({ ...initial, etaChangeThresholdMinutes: 8 })
+        }
+      >
+        Save test settings
+      </button>
+    ) : null,
+}))
 vi.mock('./api', async (original) => ({
   ...(await original<typeof import('./api')>()),
   api: vi.fn(),
@@ -17,6 +38,7 @@ vi.mock('./api', async (original) => ({
 afterEach(() => {
   cleanup()
   vi.resetAllMocks()
+  vi.unstubAllGlobals()
 })
 const queue: QueueSummary = {
   id: 'q',
@@ -89,15 +111,28 @@ it('keeps reminder settings in a nested draft and protects navigation while savi
 })
 
 it('loads delivery evidence only inside advanced settings and labels the retention', async () => {
-  vi.mocked(api).mockResolvedValue([
-    {
-      id: 'trace',
-      code: 'T1',
-      kind: 'ready',
-      event: 'delivered',
-      recordedAt: Date.now(),
-    },
-  ])
+  vi.mocked(api).mockResolvedValue({
+    summary: [
+      {
+        kind: 'ready',
+        accepted: 4,
+        delivered: 3,
+        read: 1,
+        failed: 1,
+        unknown: 1,
+        openings: 2,
+      },
+    ],
+    events: [
+      {
+        id: 'trace',
+        code: 'T1',
+        kind: 'ready',
+        event: 'delivered',
+        recordedAt: Date.now(),
+      },
+    ],
+  })
   render(
     <QueueAdvancedDrawer
       queue={queue}
@@ -111,6 +146,66 @@ it('loads delivery evidence only inside advanced settings and labels the retenti
   fireEvent.click(
     screen.getByRole('button', { name: 'Trazabilidad de avisos (7 días)' }),
   )
-  expect(await screen.findByText(/Entregado/)).toBeVisible()
+  expect(await screen.findByText(/T1/)).toHaveTextContent('Entregado')
+  expect(screen.getByText(/Aceptados: 4/)).toBeVisible()
+  expect(screen.getByText(/Entregados: 3/)).toBeVisible()
+  expect(screen.getByText(/Aperturas del enlace: 2/)).toBeVisible()
   expect(api).toHaveBeenCalledWith('/queues/q/delivery-trace')
+})
+
+it('requires confirmation before changing notice policy with waiting entries', async () => {
+  const confirm = vi.fn(() => false)
+  vi.stubGlobal('confirm', confirm)
+  render(
+    <QueueAdvancedDrawer
+      queue={queue}
+      activeWaitingCount={1}
+      canOperate
+      canConfigure
+      returnFocus={null}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Recursos y ajustes de estimación' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Save test settings' }))
+  expect(confirm).toHaveBeenCalledWith(
+    'La política de avisos se actualizará para los turnos en espera. El plazo de llegada solo cambiará en futuras asignaciones. ¿Quieres continuar?',
+  )
+  expect(api).not.toHaveBeenCalled()
+})
+
+it('applies a confirmed notice policy update to current waiting entries', async () => {
+  const confirm = vi.fn(() => true)
+  vi.stubGlobal('confirm', confirm)
+  vi.mocked(api).mockResolvedValue(undefined)
+  render(
+    <QueueAdvancedDrawer
+      queue={queue}
+      activeWaitingCount={1}
+      canOperate
+      canConfigure
+      returnFocus={null}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Recursos y ajustes de estimación' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Save test settings' }))
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(1))
+  expect(confirm).toHaveBeenCalledOnce()
+  expect(api).toHaveBeenCalledWith(
+    '/queues/q',
+    'PATCH',
+    expect.objectContaining({
+      etaChangeThresholdMinutes: 8,
+      version: 1,
+      open: false,
+      applyApproachToActive: true,
+    }),
+  )
 })

@@ -21,7 +21,11 @@ import {
   processWebhook,
   reconcile,
 } from './features/queue/notifications'
-import { joinedEntrySchema } from '@noqueue/contracts/queue'
+import { joinQueue } from './features/queue/entries'
+import {
+  joinedEntrySchema,
+  publicServiceConsentVersion,
+} from '@noqueue/contracts/queue'
 import { decryptPhone, hash, secureEqual } from './features/queue/crypto'
 
 const network = setupNetwork()
@@ -102,6 +106,48 @@ const statusValue = (state: string) => ({
   ],
 })
 const endpoint = 'https://waba-sandbox.360dialog.io/v1/messages'
+const localEuNamespace = new Proxy(env.QUEUE_COORDINATOR, {
+  get(target, property) {
+    if (property === 'jurisdiction')
+      return (jurisdiction: string) => {
+        expect(jurisdiction).toBe('eu')
+        return target
+      }
+    const value = Reflect.get(target, property)
+    return typeof value === 'function' ? value.bind(target) : value
+  },
+})
+function stagedQueueBindings(overrides: Partial<CloudflareBindings> = {}) {
+  const bindings = { ...env, APP_ENV: 'staging', ...overrides }
+  const namespace = {
+    jurisdiction: (jurisdiction: string) => {
+      expect(jurisdiction).toBe('eu')
+      return namespace
+    },
+    getByName: () => ({
+      join: (
+        queueId: string,
+        key: string,
+        input: Parameters<typeof joinQueue>[3],
+        experiment = false,
+        source: Parameters<typeof joinQueue>[6] = 'legacy',
+      ) =>
+        joinQueue(
+          bindings as CloudflareBindings,
+          queueId,
+          key,
+          input,
+          experiment,
+          undefined,
+          source,
+        ),
+    }),
+  }
+  return {
+    ...bindings,
+    QUEUE_COORDINATOR: namespace as unknown as typeof env.QUEUE_COORDINATOR,
+  } as CloudflareBindings
+}
 
 describe('queue vertical in workerd', () => {
   it('requires pilot access and rejects forbidden telephone data', async () => {
@@ -125,6 +171,58 @@ describe('queue vertical in workerd', () => {
         })
       ).status,
     ).toBe(400)
+  })
+  it('replays a committed public-queue join before rechecking staging creation approval', async () => {
+    const staging = stagedQueueBindings({
+      WHATSAPP_MODE: 'cloud',
+      STAGING_CONSENT_APPROVED: 'true',
+      WHATSAPP_V2_TEMPLATES_APPROVED: 'true',
+      WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_ES: 'approved-joined-es',
+      WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_EN: 'approved-joined-en',
+      WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+    })
+    const payload = {
+      partySize: 2,
+      locale: 'es' as const,
+      whatsapp: {
+        consent: true as const,
+        phone: '+34600000000',
+        version: publicServiceConsentVersion,
+      },
+    }
+    const key = crypto.randomUUID()
+    const join = (bindings: CloudflareBindings, body: unknown, idempotencyKey: string) =>
+      app.request(
+        `${bindings.PUBLIC_APP_ORIGIN}/api/v1/public/queues/demo-queue/entries`,
+        {
+          method: 'POST',
+          headers: {
+            Origin: bindings.PUBLIC_APP_ORIGIN,
+            'Content-Type': 'application/json',
+            'Idempotency-Key': idempotencyKey,
+            'X-NoQueue-Pilot-Token': bindings.PILOT_ACCESS_TOKEN,
+          },
+          body: JSON.stringify(body),
+        },
+        bindings,
+      )
+
+    expect((await join(staging, payload, key)).status).toBe(201)
+    const approvalRevoked = stagedQueueBindings({
+      WHATSAPP_MODE: 'cloud',
+      STAGING_CONSENT_APPROVED: 'false',
+      WHATSAPP_V2_TEMPLATES_APPROVED: 'true',
+      WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_ES: 'approved-joined-es',
+      WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_EN: 'approved-joined-en',
+      WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+    })
+    expect((await join(approvalRevoked, payload, key)).status).toBe(200)
+    expect(
+      (await join(approvalRevoked, { ...payload, partySize: 3 }, key)).status,
+    ).toBe(409)
+    expect(
+      (await join(approvalRevoked, payload, crypto.randomUUID())).status,
+    ).toBe(503)
   })
   it('joins without WhatsApp and exposes no private data', async () => {
     const response = await join(crypto.randomUUID(), input(false))
@@ -257,6 +355,136 @@ describe('queue vertical in workerd', () => {
         }>()
       )?.n,
     ).toBe(3)
+  })
+  it('keeps the accepted ETA baseline monotonic when an older notice status arrives late', async () => {
+    const firstAcceptedAt = 1_800_000_000_000
+    let now = firstAcceptedAt
+    const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      expect((await join()).status).toBe(201)
+      const first = await env.DB.prepare(
+        'SELECT id,entry_id FROM notification_outbox LIMIT 1',
+      ).first<{ id: string; entry_id: string }>()
+      if (!first) throw new Error('Missing initial queue notice')
+      const projection = await env.DB.prepare(
+        'SELECT revision FROM queue_projection WHERE entry_id=?',
+      )
+        .bind(first.entry_id)
+        .first<{ revision: number }>()
+      const firstPrediction = firstAcceptedAt + 120 * 60_000
+      await env.DB.prepare(
+        'UPDATE queue_projection SET predicted_at=?,eta_minutes=120,quality=? WHERE entry_id=?',
+      )
+        .bind(firstPrediction, 'estimated', first.entry_id)
+        .run()
+      await env.DB.prepare(
+        'UPDATE notification_outbox SET payload_version=2,payload_snapshot=?,revision=?,call_cycle=0 WHERE id=?',
+      )
+        .bind(
+          JSON.stringify({
+            schemaVersion: 2,
+            serviceName: 'Demo',
+            ahead: 1,
+            etaMinutes: 120,
+            predictedAt: firstPrediction,
+            estimateQuality: 'estimated',
+            resourceName: null,
+            arrivalDeadlineAt: null,
+          }),
+          projection?.revision ?? 1,
+          first.id,
+        )
+        .run()
+
+      let sends = 0
+      network.use(
+        http.post(endpoint, () => {
+          sends++
+          return HttpResponse.json(
+            { messages: [{ id: `wamid.eta-${sends}` }] },
+            { status: 201 },
+          )
+        }),
+      )
+      await dispatchNotification(env, first.id)
+      now += 1_000
+      const correctionPrediction = firstPrediction + 10 * 60_000
+      await env.DB.prepare(
+        'UPDATE queue_projection SET predicted_at=?,eta_minutes=130,quality=? WHERE entry_id=?',
+      )
+        .bind(correctionPrediction, 'estimated', first.entry_id)
+        .run()
+      await env.DB.prepare(
+        `INSERT INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at,payload_version,payload_snapshot,revision,call_cycle)
+         VALUES (?,?,?,'delayed',?,2,?,?,0)`,
+      )
+        .bind(
+          crypto.randomUUID(),
+          first.entry_id,
+          `${first.entry_id}:delayed:test-revision`,
+          now,
+          JSON.stringify({
+            schemaVersion: 2,
+            serviceName: 'Demo',
+            ahead: 1,
+            etaMinutes: 130,
+            predictedAt: correctionPrediction,
+            estimateQuality: 'estimated',
+            resourceName: null,
+            arrivalDeadlineAt: null,
+          }),
+          projection?.revision ?? 1,
+        )
+        .run()
+      const correction = await env.DB.prepare(
+        "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='delayed'",
+      )
+        .bind(first.entry_id)
+        .first<{ id: string }>()
+      if (!correction) throw new Error('Missing delayed notice')
+      await dispatchNotification(env, correction.id)
+      expect(
+        await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+          .bind(correction.id)
+          .first(),
+      ).toEqual({ status: 'accepted' })
+      expect(
+        await env.DB.prepare(
+          'SELECT last_accepted_predicted_at FROM queue_notification_state WHERE entry_id=?',
+        )
+          .bind(first.entry_id)
+          .first(),
+      ).toEqual({ last_accepted_predicted_at: correctionPrediction })
+
+      const oldRead = () =>
+        webhook({
+          statuses: [
+            {
+              id: 'wamid.eta-1',
+              status: 'read',
+              timestamp: String(Math.floor(firstAcceptedAt / 1000)),
+            },
+          ],
+        })
+      await oldRead()
+      await oldRead()
+      expect(
+        await env.DB.prepare(
+          'SELECT last_accepted_predicted_at FROM queue_notification_state WHERE entry_id=?',
+        )
+          .bind(first.entry_id)
+          .first(),
+      ).toEqual({ last_accepted_predicted_at: correctionPrediction })
+      expect(
+        (
+          await env.DB.prepare(
+            "SELECT COUNT(*) AS n FROM webhook_event WHERE provider_id='wamid.eta-1' AND status='read'",
+          ).first<{ n: number }>()
+        )?.n,
+      ).toBe(1)
+    } finally {
+      nowSpy.mockRestore()
+    }
   })
   it('records opt-out durably and cancels pending messages', async () => {
     await join()

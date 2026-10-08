@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   serviceSchema,
+  storedServiceSchema,
   roleCapabilities,
   inviteSchema,
   memberDetailsSchema,
@@ -51,6 +52,21 @@ describe('staff contracts', () => {
     expect(
       serviceSchema.safeParse({ ...service, type: 'pool', spaces: [] }).success,
     ).toBe(true)
+  })
+  it('defaults material ETA notice thresholds for stored services and validates overrides', () => {
+    expect(storedServiceSchema.parse(service)).toMatchObject({
+      graceMinutes: 5,
+      etaChangeThresholdMinutes: 5,
+      notificationCooldownMinutes: 10,
+    })
+    expect(
+      serviceSchema.safeParse({ ...service, etaChangeThresholdMinutes: 0 })
+        .success,
+    ).toBe(false)
+    expect(
+      serviceSchema.safeParse({ ...service, notificationCooldownMinutes: 121 })
+        .success,
+    ).toBe(false)
   })
   it('keeps old spaces valid and checks that table types add up', () => {
     expect(serviceSchema.safeParse(service).success).toBe(true)

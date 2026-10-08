@@ -239,16 +239,22 @@ it('keeps arrival grace out of basic settings and discards advanced changes on b
   )
   await next()
   await next()
-  expect(screen.getAllByRole('spinbutton')).toHaveLength(4)
+  expect(screen.getAllByRole('spinbutton')).toHaveLength(2)
   expect(
     screen.queryByLabelText('Plazo de llegada (minutos)'),
   ).not.toBeInTheDocument()
-  expect(screen.getByLabelText('Turnos por delante')).toHaveValue(2)
-  expect(screen.getByLabelText('Minutos de espera')).toHaveValue(10)
+  expect(screen.queryByLabelText('Turnos por delante')).not.toBeInTheDocument()
+  expect(
+    screen.queryByLabelText('Minutos de espera para acercamiento'),
+  ).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
   fireEvent.click(
     screen.getByRole('button', { name: 'Configuración avanzada' }),
   )
+  expect(screen.getByLabelText('Turnos por delante')).toHaveValue(2)
+  expect(
+    screen.getByLabelText('Minutos de espera para acercamiento'),
+  ).toHaveValue(10)
   fireEvent.click(screen.getByRole('button', { name: 'Mesas de 4' }))
   fireEvent.change(screen.getByLabelText('Terraza · 4 plazas (min)'), {
     target: { value: '90' },

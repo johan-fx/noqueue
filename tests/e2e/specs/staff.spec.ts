@@ -2,6 +2,7 @@ import {
   resolveFixtureLocation,
   confirmFixtureLocation,
 } from '../helpers/location.js'
+import { fillPublicWhatsAppConsent } from '../helpers/queue-actions.js'
 import { test, expect } from '@playwright/test'
 
 // This journey intercepts a failed save; service workers bypass page.route.
@@ -346,6 +347,7 @@ test('sales provisioning, direct owner access and staff console use passwords an
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
   await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
+  await fillPublicWhatsAppConsent(guest)
   await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await queueDrawer
@@ -572,6 +574,16 @@ test('space-specific durations and an availability delay survive browser save an
     name: 'Configuración avanzada',
     exact: true,
   })
+  await expect(advanced.getByLabel('Plazo de llegada (minutos)')).toHaveValue(
+    '5',
+  )
+  await expect(advanced.getByLabel('Turnos por delante')).toHaveValue('2')
+  await expect(
+    advanced.getByLabel('Cambio mínimo de estimación (min)'),
+  ).toHaveValue('5')
+  await expect(
+    advanced.getByLabel('Intervalo mínimo entre cambios (min)'),
+  ).toHaveValue('10')
   await page.setViewportSize({ width: 390, height: 844 })
   await advanced
     .getByRole('button', { name: 'Mesas de 4', exact: true })
@@ -693,7 +705,7 @@ test('space-specific durations and an availability delay survive browser save an
   ).toHaveCount(0)
   await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await expect(advanced).toHaveCount(0)
-  await expect(drawer.getByRole('spinbutton')).toHaveCount(5)
+  await expect(drawer.getByRole('spinbutton')).toHaveCount(2)
   await expect(
     drawer.getByRole('button', {
       name: 'Configuración avanzada',
@@ -741,9 +753,9 @@ test('space-specific durations and an availability delay survive browser save an
   await advanced
     .getByRole('button', { name: 'Opciones de operación', exact: true })
     .click()
-  await expect(adjustment.getByLabel('Tipo de ajuste')).toHaveValue(
-    'availability',
-  )
+  await expect(
+    adjustment.getByRole('combobox', { name: 'Tipo de ajuste' }),
+  ).toContainText('Bloquear disponibilidad hasta caducidad')
   await expect(adjustment.getByLabel('Motivo', { exact: true })).toHaveValue(
     'Terrace cleaning',
   )
@@ -765,14 +777,27 @@ test('space-specific durations and an availability delay survive browser save an
   const guest = await page.context().newPage()
   await guest.goto(publicURL!)
   await guest.getByLabel('Nombre', { exact: true }).fill('Cliente E2E')
-  await guest.getByRole('combobox', { name: 'Espacio', exact: true }).click()
-  await guest.getByRole('option', { name: 'Terraza', exact: true }).click()
+  await fillPublicWhatsAppConsent(guest)
+  await guest.getByRole('radio', { name: 'Terrace', exact: true }).check()
   await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
-  await expect(guest.getByText(/Espera aproximada: (59|60) min/)).toBeVisible()
+  await expect(guest.getByText('Sin estimación', { exact: true })).toBeVisible()
   await queue.getByRole('button', { name: 'Actualizar', exact: true }).click()
+  await queue
+    .getByRole('button', { name: /^Acciones del turno/ })
+    .click()
+  await queue.getByRole('button', { name: 'Asignar turno', exact: true }).click()
+  const assignment = page.getByRole('dialog', {
+    name: 'Asignar turno',
+    exact: true,
+  })
   await expect(
-    queue.getByRole('button', { name: 'Avanzar un turno', exact: true }),
+    assignment.getByText('No hay una mesa compatible disponible.', {
+      exact: true,
+    }),
+  ).toBeVisible()
+  await expect(
+    assignment.getByRole('button', { name: 'Confirmar', exact: true }),
   ).toBeDisabled()
   await guest.close()
 })

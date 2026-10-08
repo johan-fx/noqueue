@@ -2,11 +2,13 @@ import { maintainServiceEntries } from './service-expiry'
 import { customerPhase } from './customer'
 import { publicService } from './public-context'
 import { normalizeConfig, recalculateQueue, readProjection } from './projection'
+import type { QueueNoticeSnapshot } from './notices'
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
 import { admissionState, serviceDeadline } from '../staff/availability'
 import {
   entrySchema,
+  publicServiceConsentVersion,
   type JoinQueue,
   type ManualJoin,
   type Entry,
@@ -153,7 +155,64 @@ export function manualJoinRequiresWhatsapp(env: CloudflareBindings) {
     return true
   }
 }
-export type JoinSource = 'legacy' | 'public-service'
+export type JoinSource = 'legacy' | 'public-service' | 'public-queue'
+
+function whatsappAdmissionReady(
+  env: CloudflareBindings,
+  locale: 'es' | 'en',
+) {
+  if (
+    env.WHATSAPP_ENABLED !== 'true' ||
+    !env.D360DIALOG_API_KEY ||
+    !env.D360DIALOG_PHONE_NUMBER_ID ||
+    !['sandbox', 'cloud'].includes(env.WHATSAPP_MODE)
+  )
+    return false
+  if (env.WHATSAPP_MODE === 'cloud') {
+    const templates = env as CloudflareBindings &
+      Partial<
+        Record<
+          'WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_ES' |
+            'WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_EN',
+          string
+        >
+      >
+    const template =
+      locale === 'es'
+        ? templates.WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_ES
+        : templates.WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_EN
+    if (
+      env.STAGING_CONSENT_APPROVED !== 'true' ||
+      env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true' ||
+      !template
+    )
+      return false
+  }
+  return true
+}
+
+function recipientAllowed(env: CloudflareBindings, phone: string) {
+  return (env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .includes(phone)
+}
+
+export function publicWhatsappAdmissionError(
+  env: CloudflareBindings,
+  contact:
+    | { consent: false }
+    | { consent: true; phone: string; version: string },
+  locale: 'es' | 'en',
+) {
+  if (!manualJoinRequiresWhatsapp(env)) return null
+  if (!contact.consent) return 'whatsapp_consent_required'
+  if (contact.version !== publicServiceConsentVersion)
+    return 'whatsapp_consent_version_required'
+  if (!whatsappAdmissionReady(env, locale)) return 'whatsapp_unavailable'
+  if (!recipientAllowed(env, contact.phone)) return 'recipient_not_allowed'
+  return null
+}
 
 export async function joinQueue(
   env: CloudflareBindings,
@@ -197,6 +256,26 @@ export async function joinQueue(
   // Admission guards apply to new turns, never to recovery of a committed request.
   if (source === 'public-service' && !input.displayName?.trim())
     return { status: 400, body: { error: 'name_required' } }
+  if (
+    (source === 'public-service' || source === 'public-queue') &&
+    manualJoinRequiresWhatsapp(env)
+  ) {
+    const admissionError = publicWhatsappAdmissionError(
+      env,
+      input.whatsapp,
+      input.locale,
+    )
+    if (admissionError)
+      return {
+        status:
+          admissionError === 'whatsapp_unavailable'
+            ? 503
+            : admissionError === 'recipient_not_allowed'
+            ? 403
+            : 400,
+        body: { error: admissionError },
+      }
+  }
   if (actor && manualJoinRequiresWhatsapp(env)) {
     if (!input.whatsapp.consent)
       return { status: 400, body: { error: 'whatsapp_consent_required' } }
@@ -398,7 +477,38 @@ export async function joinQueue(
       )
   }
   await env.DB.batch(statements)
-  await recalculateQueue(env, queueId)
+  const projectionState = await recalculateQueue(env, queueId)
+  if (input.whatsapp.consent && projectionState.config) {
+    const projection = projectionState.projections.find((item) => item.id === id)
+    const revision = await env.DB.prepare(
+      'SELECT revision FROM queue_projection WHERE entry_id=?',
+    )
+      .bind(id)
+      .first<{ revision: number }>()
+    if (projection) {
+      const snapshot: QueueNoticeSnapshot = {
+        schemaVersion: 2,
+        serviceName: projectionState.config.name,
+        ahead: Math.max(0, projection.position - 1),
+        etaMinutes:
+          projection.quality === 'unknown' ? null : projection.etaMinutes,
+        predictedAt: projection.predictedAt,
+        estimateQuality: projection.quality,
+        resourceName: null,
+        arrivalDeadlineAt: null,
+      }
+      await env.DB.prepare(
+        "UPDATE notification_outbox SET payload_version=2,payload_snapshot=?,revision=?,updated_at=? WHERE id=? AND kind='queue_joined' AND status='pending'",
+      )
+        .bind(
+          JSON.stringify(snapshot),
+          revision?.revision ?? 0,
+          Date.now(),
+          id,
+        )
+        .run()
+    }
+  }
   // Publishing is best-effort only after the durable transaction. The scheduled sweep repairs this gap.
   if (input.whatsapp.consent && env.WHATSAPP_ENABLED === 'true') {
     try {

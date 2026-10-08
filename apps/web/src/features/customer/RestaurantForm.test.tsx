@@ -24,6 +24,11 @@ it('allows recovering the same submitted request after admission is paused', asy
   fireEvent.change(screen.getByLabelText(/name/i), {
     target: { value: 'Guest' },
   })
+  fireEvent.change(
+    screen.getByLabelText('Phone number with international prefix'),
+    { target: { value: '+34600000000' } },
+  )
+  fireEvent.click(screen.getByRole('checkbox'))
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
   await screen.findByRole('alert')
   const key = submit.mock.calls[0]![1]
@@ -36,4 +41,11 @@ it('allows recovering the same submitted request after admission is paused', asy
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
   expect(submit.mock.calls[1]![1]).toBe(key)
+  expect(submit.mock.calls[0]![0]).toMatchObject({
+    whatsapp: {
+      consent: true,
+      phone: '+34600000000',
+      version: 'whatsapp-public-service-updates-v1',
+    },
+  })
 })

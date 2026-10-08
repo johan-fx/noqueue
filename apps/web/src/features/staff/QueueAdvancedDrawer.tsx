@@ -24,8 +24,28 @@ import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { occupancyAction, readinessNotice } from './queue-readiness'
 
 type Child = 'settings' | 'reminder' | QueueLifecycleCommand['action']
+type DeliveryTrace = {
+  summary: {
+    kind: string
+    accepted: number
+    delivered: number
+    read: number
+    failed: number
+    unknown: number
+    openings: number
+  }[]
+  events: {
+    id: string
+    code: string
+    kind: string
+    event: string
+    recordedAt: number
+    attempt: number | null
+  }[]
+}
 export function QueueAdvancedDrawer({
   queue,
+  activeWaitingCount = 0,
   canOperate,
   canConfigure,
   returnFocus,
@@ -33,23 +53,14 @@ export function QueueAdvancedDrawer({
   onSaved,
 }: {
   queue: QueueSummary
+  activeWaitingCount?: number
   canOperate: boolean
   canConfigure: boolean
   returnFocus: HTMLElement | null
   onClose: () => void
   onSaved: () => Promise<void> | void
 }) {
-  const [trace, setTrace] = useState<
-    | {
-        id: string
-        code: string
-        kind: string
-        event: string
-        recordedAt: number
-        attempt: number | null
-      }[]
-    | null
-  >(null)
+  const [trace, setTrace] = useState<DeliveryTrace | null>(null)
   const [traceBusy, setTraceBusy] = useState(false)
   const [child, setChild] = useState<Child | null>(null)
   const [childFocus, setChildFocus] = useState<HTMLElement | null>(null)
@@ -91,10 +102,28 @@ export function QueueAdvancedDrawer({
     setBusy(true)
     setError('')
     try {
+      const noticePolicyChanged =
+        (config.approachTurns ?? 2) !== (queue.config.approachTurns ?? 2) ||
+        (config.approachMinutes ?? 10) !==
+          (queue.config.approachMinutes ?? 10) ||
+        (config.etaChangeThresholdMinutes ?? 5) !==
+          (queue.config.etaChangeThresholdMinutes ?? 5) ||
+        (config.notificationCooldownMinutes ?? 10) !==
+          (queue.config.notificationCooldownMinutes ?? 10)
+      const applyApproachToActive =
+        noticePolicyChanged && activeWaitingCount > 0
+      if (
+        applyApproachToActive &&
+        !window.confirm(
+          'La política de avisos se actualizará para los turnos en espera. El plazo de llegada solo cambiará en futuras asignaciones. ¿Quieres continuar?',
+        )
+      )
+        return
       await api(`/queues/${queue.id}`, 'PATCH', {
         ...config,
         version: queue.version,
         open: !!queue.open,
+        applyApproachToActive,
       })
       childRef.current = null
       setChild(null)
@@ -203,7 +232,11 @@ export function QueueAdvancedDrawer({
             onClick={async () => {
               setTraceBusy(true)
               try {
-                setTrace(await api(`/queues/${queue.id}/delivery-trace`))
+                setTrace(
+                  await api<DeliveryTrace>(
+                    `/queues/${queue.id}/delivery-trace`,
+                  ),
+                )
               } catch (e) {
                 setError(errorMessage(e))
               } finally {
@@ -222,18 +255,51 @@ export function QueueAdvancedDrawer({
                 Últimos 7 días. Aceptado no significa entregado; desconocido no
                 confirma recepción.
               </p>
-              {!trace.length && (
+              {!trace.events.length && !trace.summary.length && (
                 <p>No hay eventos de entrega en este periodo.</p>
               )}
+              {!!trace.summary.length && (
+                <ul aria-label="Resumen por tipo de aviso" className="space-y-2">
+                  {trace.summary.map((item) => (
+                    <li key={item.kind} className="border-b py-2">
+                      <strong>
+                        {(
+                          {
+                            queue_joined: 'Inscripción',
+                            ready: 'Asignación',
+                            approaching: 'Acercamiento',
+                            delayed: 'Retraso',
+                            improved: 'Mejora de estimación',
+                            expired: 'Plazo agotado',
+                            cancelled: 'Cancelación',
+                            service_ended: 'Fin del servicio',
+                          } as Record<string, string>
+                        )[item.kind] ?? item.kind}
+                      </strong>
+                      <p>
+                        Aceptados: {item.accepted} · Entregados: {item.delivered} ·
+                        {' '}Leídos: {item.read} · Fallidos: {item.failed} ·
+                        {' '}Desconocidos: {item.unknown} · Aperturas del enlace:{' '}
+                        {item.openings}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
               <ol>
-                {trace.map((item) => (
+                {trace.events.map((item) => (
                   <li key={item.id} className="border-b py-2">
                     {item.code} ·{' '}
                     {(
                       {
                         ready: 'Asignación',
                         approaching: 'Acercamiento',
+                        queue_joined: 'Inscripción',
+                        delayed: 'Retraso',
+                        improved: 'Mejora de estimación',
                         expired: 'Plazo agotado',
+                        cancelled: 'Cancelación',
+                        service_ended: 'Fin del servicio',
                       } as Record<string, string>
                     )[item.kind] ?? item.kind}{' '}
                     ·{' '}
@@ -247,6 +313,7 @@ export function QueueAdvancedDrawer({
                         read: 'Leído',
                         failed: 'Fallido',
                         unknown: 'Desconocido',
+                        opened: 'Enlace abierto',
                         rate_limited: 'Límite temporal',
                         obsolete: 'Obsoleto',
                       } as Record<string, string>

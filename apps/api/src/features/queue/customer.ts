@@ -8,6 +8,7 @@ import {
 import { encryptDisplayName, hash, hmac } from './crypto'
 import { eligibleResources } from './engine'
 import { loadQueueState, recalculateQueue } from './projection'
+import type { QueueNoticeSnapshot } from './notices'
 
 export function customerPhase(
   status: string,
@@ -34,23 +35,64 @@ export async function expireArrivals(
   now = Date.now(),
 ) {
   const due = await env.DB.prepare(
-    "SELECT id FROM queue_entry WHERE queue_id=? AND status='called' AND arrival_deadline_at<=?",
+    `SELECT e.id,e.call_cycle,e.arrival_deadline_at,q.config,a.space_id
+     FROM queue_entry e JOIN queue q ON q.id=e.queue_id
+     LEFT JOIN queue_allocation a ON a.entry_id=e.id AND a.released_at IS NULL
+     WHERE e.queue_id=? AND e.status='called' AND e.arrival_deadline_at<=?`,
   )
     .bind(queueId, now)
-    .all<{ id: string }>()
+    .all<{
+      id: string
+      call_cycle: number
+      arrival_deadline_at: number
+      config: string | null
+      space_id: string | null
+    }>()
   if (!due.results.length) return
-  const statements = due.results.flatMap(({ id }) => [
-    noticeStatement(env, id, 'expired', now),
+  const statements = due.results.flatMap((entry) => {
+    let serviceName = 'Service'
+    let resourceName: string | null = null
+    try {
+      if (entry.config) {
+        const config = JSON.parse(entry.config) as {
+          name?: string
+          type?: string
+          spaces?: Array<{ id?: string; name?: string }>
+        }
+        serviceName = config.name ?? serviceName
+        resourceName =
+          config.spaces?.find((space) => space.id === entry.space_id)?.name ??
+          (config.type === 'reception'
+            ? 'Recepción'
+            : config.type === 'pool'
+            ? 'Piscina / bar'
+            : null)
+      }
+    } catch {
+      // Keep the safe service fallback; do not break an expiry transition.
+    }
+    const snapshot: QueueNoticeSnapshot = {
+      schemaVersion: 2,
+      serviceName,
+      ahead: null,
+      etaMinutes: null,
+      predictedAt: null,
+      estimateQuality: 'unknown',
+      resourceName,
+      arrivalDeadlineAt: entry.arrival_deadline_at,
+    }
+    return [
+    noticeStatement(env, entry.id, 'expired', now, snapshot, 0, entry.call_cycle),
     env.DB.prepare(
       "INSERT INTO queue_event(id,entry_id,kind,created_at) SELECT ?,id,'expired',? FROM queue_entry WHERE id=? AND status='called'",
-    ).bind(crypto.randomUUID(), now, id),
+    ).bind(crypto.randomUUID(), now, entry.id),
     env.DB.prepare(
       "UPDATE queue_allocation SET released_at=?,outcome='expired' WHERE entry_id=? AND released_at IS NULL AND EXISTS(SELECT 1 FROM queue_entry WHERE id=? AND status='called')",
-    ).bind(now, id, id),
+    ).bind(now, entry.id, entry.id),
     env.DB.prepare(
       "UPDATE queue_entry SET status='expired',version=version+1 WHERE id=? AND status='called' AND arrival_deadline_at<=?",
-    ).bind(id, now),
-  ])
+    ).bind(entry.id, now),
+  ]})
   await env.DB.batch(statements)
   for (const { id } of due.results) await publishNotice(env, id, 'expired')
 }
@@ -101,6 +143,7 @@ export async function runCustomerCommand(
     throw new HTTPException(409, { message: 'unsupported_service' })
   const statements: D1PreparedStatement[] = []
   let metadata: Record<string, unknown> = {}
+  let notifyCancellation = false
   if (input.action === 'update') {
     const party = { id: entry.id, sequence: entry.sequence, ...input }
     if (
@@ -127,7 +170,25 @@ export async function runCustomerCommand(
       preferredSpaceId: input.preferredSpaceId,
     }
   } else if (input.action === 'cancel') {
+    const snapshot: QueueNoticeSnapshot = {
+      schemaVersion: 2,
+      serviceName: state.config.name,
+      ahead: null,
+      etaMinutes: null,
+      predictedAt: null,
+      estimateQuality: 'unknown',
+      resourceName: null,
+      arrivalDeadlineAt: null,
+      reason: 'customer_cancel',
+    }
     statements.push(
+      noticeStatement(env, entry.id, 'cancelled', now, snapshot),
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO notification_trace(id,notification_id,event,recorded_at) SELECT id||':obsolete',id,'obsolete',? FROM notification_outbox WHERE entry_id=? AND kind IN ('queue_joined','approaching','delayed','improved') AND status='pending'",
+      ).bind(now, entry.id),
+      env.DB.prepare(
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND kind IN ('queue_joined','approaching','delayed','improved') AND status='pending'",
+      ).bind(now, entry.id),
       env.DB.prepare(
         "UPDATE queue_allocation SET released_at=?,outcome='cancelled' WHERE entry_id=? AND released_at IS NULL",
       ).bind(now, entry.id),
@@ -135,6 +196,7 @@ export async function runCustomerCommand(
         "UPDATE queue_entry SET status='cancelled',version=version+1 WHERE id=?",
       ).bind(entry.id),
     )
+    notifyCancellation = true
   } else {
     const party = state.parties.find((p) => p.id === entry.id)!
     const resources = new Set(
@@ -194,5 +256,6 @@ export async function runCustomerCommand(
   )
   await env.DB.batch(statements)
   await recalculateQueue(env, queueId, now)
+  if (notifyCancellation) await publishNotice(env, entry.id, 'cancelled')
   return { ok: true }
 }

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest'
-import { joinQueueSchema, consentVersion, manualJoinSchema } from './queue'
+import {
+  joinQueueSchema,
+  consentVersion,
+  manualJoinSchema,
+  publicServiceJoinSchema,
+  publicServiceConsentVersion,
+} from './queue'
 describe('join contract', () => {
   it('allows no-consent joins without a telephone', () =>
     expect(
@@ -42,6 +48,31 @@ describe('join contract', () => {
       }).success,
     ).toBe(false)
   })
+})
+
+it('requires an explicit phone and consent for public service admissions', () => {
+  const base = {
+    displayName: 'Guest',
+    partySize: 2,
+    locale: 'en',
+  }
+  expect(publicServiceJoinSchema.safeParse(base).success).toBe(false)
+  expect(
+    publicServiceJoinSchema.safeParse({
+      ...base,
+      whatsapp: { consent: false },
+    }).success,
+  ).toBe(false)
+  expect(
+    publicServiceJoinSchema.safeParse({
+      ...base,
+      whatsapp: {
+        consent: true,
+        phone: '+34600000000',
+        version: publicServiceConsentVersion,
+      },
+    }).success,
+  ).toBe(true)
 })
 it('accepts optional service details but rejects empty names and invalid subtypes', () => {
   const base = { partySize: 2, locale: 'es', whatsapp: { consent: false } }

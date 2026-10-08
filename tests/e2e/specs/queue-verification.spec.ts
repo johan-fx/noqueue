@@ -152,7 +152,16 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
       `/api/v1/public/services/${t.queue}/entries`,
       {
         headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
-        data: { displayName: 'Closed', partySize: 4, locale: 'es' },
+        data: {
+          displayName: 'Closed',
+          partySize: 4,
+          locale: 'es',
+          whatsapp: {
+            consent: true,
+            phone: '+34600000000',
+            version: 'whatsapp-public-service-updates-v1',
+          },
+        },
       },
     )
     expect(rejected.ok()).toBe(false)

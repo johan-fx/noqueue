@@ -137,10 +137,18 @@ export async function setup(
 export async function join(page: Page, queue: string, name: string) {
   await page.goto(`/q/${queue}`)
   await page.getByLabel('Nombre', { exact: true }).fill(name)
+  await fillPublicWhatsAppConsent(page)
   for (let i = 0; i < 3; i++)
     await page.getByRole('button', { name: 'Más comensales' }).click()
   await page.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(page).toHaveURL(/\/t\//)
+}
+
+export async function fillPublicWhatsAppConsent(page: Page) {
+  await page
+    .getByLabel(/Teléfono con prefijo internacional|Phone number with international prefix/)
+    .fill('+34600000000')
+  await page.getByRole('checkbox').check()
 }
 export async function act(
   page: Page,

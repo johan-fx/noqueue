@@ -1,5 +1,6 @@
 import { storedServiceSchema } from '@noqueue/contracts/staff'
 import { serviceDeadline, serviceWindow } from '../staff/availability'
+import { noticeStatement, publishNotice, type QueueNoticeSnapshot } from './notices'
 
 /** All callers hold the queue coordinator. No projections or recursive RPCs here. */
 export async function maintainServiceEntries(
@@ -39,6 +40,36 @@ export async function maintainServiceEntries(
     "SELECT COUNT(*) AS count FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
   ).bind(queueId, now).first<{ count: number }>()
   if (!due?.count) return
+  const dueEntries = await env.DB.prepare(
+    "SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
+  )
+    .bind(queueId, now)
+    .all<{ id: string }>()
+  const configured = await env.DB.prepare(
+    'SELECT config FROM queue WHERE id=?',
+  )
+    .bind(queueId)
+    .first<{ config: string | null }>()
+  let serviceName = 'Service'
+  if (configured?.config) {
+    try {
+      const parsed = storedServiceSchema.safeParse(JSON.parse(configured.config))
+      if (parsed.success) serviceName = parsed.data.name
+    } catch {
+      // A malformed legacy config is not authority to expose a partial payload.
+    }
+  }
+  const snapshot: QueueNoticeSnapshot = {
+    schemaVersion: 2,
+    serviceName,
+    ahead: null,
+    etaMinutes: null,
+    predictedAt: null,
+    estimateQuality: 'unknown',
+    resourceName: null,
+    arrivalDeadlineAt: null,
+    reason: 'service_ended',
+  }
   // Four set-based statements keep the commit bounded even for a large queue.
   // Deterministic internal event identities prevent duplicate closure evidence.
   await env.DB.batch([
@@ -48,6 +79,9 @@ export async function maintainServiceEntries(
     env.DB.prepare(
       "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE status='pending' AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?)",
     ).bind(now, queueId, now),
+    ...dueEntries.results.map(({ id }) =>
+      noticeStatement(env, id, 'service_ended', now, snapshot),
+    ),
     env.DB.prepare(
       "UPDATE queue_allocation SET released_at=?,outcome='cancelled' WHERE released_at IS NULL AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?)",
     ).bind(now, queueId, now),
@@ -55,5 +89,7 @@ export async function maintainServiceEntries(
       "UPDATE queue_entry SET status='cancelled',version=version+1 WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
     ).bind(queueId, now),
   ])
+  for (const { id } of dueEntries.results)
+    await publishNotice(env, id, 'service_ended')
   console.info({ event: 'service_expiry_cancelled', count: due.count })
 }

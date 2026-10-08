@@ -58,12 +58,18 @@ function fixture(size = 4): Entry {
     },
   }
 }
-function mount(size = 4, lang = 'es') {
+function mount(size = 4, lang = 'es', notice?: string) {
   resource.data = fixture(size)
   const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true }))
   vi.stubGlobal('fetch', fetcher)
+  const search = new URLSearchParams({ lang })
+  if (notice) {
+    search.set('source', 'whatsapp')
+    search.set('notice', notice)
+  }
+  const token = notice ? 'a'.repeat(64) : 'token'
   const tree = (
-    <MemoryRouter initialEntries={[`/t/token?lang=${lang}`]}>
+    <MemoryRouter initialEntries={[`/t/${token}?${search}`]}>
       <Routes>
         <Route path="/t/:recoveryToken" element={<CustomerTurn />} />
       </Routes>
@@ -74,7 +80,7 @@ function mount(size = 4, lang = 'es') {
     fetcher,
     refresh: () =>
       view.rerender(
-        <MemoryRouter initialEntries={[`/t/token?lang=${lang}`]}>
+        <MemoryRouter initialEntries={[`/t/${token}?${search}`]}>
           <Routes>
             <Route path="/t/:recoveryToken" element={<CustomerTurn />} />
           </Routes>
@@ -118,6 +124,17 @@ it('keeps the turn behind one sheet and opens the modify menu without writing', 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument(),
   )
   expect(fetcher).not.toHaveBeenCalled()
+})
+it('records a protected opening only for a versioned WhatsApp notice link', async () => {
+  const notice = '550e8400-e29b-41d4-a716-446655440000'
+  const { fetcher } = mount(4, 'es', notice)
+
+  await waitFor(() =>
+    expect(fetcher).toHaveBeenCalledWith(
+      `/api/v1/public/entries/${'a'.repeat(64)}/notices/${notice}/opened`,
+      { method: 'POST', keepalive: true },
+    ),
+  )
 })
 it('edits a delta, previews the total, and writes only on confirmation preserving the snapshot', async () => {
   const { fetcher } = mount()

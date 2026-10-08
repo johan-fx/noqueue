@@ -1,4 +1,9 @@
-import { serviceJoinSchema } from '@noqueue/contracts/queue'
+import {
+  joinQueueSchema,
+  publicServiceJoinSchema,
+  serviceJoinSchema,
+  type JoinQueue,
+} from '@noqueue/contracts/queue'
 import { publicService } from '../queue/public-context'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
@@ -22,10 +27,21 @@ publicServices.get('/:id', async (c) => {
 publicServices.post('/:id/entries', async (c) => {
   if (c.req.header('Origin') !== c.env.PUBLIC_APP_ORIGIN)
     return c.json({ error: 'origin_not_allowed' }, 403)
-  const parsed = serviceJoinSchema.safeParse(await c.req.json())
+  const body = await c.req.json()
+  const publicJoin = publicServiceJoinSchema.safeParse(body)
+  const legacyJoin = serviceJoinSchema.safeParse(body)
+  const compatibleJoin = joinQueueSchema.safeParse(body)
   const key = z.uuid().safeParse(c.req.header('Idempotency-Key'))
-  if (!parsed.success || !key.success)
+  if ((!publicJoin.success && !legacyJoin.success && !compatibleJoin.success) || !key.success)
     return c.json({ error: 'invalid_join' }, 400)
+  // Historical public requests omitted contact data; normalize them exactly as
+  // the old route did so an already-committed idempotent request can recover.
+  let input: JoinQueue
+  if (publicJoin.success) input = publicJoin.data
+  else if (compatibleJoin.success) input = compatibleJoin.data
+  else if (legacyJoin.success)
+    input = { ...legacyJoin.data, whatsapp: { consent: false } }
+  else return c.json({ error: 'invalid_join' }, 400)
   const row = await c.env.DB.prepare(
     `SELECT q.id FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
   )
@@ -52,7 +68,7 @@ publicServices.post('/:id/entries', async (c) => {
     .join(
       c.req.param('id'),
       key.data,
-      { ...parsed.data, whatsapp: { consent: false } },
+      input,
       false,
       'public-service',
     )

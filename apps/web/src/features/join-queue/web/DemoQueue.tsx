@@ -1,4 +1,3 @@
-import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectTrigger,
@@ -9,18 +8,22 @@ import {
 import { useEffect, useId, useState, type FormEvent } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import {
-  consentCopy,
-  consentVersion,
   entrySchema,
   joinedEntrySchema,
+  publicServiceConsentVersion,
   type Entry,
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import {
+  PublicWhatsAppConsentFields,
+  validPublicWhatsAppConsent,
+} from '@/features/customer/PublicWhatsAppConsentFields'
 
 export function DemoQueue() {
   const id = useId()
   const navigate = useNavigate()
   const [locale, setLocale] = useState<'es' | 'en'>('es')
+  const [phone, setPhone] = useState('')
   const [consent, setConsent] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -30,15 +33,18 @@ export function DemoQueue() {
   const es = locale === 'es'
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (!validPublicWhatsAppConsent(phone, consent)) return
     setBusy(true)
     setError('')
     const form = new FormData(event.currentTarget)
     const body = JSON.stringify({
       partySize: Number(form.get('partySize')),
       locale,
-      whatsapp: consent
-        ? { consent: true, phone: form.get('phone'), version: consentVersion }
-        : { consent: false },
+      whatsapp: {
+        consent: true,
+        phone,
+        version: publicServiceConsentVersion,
+      },
     })
     const current =
       attempt?.body === body ? attempt : { key: crypto.randomUUID(), body }
@@ -117,32 +123,18 @@ export function DemoQueue() {
             disabled={busy}
           />
         </label>
-        <div className="flex gap-2">
-          <Checkbox
-            id={`${id}-consent`}
-            checked={consent}
-            onCheckedChange={(checked) => setConsent(checked)}
-            disabled={busy}
-          />
-          <label htmlFor={`${id}-consent`}>{consentCopy[locale]}</label>
-        </div>
-        {consent && (
-          <label className="block">
-            {es
-              ? 'Teléfono con prefijo internacional'
-              : 'Phone with country code'}
-            <input
-              className="block border rounded p-2"
-              name="phone"
-              type="tel"
-              placeholder="+34600000000"
-              pattern="\+[1-9][0-9]{7,14}"
-              required
-              disabled={busy}
-            />
-          </label>
-        )}
-        <Button type="submit" disabled={busy}>
+        <PublicWhatsAppConsentFields
+          locale={locale}
+          phone={phone}
+          consent={consent}
+          disabled={busy}
+          onPhoneChange={setPhone}
+          onConsentChange={setConsent}
+        />
+        <Button
+          type="submit"
+          disabled={busy || !validPublicWhatsAppConsent(phone, consent)}
+        >
           {busy
             ? es
               ? 'Guardando…'

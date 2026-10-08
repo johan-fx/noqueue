@@ -261,6 +261,14 @@ export function ServiceConfigDrawer({
                   resourceStateKnown: form.getValues('resourceStateKnown'),
                   stations: form.getValues('stations'),
                   graceMinutes: form.getValues('graceMinutes'),
+                  approachTurns: form.getValues('approachTurns'),
+                  approachMinutes: form.getValues('approachMinutes'),
+                  etaChangeThresholdMinutes: form.getValues(
+                    'etaChangeThresholdMinutes',
+                  ),
+                  notificationCooldownMinutes: form.getValues(
+                    'notificationCooldownMinutes',
+                  ),
                 }}
                 spaces={form.getValues('spaces')}
                 averageMinutes={form.getValues('averageMinutes')}
@@ -283,6 +291,26 @@ export function ServiceConfigDrawer({
                       form.setValue('graceMinutes', options.graceMinutes, {
                         shouldDirty: true,
                       })
+                    if (options.approachTurns !== undefined)
+                      form.setValue('approachTurns', options.approachTurns, {
+                        shouldDirty: true,
+                      })
+                    if (options.approachMinutes !== undefined)
+                      form.setValue('approachMinutes', options.approachMinutes, {
+                        shouldDirty: true,
+                      })
+                    if (options.etaChangeThresholdMinutes !== undefined)
+                      form.setValue(
+                        'etaChangeThresholdMinutes',
+                        options.etaChangeThresholdMinutes,
+                        { shouldDirty: true },
+                      )
+                    if (options.notificationCooldownMinutes !== undefined)
+                      form.setValue(
+                        'notificationCooldownMinutes',
+                        options.notificationCooldownMinutes,
+                        { shouldDirty: true },
+                      )
                   }
                   setConfiguringQueue(false)
                 }}

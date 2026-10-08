@@ -84,6 +84,8 @@ export const serviceSchema = z
     averageMinutes: z.number().int().min(1).max(1440),
     approachTurns: z.number().int().min(0).max(100).optional(),
     approachMinutes: z.number().int().min(0).max(1440).optional(),
+    etaChangeThresholdMinutes: z.number().int().min(1).max(60).optional(),
+    notificationCooldownMinutes: z.number().int().min(1).max(120).optional(),
     graceMinutes: z.number().int().min(1).max(120),
     cutoffMinutes: z.number().int().min(0).max(240),
     twentyFourHours: z.boolean(),
@@ -236,11 +238,23 @@ export const serviceSchema = z
     }
   })
 export type ServiceInput = z.infer<typeof serviceSchema>
-/** Only missing legacy values receive defaults; an explicit five is never reclassified. */
+/** Only missing legacy values receive defaults; explicit configured values are retained. */
 export const storedServiceSchema = z.preprocess((input) => {
-  if (input && typeof input === 'object' && !('graceMinutes' in input)) {
+  if (input && typeof input === 'object') {
     const value = input as { type?: string }
-    return { ...input, graceMinutes: value.type === 'restaurant' ? 5 : 2 }
+    const record = input as Record<string, unknown>
+    return {
+      ...record,
+      ...(!('graceMinutes' in record)
+        ? { graceMinutes: value.type === 'restaurant' ? 5 : 2 }
+        : {}),
+      ...(!('etaChangeThresholdMinutes' in record)
+        ? { etaChangeThresholdMinutes: 5 }
+        : {}),
+      ...(!('notificationCooldownMinutes' in record)
+        ? { notificationCooldownMinutes: 10 }
+        : {}),
+    }
   }
   return input
 }, serviceSchema)

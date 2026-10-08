@@ -5,7 +5,7 @@ import {
   type ServiceInput,
 } from '@noqueue/contracts/staff'
 import { Input } from '@/components/ui/input'
-import { Field, FieldLabel } from '@/components/ui/field'
+import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import {
   Accordion,
   AccordionItem,
@@ -25,6 +25,10 @@ export type QueueOptions = Partial<
     | 'resourceStateKnown'
     | 'stations'
     | 'graceMinutes'
+    | 'approachTurns'
+    | 'approachMinutes'
+    | 'etaChangeThresholdMinutes'
+    | 'notificationCooldownMinutes'
   >
 >
 
@@ -51,6 +55,10 @@ export function QueueConfigForm({
     defaultValues: {
       ...emptyService,
       graceMinutes: defaultGraceMinutes(type),
+      approachTurns: 2,
+      approachMinutes: 10,
+      etaChangeThresholdMinutes: 5,
+      notificationCooldownMinutes: 10,
       ...options,
       type,
       averageMinutes,
@@ -96,6 +104,10 @@ export function QueueConfigForm({
             'adjustments',
             'stations',
             'graceMinutes',
+            'approachTurns',
+            'approachMinutes',
+            'etaChangeThresholdMinutes',
+            'notificationCooldownMinutes',
             'estimationMode',
             'resourceStateKnown',
           ].includes(item.path),
@@ -111,6 +123,10 @@ export function QueueConfigForm({
           adjustments: values.adjustments,
           stations: values.stations,
           graceMinutes: values.graceMinutes,
+          approachTurns: values.approachTurns,
+          approachMinutes: values.approachMinutes,
+          etaChangeThresholdMinutes: values.etaChangeThresholdMinutes,
+          notificationCooldownMinutes: values.notificationCooldownMinutes,
           estimationMode: values.estimationMode,
           resourceStateKnown: values.resourceStateKnown,
         })
@@ -138,6 +154,36 @@ export function QueueConfigForm({
           asignaciones.
         </p>
       </Field>
+      <fieldset className="space-y-4 rounded-lg border p-4">
+        <legend className="px-1 font-medium">Avisos de turno</legend>
+        <p className="text-sm text-muted-foreground">
+          Los avisos de acercamiento se activan al cumplir cualquiera de los
+          umbrales. Los cambios de estimación comparan la hora prevista, no el
+          simple paso del tiempo.
+        </p>
+        {(
+          [
+            ['approachTurns', 'Turnos por delante', 2, 100],
+            ['approachMinutes', 'Minutos de espera para acercamiento', 10, 1440],
+            ['etaChangeThresholdMinutes', 'Cambio mínimo de estimación (min)', 5, 60],
+            ['notificationCooldownMinutes', 'Intervalo mínimo entre cambios (min)', 10, 120],
+          ] as const
+        ).map(([name, label, fallback, max]) => (
+          <Field key={name}>
+            <FieldLabel htmlFor={`notice-${name}`}>{label}</FieldLabel>
+            <Input
+              id={`notice-${name}`}
+              type="number"
+              min={name === 'approachTurns' || name === 'approachMinutes' ? 0 : 1}
+              max={max}
+              required
+              defaultValue={form.getValues(name) ?? fallback}
+              {...form.register(name, { valueAsNumber: true })}
+            />
+            <FieldError errors={[form.formState.errors[name]]} />
+          </Field>
+        ))}
+      </fieldset>
       {type === 'restaurant' ? (
         <Tabs
           value={selected}

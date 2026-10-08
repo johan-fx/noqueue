@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -19,6 +20,7 @@ vi.mock('./api', async (original) => ({
 }))
 afterEach(() => {
   cleanup()
+  vi.restoreAllMocks()
   vi.resetAllMocks()
 })
 const service: QueueSummary = {
@@ -832,6 +834,95 @@ it('refreshes an entry after 409 and requires another confirmation using the fre
   expect(commands[1]!.key).not.toBe(commands[0]!.key)
 })
 
+it('reuses the exact request after an unknown outcome when refreshed assignment data changes', async () => {
+  let entryReads = 0
+  const originalEntry = {
+    id: 'retry-entry',
+    code: 'R1',
+    partySize: 2,
+    status: 'waiting',
+    version: 1,
+    sequence: 1,
+    calledAt: null,
+    allowedActions: ['call'],
+    assignment: {
+      available: true,
+      spaceName: 'Interior',
+      priorityRequired: true,
+      token: 'first-token',
+    },
+  }
+  const refreshedEntry = {
+    ...originalEntry,
+    version: 2,
+    assignment: {
+      ...originalEntry.assignment,
+      spaceName: 'Terraza',
+      token: 'refreshed-token',
+    },
+  }
+  const commands: { body: unknown; key: unknown }[] = []
+  vi.mocked(api).mockImplementation(async (path, _method, body, key) => {
+    if (path.endsWith('/commands')) {
+      commands.push({ body, key })
+      if (commands.length === 1) throw new TypeError('Failed to fetch')
+      return { ok: true }
+    }
+    if (path.endsWith('/queues')) return [service]
+    if (path.endsWith('/entries'))
+      return ++entryReads === 1 ? [originalEntry] : [refreshedEntry]
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  await screen.findByRole('dialog', { name: 'Gestionar lista' })
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Acciones del turno R1' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+  const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
+  fireEvent.click(
+    within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
+  )
+  fireEvent.change(
+    within(sheet).getByLabelText('Motivo de prioridad (obligatorio)'),
+    { target: { value: 'Cliente esperando' } },
+  )
+  const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
+  fireEvent.click(confirm)
+  await waitFor(() => expect(commands).toHaveLength(1))
+  await waitFor(() => expect(entryReads).toBeGreaterThan(1))
+  expect(
+    await within(sheet).findByText(/Disponibilidad compatible · Terraza/),
+  ).toBeVisible()
+  await waitFor(() => expect(confirm).toBeEnabled())
+
+  fireEvent.click(confirm)
+  await waitFor(() => expect(commands).toHaveLength(2))
+  expect(commands[0]!.body).toEqual({
+    entryId: 'retry-entry',
+    version: 1,
+    action: 'call',
+    arrivalMode: 'present',
+    assignmentToken: 'first-token',
+    overrideReason: 'Cliente esperando',
+  })
+  expect(commands[0]!.key).toEqual(expect.any(String))
+  expect(commands[1]!.body).toEqual(commands[0]!.body)
+  expect(commands[1]!.key).toBe(commands[0]!.key)
+})
+
 it.each([
   [undefined, undefined],
   [undefined, 'fastest'],
@@ -969,6 +1060,244 @@ it.each([false, true])(
     } else expect(submit).toBeDisabled()
   },
 )
+
+it('uses refreshed assignment availability, version, and token in an open confirmation sheet', async () => {
+  let poll: (() => void) | undefined
+  vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+    if (delay === 5000) poll = callback as () => void
+    return 1
+  })
+  vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
+  const unavailable = {
+    id: 'fresh-entry',
+    code: 'FRESH',
+    partySize: 2,
+    status: 'waiting',
+    version: 1,
+    sequence: 1,
+    calledAt: null,
+    assignment: {
+      available: false,
+      spaceName: 'Terraza',
+      priorityRequired: false,
+      token: 'stale-token',
+    },
+  }
+  const available = {
+    ...unavailable,
+    version: 2,
+    assignment: {
+      available: true,
+      spaceName: 'Terraza',
+      priorityRequired: false,
+      token: 'fresh-token',
+    },
+  }
+  const commands: { body: unknown; key: unknown }[] = []
+  let entryReads = 0
+  vi.mocked(api).mockImplementation(async (path, _method, body, key) => {
+    if (path.endsWith('/commands')) {
+      commands.push({ body, key })
+      return { ok: true }
+    }
+    if (path.endsWith('/queues')) return [service]
+    if (path.endsWith('/entries'))
+      return ++entryReads === 1 ? [unavailable] : [available]
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  await screen.findByRole('dialog', { name: 'Gestionar lista' })
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Acciones del turno FRESH' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+  const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
+  const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
+  expect(confirm).toBeDisabled()
+
+  expect(poll).toBeDefined()
+  await act(async () => {
+    poll?.()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  expect(entryReads).toBeGreaterThan(1)
+  await waitFor(() => expect(confirm).toBeEnabled())
+  fireEvent.click(confirm)
+  await waitFor(() => expect(commands).toHaveLength(1))
+  expect(commands[0]?.body).toEqual({
+    entryId: 'fresh-entry',
+    version: 2,
+    action: 'call',
+    arrivalMode: 'notify',
+    assignmentToken: 'fresh-token',
+  })
+  expect(commands[0]?.key).toEqual(expect.any(String))
+})
+
+it.each(['removed', 'disallowed'] as const)(
+  'blocks an open confirmation when its refreshed entry is %s',
+  async (change) => {
+    let poll: (() => void) | undefined
+    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+      if (delay === 5000) poll = callback as () => void
+      return 1
+    })
+    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
+    const entry = {
+      id: 'changed-entry',
+      code: 'CHANGED',
+      partySize: 2,
+      status: 'waiting',
+      version: 1,
+      sequence: 1,
+      calledAt: null,
+      allowedActions: ['call'],
+      assignment: {
+        available: true,
+        spaceName: 'Terraza',
+        priorityRequired: false,
+        token: 'assignment-token',
+      },
+    }
+    let entryReads = 0
+    vi.mocked(api).mockImplementation(async (path) => {
+      if (path.endsWith('/queues')) return [service]
+      if (path.endsWith('/entries')) {
+        entryReads++
+        if (entryReads === 1) return [entry]
+        return change === 'removed' ? [] : [{ ...entry, allowedActions: [] }]
+      }
+      return []
+    })
+    render(
+      <Dashboard
+        venue={{
+          id: 'hotel',
+          name: 'Hotel',
+          organizationId: 'org',
+          organizationName: 'Empresa',
+          role: 'queue_staff',
+        }}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+    fireEvent.click(
+      await screen.findByRole('button', {
+        name: 'Acciones del turno CHANGED',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+    const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
+    const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
+    expect(confirm).toBeEnabled()
+
+    await act(async () => {
+      poll?.()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(confirm).toBeDisabled()
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'El turno ya no permite esta acción.',
+    )
+  },
+)
+
+it('does not commit a late entry refresh for a queue that is no longer selected', async () => {
+  const first = { ...service, id: 'first', name: 'First service' }
+  const second = { ...service, id: 'second', name: 'Second service' }
+  const firstEntry = {
+    id: 'first-entry',
+    code: 'FIRST',
+    status: 'waiting',
+    version: 0,
+    sequence: 1,
+    calledAt: null,
+  }
+  const lateFirstEntry = { ...firstEntry, id: 'late-first', code: 'LATE' }
+  const secondEntry = {
+    ...firstEntry,
+    id: 'second-entry',
+    code: 'SECOND',
+  }
+  let firstReads = 0
+  let resolveFirstRefresh!: (rows: unknown[]) => void
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/venues/hotel/queues')) return [first, second]
+    if (path.endsWith('/queues/first/entries')) {
+      if (++firstReads === 1) return [firstEntry]
+      if (firstReads === 2)
+        return new Promise((resolve) => {
+          resolveFirstRefresh = resolve
+        })
+      return [firstEntry]
+    }
+    if (path.endsWith('/queues/second/entries')) return [secondEntry]
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+  const viewButtons = await screen.findAllByRole('button', { name: 'Ver lista' })
+  fireEvent.click(viewButtons[0]!)
+  const firstDrawer = await screen.findByRole('dialog', {
+    name: 'Gestionar lista',
+  })
+  fireEvent.click(
+    within(firstDrawer).getByRole('button', { name: 'Actualizar' }),
+  )
+  await waitFor(() => expect(firstReads).toBe(2))
+
+  fireEvent.click(within(firstDrawer).getByRole('button', { name: 'Volver' }))
+  await waitFor(() =>
+    expect(screen.queryByRole('dialog', { name: 'Gestionar lista' })).toBeNull(),
+  )
+  fireEvent.click(screen.getAllByRole('button', { name: 'Ver lista' })[1]!)
+  const secondDrawer = await screen.findByRole('dialog', {
+    name: 'Gestionar lista',
+  })
+  await expect(
+    within(secondDrawer).getByRole('button', {
+      name: 'Acciones del turno SECOND',
+    }),
+  ).toBeVisible()
+  await act(async () => {
+    resolveFirstRefresh([lateFirstEntry])
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
+  await expect(
+    within(secondDrawer).getByRole('button', {
+      name: 'Acciones del turno SECOND',
+    }),
+  ).toBeVisible()
+  expect(
+    within(secondDrawer).queryByRole('button', {
+      name: 'Acciones del turno LATE',
+    }),
+  ).not.toBeInTheDocument()
+})
 
 it('returns cancelled entry confirmation focus to its persistent action trigger', async () => {
   vi.mocked(api).mockImplementation(async (path) =>

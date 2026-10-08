@@ -240,7 +240,12 @@ test('release group popup preserves its Sheet and restores focus after submittin
     patches: 0,
   })
   await gear.click()
-  await page.getByRole('menuitem', { name: 'Mesa libre', exact: true }).click()
+  await expect(gear).toHaveAttribute('aria-expanded', 'true')
+  const serviceMenu = page.getByRole('menu')
+  await expect(serviceMenu).toBeVisible()
+  await serviceMenu
+    .getByRole('menuitem', { name: 'Mesa libre', exact: true })
+    .click()
   const sheet = page.getByRole('dialog', {
     name: 'Mesa libre · Control restaurant',
     exact: true,
@@ -307,15 +312,20 @@ test('adjustment type popup preserves metadata and submits duration and availabi
       .getByRole('button', { name: 'Opciones de operación', exact: true })
       .click()
     const trigger = advanced.getByRole('combobox', { name: 'Tipo de ajuste' })
+    const options = page.getByRole('listbox')
     await expect(trigger.locator('[data-slot=select-value]')).toHaveText(
       'Duración estimada',
     )
-    await trigger.focus()
-    await trigger.press('Enter')
+    await trigger.scrollIntoViewIfNeeded()
+    await trigger.click()
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(options).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(trigger).toBeFocused()
     await trigger.press('Enter')
-    await page
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    await expect(options).toBeVisible()
+    await options
       .getByRole('option', { name: 'Bloquear disponibilidad hasta caducidad' })
       .click()
     await expect(advanced.getByLabel('Duración temporal (min)')).toHaveCount(0)
@@ -324,7 +334,9 @@ test('adjustment type popup preserves metadata and submits duration and availabi
     )
     if (mode === 'duration') {
       await trigger.click()
-      await page
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      await expect(options).toBeVisible()
+      await options
         .getByRole('option', { name: 'Duración estimada', exact: true })
         .click()
       await expect(advanced.getByLabel('Duración temporal (min)')).toHaveValue(

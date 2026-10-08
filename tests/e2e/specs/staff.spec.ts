@@ -3,10 +3,17 @@ import {
   confirmFixtureLocation,
 } from '../helpers/location.js'
 import {
-  fillPublicWhatsAppConsent,
   setup as setupQueue,
 } from '../helpers/queue-actions.js'
-import { test, expect, type APIRequestContext, type Page, type TestInfo } from '../fixtures.js'
+import {
+  clientIpAddress,
+  newClientContext,
+  test,
+  expect,
+  type APIRequestContext,
+  type Page,
+  type TestInfo,
+} from '../fixtures.js'
 
 type FixtureService = {
   name: string
@@ -542,6 +549,7 @@ test.describe('service setup retry and persistence', () => {
 test('owner can release, assign, confirm arrival and complete a queue entry', async ({
   page,
   request,
+  browser,
   baseURL,
 }, testInfo) => {
   const { queue, venueId } = await setupQueue(page, request, baseURL!, 'restaurant')
@@ -577,117 +585,183 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
     exact: true,
   })
   await queueDrawer.getByRole('button', { name: 'Actualizar', exact: true }).click()
-  const publicURL = await queueDrawer
-    .getByRole('link', { name: 'Abrir enlace público de la lista' })
-    .getAttribute('href')
-  const guest = await page.context().newPage()
-  await guest.goto(publicURL!)
-  await guest.getByLabel('Nombre', { exact: true }).fill('Cliente Staff E2E')
-  await fillPublicWhatsAppConsent(guest)
-  await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
-  await expect(guest).toHaveURL(/\/t\//)
-  await expect(guest.getByText('Sin estimación', { exact: true })).toBeVisible()
-  await queueDrawer
-    .getByRole('button', { name: 'Actualizar', exact: true })
-    .click()
+  const guestIp = clientIpAddress(testInfo, 'staff-lifecycle-guest')
+  const guestContext = await newClientContext(
+    browser,
+    testInfo,
+    'staff-lifecycle-guest',
+    { baseURL: baseURL!, viewport: { width: 390, height: 844 } },
+  )
+  try {
+    const guestJoin = await request.post(
+      `/api/v1/public/services/${queue}/entries`,
+      {
+        headers: {
+          Origin: baseURL!,
+          'CF-Connecting-IP': guestIp,
+          'Idempotency-Key': crypto.randomUUID(),
+        },
+        data: {
+          displayName: 'Cliente Staff E2E',
+          partySize: 1,
+          preferredSpaceId: 'fastest',
+          locale: 'es',
+          whatsapp: {
+            consent: true,
+            phone: '+34600000000',
+            version: 'whatsapp-public-service-updates-v1',
+          },
+        },
+      },
+    )
+    expect(guestJoin.ok()).toBeTruthy()
+    const { recoveryToken } = (await guestJoin.json()) as {
+      recoveryToken: string
+    }
+    expect(recoveryToken).toMatch(/^[a-f0-9]{64}$/)
+    const guest = await guestContext.newPage()
+    await guest.goto(`/t/${recoveryToken}`)
+    await expect(guest.getByText('Sin estimación', { exact: true })).toBeVisible()
+    await queueDrawer
+      .getByRole('button', { name: 'Actualizar', exact: true })
+      .click()
 
-  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-  await queueDrawer
-    .getByRole('button', { name: 'Asignar turno', exact: true })
-    .click()
-  const unavailable = page.getByRole('dialog', {
-    name: 'Asignar turno',
-    exact: true,
-  })
-  await expect(
-    unavailable.getByText('No hay una mesa compatible disponible.', {
+    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
+    await queueDrawer
+      .getByRole('button', { name: 'Asignar turno', exact: true })
+      .click()
+    const unavailable = page.getByRole('dialog', {
+      name: 'Asignar turno',
       exact: true,
-    }),
-  ).toBeVisible()
-  await expect(
-    unavailable.getByRole('button', { name: 'Confirmar', exact: true }),
-  ).toBeDisabled()
-  await page.keyboard.press('Escape')
-  await expect(unavailable).toHaveCount(0)
+    })
+    await expect(
+      unavailable.getByText('No hay una mesa compatible disponible.', {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      unavailable.getByRole('button', { name: 'Confirmar', exact: true }),
+    ).toBeDisabled()
+    await page.keyboard.press('Escape')
+    await expect(unavailable).toHaveCount(0)
 
-  await queueDrawer
-    .getByRole('button', { name: 'Opciones de la lista', exact: true })
-    .click()
-  await page.getByRole('menuitem', { name: 'Mesa libre', exact: true }).click()
-  const releaseSheet = page.getByRole('dialog', { name: /Mesa libre/ })
-  await expect(releaseSheet).toBeVisible()
-  await releaseSheet
-    .getByRole('button', { name: 'Liberar una mesa', exact: true })
-    .click()
-  await expect(releaseSheet).toHaveCount(0)
+    const listOptions = queueDrawer.getByRole('button', {
+      name: 'Opciones de la lista',
+      exact: true,
+    })
+    await listOptions.click()
+    await expect(listOptions).toHaveAttribute('aria-expanded', 'true')
+    const listMenu = page.getByRole('menu')
+    await expect(listMenu).toBeVisible()
+    await listMenu
+      .getByRole('menuitem', { name: 'Mesa libre', exact: true })
+      .click()
+    const releaseSheet = page.getByRole('dialog', { name: /Mesa libre/ })
+    await expect(releaseSheet).toBeVisible()
+    const releaseMutation = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        response.url().includes(`/api/v1/staff/queues/${queue}/lifecycle`),
+    )
+    const releasedEntries = page.waitForResponse(async (response) => {
+      if (
+        response.request().method() !== 'GET' ||
+        !response.url().includes(`/api/v1/staff/queues/${queue}/entries`) ||
+        !response.ok()
+      )
+        return false
+      const rows = (await response.json()) as {
+        status?: string
+        assignment?: { available?: boolean }
+      }[]
+      return rows.some(
+        (entry) =>
+          entry.status === 'waiting' && entry.assignment?.available === true,
+      )
+    })
+    await releaseSheet
+      .getByRole('button', { name: 'Liberar una mesa', exact: true })
+      .click()
+    const releaseResponse = await releaseMutation
+    expect(releaseResponse.ok(), await releaseResponse.text()).toBeTruthy()
+    await expect(releaseSheet).toHaveCount(0)
+    const entriesResponse = await releasedEntries
+    const refreshedEntries = (await entriesResponse.json()) as {
+      status?: string
+      assignment?: { available?: boolean }
+    }[]
+    expect(
+      refreshedEntries.some(
+        (entry) =>
+          entry.status === 'waiting' && entry.assignment?.available === true,
+      ),
+    ).toBe(true)
 
-  // Refresh the visible queue state after the completed release; do not retry assignment on stale data.
-  await queueDrawer
-    .getByRole('button', { name: 'Actualizar', exact: true })
-    .click()
-  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-  await queueDrawer
-    .getByRole('button', { name: 'Asignar turno', exact: true })
-    .click()
-  const assignment = page.getByRole('dialog', {
-    name: 'Asignar turno',
-    exact: true,
-  })
-  const confirmAssignment = assignment.getByRole('button', {
-    name: 'Confirmar',
-    exact: true,
-  })
-  await expect(confirmAssignment).toBeEnabled()
-  await confirmAssignment.click()
-  await expect(
-    queueDrawer.getByText('Pendiente de llegada', { exact: true }),
-  ).toBeVisible()
+    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
+    await queueDrawer
+      .getByRole('button', { name: 'Asignar turno', exact: true })
+      .click()
+    const assignment = page.getByRole('dialog', {
+      name: 'Asignar turno',
+      exact: true,
+    })
+    const confirmAssignment = assignment.getByRole('button', {
+      name: 'Confirmar',
+      exact: true,
+    })
+    await expect(confirmAssignment).toBeEnabled()
+    await confirmAssignment.click()
+    await expect(
+      queueDrawer.getByText('Pendiente de llegada', { exact: true }),
+    ).toBeVisible()
 
-  await guest.reload()
-  await expect(guest.getByRole('heading', { name: '¡Es tu turno!' })).toBeVisible()
-  await expect(guest.getByText('Acércate al restaurante.')).toBeVisible()
-  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-  await queueDrawer
-    .getByRole('button', { name: 'Confirmar llegada', exact: true })
-    .click()
-  await queueDrawer
-    .getByRole('tab', { name: 'Completados', exact: true })
-    .click()
-  await expect(
-    queueDrawer.getByRole('tab', { name: 'Completados', exact: true }),
-  ).toHaveAttribute('aria-selected', 'true')
-  await expect(queueDrawer.getByText('En servicio', { exact: true })).toBeVisible()
-  await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-  await queueDrawer
-    .getByRole('button', { name: 'Liberar recurso', exact: true })
-    .click()
-  await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
-  await expect(
-    queueDrawer.getByText('Completado', { exact: true }),
-  ).toBeVisible()
-  await guest.reload()
-  await expect(
-    guest.getByRole('heading', { name: 'Se ha confirmado tu llegada' }),
-  ).toBeVisible()
+    await guest.reload()
+    await expect(guest.getByRole('heading', { name: '¡Es tu turno!' })).toBeVisible()
+    await expect(guest.getByText('Acércate al restaurante.')).toBeVisible()
+    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
+    await queueDrawer
+      .getByRole('button', { name: 'Confirmar llegada', exact: true })
+      .click()
+    await queueDrawer
+      .getByRole('tab', { name: 'Completados', exact: true })
+      .click()
+    await expect(
+      queueDrawer.getByRole('tab', { name: 'Completados', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
+    await expect(queueDrawer.getByText('En servicio', { exact: true })).toBeVisible()
+    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
+    await queueDrawer
+      .getByRole('button', { name: 'Liberar recurso', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
+    await expect(
+      queueDrawer.getByText('Completado', { exact: true }),
+    ).toBeVisible()
+    await guest.reload()
+    await expect(
+      guest.getByRole('heading', { name: 'Se ha confirmado tu llegada' }),
+    ).toBeVisible()
 
-  await queueDrawer.getByRole('tab', { name: 'Cancelados', exact: true }).click()
-  await expect(
-    queueDrawer.getByText('No hay turnos cancelados ni ausentes.'),
-  ).toBeVisible()
-  await queueDrawer.getByRole('tab', { name: 'Lista', exact: true }).click()
-  await expect(
-    queueDrawer
-      .getByRole('list', { name: 'Lista de espera' })
-      .getByRole('listitem'),
-  ).toHaveCount(0)
-  await guest.close()
-  await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
-  await expect(queueDrawer).toHaveCount(0)
-  await page.screenshot({
-    animations: 'disabled',
-    path: testInfo.outputPath('queue-completed.png'),
-    fullPage: true,
-  })
+    await queueDrawer.getByRole('tab', { name: 'Cancelados', exact: true }).click()
+    await expect(
+      queueDrawer.getByText('No hay turnos cancelados ni ausentes.'),
+    ).toBeVisible()
+    await queueDrawer.getByRole('tab', { name: 'Lista', exact: true }).click()
+    await expect(
+      queueDrawer
+        .getByRole('list', { name: 'Lista de espera' })
+        .getByRole('listitem'),
+    ).toHaveCount(0)
+    await queueDrawer.getByRole('button', { name: 'Volver', exact: true }).click()
+    await expect(queueDrawer).toHaveCount(0)
+    await page.screenshot({
+      animations: 'disabled',
+      path: testInfo.outputPath('queue-completed.png'),
+      fullPage: true,
+    })
+  } finally {
+    await guestContext.close()
+  }
 })
 
 test('owner updates account details, verifies a new email and changes password', async ({

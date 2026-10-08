@@ -1,15 +1,29 @@
-import { test, expect, newClientContext } from '../fixtures.js'
-import {
-  fillPublicWhatsAppConsent,
-  setup,
-  join,
-} from '../helpers/queue-actions.js'
+import { test, expect, newClientContext, type Page } from '../fixtures.js'
+import { setup, join } from '../helpers/queue-actions.js'
 import { selectCustomerLanguage } from '../helpers/customer-language.js'
 import { strictApiMocks } from '../helpers/api-mocks.js'
 import type {
   Entry,
   PublicService,
 } from '../../../packages/contracts/src/queue.js'
+
+async function assertWhatsAppConsentGate(page: Page) {
+  const phone = page.getByLabel(
+    /Teléfono con prefijo internacional|Phone number with international prefix/,
+  )
+  const consent = page.getByRole('checkbox')
+  const joinButton = page.getByRole('button', {
+    name: 'Ponerme en lista',
+  })
+
+  await expect(consent).not.toBeChecked()
+  await phone.fill('+34600000000')
+  await expect(consent).not.toBeChecked()
+  await expect(joinButton).toBeDisabled()
+  await consent.check()
+  await expect(consent).toBeChecked()
+  await expect(joinButton).toBeEnabled()
+}
 
 test('customer joins from the venue, recovers, edits, yields and cancels against the real API', async ({
   page,
@@ -70,7 +84,7 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
     ).toBeVisible()
     await client.getByRole('link', { name: /Restaurant/ }).click()
     await client.getByLabel('Nombre', { exact: true }).fill('María Cliente')
-    await fillPublicWhatsAppConsent(client)
+    await assertWhatsAppConsentGate(client)
     await client.getByRole('button', { name: 'Ponerme en lista' }).click()
     await expect(client).toHaveURL(/\/t\//)
     await expect(client.getByText('4 turnos')).toBeVisible()
@@ -651,13 +665,7 @@ for (const type of ['reception', 'pool'] as const) {
           .getByRole('radio', { name: 'Check-in', exact: true })
           .click()
       } else await expect(client.getByRole('radio')).toHaveCount(0)
-      await expect(
-        client.getByRole('button', { name: 'Ponerme en lista' }),
-      ).toBeDisabled()
-      await fillPublicWhatsAppConsent(client)
-      await expect(
-        client.getByRole('button', { name: 'Ponerme en lista' }),
-      ).toBeEnabled()
+      await assertWhatsAppConsentGate(client)
       await client.getByRole('heading', { name: 'Introduce tus datos' }).click()
       for (const width of [390, 1280]) {
         await client.setViewportSize({ width, height: 844 })

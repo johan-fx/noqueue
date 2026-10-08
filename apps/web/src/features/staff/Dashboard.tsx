@@ -70,7 +70,7 @@ export function Dashboard(props: DashboardProps) {
   const [loading, setLoading] = useState(true)
   const savingRef = useRef(false)
   const refreshSequence = useRef(0)
-  const refreshReaders = useRef(0)
+  const queueRefreshSequence = useRef(0)
   const refreshPaused = useRef(false)
   function cardBusy(value: boolean) {
     refreshPaused.current = value
@@ -136,17 +136,22 @@ export function Dashboard(props: DashboardProps) {
   } | null>(null)
   const commandLock = useRef(false)
   const commandTrigger = useRef<HTMLElement | null>(null)
-  const commandRequest = useRef<{ body: string; key: string } | null>(null)
+  const commandRequest = useRef<
+    { body: string; key: string; intent?: string } | null
+  >(null)
   const [commandError, setCommandError] = useState('')
   const [commandStale, setCommandStale] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
   const [arrivalMode, setArrivalMode] = useState<'notify' | 'present'>('notify')
   const [pending, setPending] = useState<{
     queueId: string
-    entry: StaffEntry
+    entryId: string
     action: EntryCommand['action']
     key: string
   } | null>(null)
+  const queuesRef = useRef<QueueSummary[]>([])
+  const entriesRef = useRef<StaffEntry[]>([])
+  const selectedRef = useRef('')
   const permissions: readonly Capability[] =
     props.mode === 'commercial'
       ? ['queue.read', 'queue.configure', 'members.manage']
@@ -154,13 +159,61 @@ export function Dashboard(props: DashboardProps) {
   const queueLabel =
     props.mode === 'commercial' ? 'Ver lista' : 'Gestionar lista'
   const queue = queues.find((q) => q.id === selected)
+  const pendingQueue = pending
+    ? queues.find((item) => item.id === pending.queueId)
+    : undefined
+  const pendingEntry =
+    pending?.queueId === selected
+      ? entries.find((entry) => entry.id === pending.entryId)
+      : undefined
+  const pendingActionAllowed =
+    !!pendingEntry &&
+    !!pending &&
+    allowsEntryAction(pendingEntry, pending.queueId, pending.action)
+  const pendingActionUnavailable =
+    !!pending && (!pendingEntry || !pendingActionAllowed)
+  function commitQueues(rows: QueueSummary[]) {
+    queuesRef.current = rows
+    setQueues(rows)
+  }
+  function commitEntries(rows: StaffEntry[]) {
+    entriesRef.current = rows
+    setEntries(rows)
+  }
+  function selectQueue(queueId: string) {
+    const changed = selectedRef.current !== queueId
+    selectedRef.current = queueId
+    if (changed) {
+      refreshSequence.current++
+      queueRefreshSequence.current++
+      commitEntries([])
+      setLastSync('')
+    }
+    setPending(null)
+    setOverrideReason('')
+    setArrivalMode('notify')
+    setCommandError('')
+    setCommandStale(false)
+    commandRequest.current = null
+    setSelected(queueId)
+  }
+  function allowsEntryAction(
+    entry: StaffEntry,
+    queueId: string,
+    action: EntryCommand['action'],
+  ) {
+    const targetQueue = queuesRef.current.find((item) => item.id === queueId)
+    return (
+      entry.allowedActions ?? entryActions(entry.status, targetQueue?.config.type)
+    ).includes(action)
+  }
   useEffect(() => {
     let live = true
     api<QueueSummary[]>(`/venues/${venue.id}/queues`)
       .then((rows) => {
         if (live) {
-          setQueues(rows)
-          setSelected(rows[0]?.id ?? '')
+          commitQueues(rows)
+          selectQueue(rows[0]?.id ?? '')
         }
       })
       .catch((e) => {
@@ -175,20 +228,21 @@ export function Dashboard(props: DashboardProps) {
   }, [venue.id])
   useEffect(() => {
     if (!selected) return
+    const queueId = selected
+    if (selectedRef.current !== queueId) return
     let live = true
     async function refresh() {
-      if (refreshPaused.current || refreshReaders.current) return
+      if (refreshPaused.current) return
       const sequence = ++refreshSequence.current
-      refreshReaders.current++
       try {
-        const rows = await api<StaffEntry[]>(`/queues/${selected}/entries`)
+        const rows = await api<StaffEntry[]>(`/queues/${queueId}/entries`)
         const summaries = await api<QueueSummary[]>(
           `/venues/${venue.id}/queues`,
         )
         const counts = await Promise.all(
           summaries.map(async (summary) => {
             const waiting =
-              summary.id === selected
+              summary.id === queueId
                 ? rows
                 : await api<StaffEntry[]>(`/queues/${summary.id}/entries`)
             return [
@@ -197,17 +251,23 @@ export function Dashboard(props: DashboardProps) {
             ] as const
           }),
         )
-        if (live && sequence === refreshSequence.current) {
+        if (
+          live &&
+          sequence === refreshSequence.current &&
+          selectedRef.current === queueId
+        ) {
           setWaitingCounts(Object.fromEntries(counts))
-          setQueues(summaries)
-          setEntries(rows)
+          commitQueues(summaries)
+          commitEntries(rows)
           setLastSync(new Date().toLocaleTimeString())
         }
       } catch (e) {
-        if (live && sequence === refreshSequence.current)
+        if (
+          live &&
+          sequence === refreshSequence.current &&
+          selectedRef.current === queueId
+        )
           setError(errorMessage(e))
-      } finally {
-        refreshReaders.current--
       }
     }
     void refresh()
@@ -218,11 +278,12 @@ export function Dashboard(props: DashboardProps) {
     }
   }, [selected, venue.id])
   async function refresh() {
+    const queueId = selectedRef.current
+    if (!queueId || queueId !== selected) return
     const sequence = ++refreshSequence.current
-    refreshReaders.current++
     try {
       const [rows, qs] = await Promise.all([
-        api<StaffEntry[]>(`/queues/${selected}/entries`),
+        api<StaffEntry[]>(`/queues/${queueId}/entries`),
         api<QueueSummary[]>(`/venues/${venue.id}/queues`),
       ])
       const counts = await Promise.all(
@@ -230,28 +291,50 @@ export function Dashboard(props: DashboardProps) {
           async (summary) =>
             [
               summary.id,
-              (summary.id === selected
+              (summary.id === queueId
                 ? rows
                 : await api<StaffEntry[]>(`/queues/${summary.id}/entries`)
               ).filter((entry) => entry.status === 'waiting').length,
             ] as const,
         ),
       )
-      if (sequence !== refreshSequence.current) return
+      if (
+        sequence !== refreshSequence.current ||
+        selectedRef.current !== queueId ||
+        selected !== queueId
+      )
+        return
       setWaitingCounts(Object.fromEntries(counts))
-      setEntries(rows)
-      setQueues(qs)
+      commitEntries(rows)
+      commitQueues(qs)
       setError('')
-    } finally {
-      refreshReaders.current--
+    } catch (error) {
+      if (
+        sequence === refreshSequence.current &&
+        selectedRef.current === queueId &&
+        selected === queueId
+      )
+        throw error
     }
   }
   async function refreshQueues() {
+    const queueId = selectedRef.current
+    const sequence = ++queueRefreshSequence.current
     try {
-      setQueues(await api<QueueSummary[]>(`/venues/${venue.id}/queues`))
+      const summaries = await api<QueueSummary[]>(`/venues/${venue.id}/queues`)
+      if (
+        sequence !== queueRefreshSequence.current ||
+        selectedRef.current !== queueId
+      )
+        return
+      commitQueues(summaries)
       setError('')
     } catch (e) {
-      setError(`No se pudo actualizar el listado. ${errorMessage(e)}`)
+      if (
+        sequence === queueRefreshSequence.current &&
+        selectedRef.current === queueId
+      )
+        setError(`No se pudo actualizar el listado. ${errorMessage(e)}`)
     }
   }
   async function saveService(config: ServiceInput) {
@@ -270,9 +353,7 @@ export function Dashboard(props: DashboardProps) {
           config,
           creationRequest.current.key,
         )
-        setEntries([])
-        setLastSync('')
-        setSelected(result.id)
+        selectQueue(result.id)
       } else if (drawer === 'edit' && queue) {
         const noticePolicyChanged =
           (config.approachTurns ?? 2) !== (queue.config.approachTurns ?? 2) ||
@@ -311,7 +392,7 @@ export function Dashboard(props: DashboardProps) {
     }
   }
   function selectCommand(entry: StaffEntry, action: EntryCommand['action']) {
-    if (!queue || commandLock.current) return
+    if (!queue || commandLock.current || selectedRef.current !== queue.id) return
     const trigger = document.activeElement as HTMLElement
     // Entry actions collapse their tray before opening confirmation. Return to
     // the persistent disclosure, not an inert or unmounted action button.
@@ -332,7 +413,12 @@ export function Dashboard(props: DashboardProps) {
       })
       return
     }
-    setPending({ queueId: queue.id, entry, action, key: crypto.randomUUID() })
+    setPending({
+      queueId: queue.id,
+      entryId: entry.id,
+      action,
+      key: crypto.randomUUID(),
+    })
   }
   async function directCommand(input: QueueCommand) {
     if (!queue || commandLock.current) return
@@ -369,33 +455,67 @@ export function Dashboard(props: DashboardProps) {
   }
   async function command() {
     if (!pending || commandLock.current || commandStale) return
+    const snapshot = pending
+    const currentEntry = entriesRef.current.find(
+      (entry) => entry.id === snapshot.entryId,
+    )
+    if (
+      selectedRef.current !== snapshot.queueId ||
+      !currentEntry ||
+      !allowsEntryAction(currentEntry, snapshot.queueId, snapshot.action)
+    ) {
+      setCommandStale(true)
+      setCommandError(
+        'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.',
+      )
+      return
+    }
+    if (
+      snapshot.action === 'call' &&
+      currentEntry.assignment?.available === false
+    ) {
+      setCommandError('No hay una mesa compatible disponible.')
+      return
+    }
     commandLock.current = true
     setBusy(true)
     setCommandError('')
-    const snapshot = pending
+    const reason = overrideReason.trim()
     const input = {
-      entryId: snapshot.entry.id,
-      version: snapshot.entry.version,
+      entryId: currentEntry.id,
+      version: currentEntry.version,
       action: snapshot.action,
       ...(snapshot.action === 'call'
-        ? { arrivalMode, assignmentToken: snapshot.entry.assignment?.token }
+        ? { arrivalMode, assignmentToken: currentEntry.assignment?.token }
         : {}),
-      ...(['call', 'restore'].includes(snapshot.action) && overrideReason.trim()
-        ? { overrideReason: overrideReason.trim() }
+      ...(['call', 'restore'].includes(snapshot.action) && reason
+        ? { overrideReason: reason }
         : {}),
     }
     const body = JSON.stringify(input)
-    if (commandRequest.current?.body !== body)
+    const intent = JSON.stringify({
+      queueId: snapshot.queueId,
+      entryId: currentEntry.id,
+      action: snapshot.action,
+      ...(snapshot.action === 'call' ? { arrivalMode } : {}),
+      ...(['call', 'restore'].includes(snapshot.action) && reason
+        ? { overrideReason: reason }
+        : {}),
+    })
+    if (commandRequest.current?.intent !== intent)
       commandRequest.current = {
         body,
         key: commandRequest.current ? crypto.randomUUID() : snapshot.key,
+        intent,
       }
+    const request = commandRequest.current!
+    const requestInput = JSON.parse(request.body) as typeof input
     try {
       await api(
         `/queues/${snapshot.queueId}/commands`,
         'POST',
-        input,
-        commandRequest.current.key,
+        requestInput,
+        request.key,
       )
       setPending(null)
       setOverrideReason('')
@@ -403,24 +523,21 @@ export function Dashboard(props: DashboardProps) {
         setError(`Acción guardada. ${errorMessage(error)}`),
       )
     } catch (e) {
-      setCommandError(errorMessage(e))
+      if (selectedRef.current === snapshot.queueId)
+        setCommandError(errorMessage(e))
       if (e instanceof ApiError && e.status === 409) {
         setCommandStale(true)
+        commandRequest.current = null
         try {
-          const rows = await api<StaffEntry[]>(
-            `/queues/${snapshot.queueId}/entries`,
+          await refresh()
+          if (selectedRef.current !== snapshot.queueId) return
+          const entry = entriesRef.current.find(
+            (row) => row.id === snapshot.entryId,
           )
-          setEntries(rows)
-          const entry = rows.find((row) => row.id === snapshot.entry.id)
           if (
             entry &&
-            (
-              entry.allowedActions ??
-              entryActions(entry.status, queue?.config.type)
-            ).includes(snapshot.action)
+            allowsEntryAction(entry, snapshot.queueId, snapshot.action)
           ) {
-            setPending({ ...snapshot, entry, key: crypto.randomUUID() })
-            commandRequest.current = null
             setCommandStale(false)
             setCommandError(
               `${errorMessage(
@@ -432,12 +549,12 @@ export function Dashboard(props: DashboardProps) {
               'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.',
             )
         } catch {
-          setCommandError(
-            'No se pudo actualizar el turno. Cierra esta ventana y actualiza la lista antes de continuar.',
-          )
+          if (selectedRef.current === snapshot.queueId)
+            setCommandError(
+              'No se pudo actualizar el turno. Cierra esta ventana y actualiza la lista antes de continuar.',
+            )
         }
-      }
-      await refresh().catch(() => undefined)
+      } else await refresh().catch(() => undefined)
     } finally {
       commandLock.current = false
       setBusy(false)
@@ -537,21 +654,11 @@ export function Dashboard(props: DashboardProps) {
                       onBusyChange={cardBusy}
                       onSaved={refresh}
                       onView={(trigger) => {
-                        if (selected !== service.id) {
-                          setEntries([])
-                          setLastSync('')
-                        }
-                        setSelected(service.id)
-                        setPending(null)
+                        selectQueue(service.id)
                         openDrawer('queue', trigger)
                       }}
                       onConfigure={(trigger) => {
-                        if (selected !== service.id) {
-                          setEntries([])
-                          setLastSync('')
-                        }
-                        setSelected(service.id)
-                        setPending(null)
+                        selectQueue(service.id)
                         openDrawer('edit', trigger)
                       }}
                       onAdvanced={(trigger) =>
@@ -802,43 +909,46 @@ export function Dashboard(props: DashboardProps) {
               <div className="space-y-2 pb-12">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xl">
-                    {pending?.entry.displayName ||
-                      `Turno ${pending?.entry.code}`}
+                    {pendingEntry?.displayName ||
+                      (pendingEntry ? `Turno ${pendingEntry.code}` : 'Turno')}
                   </p>
                   <p className="text-sm">
                     <span className="text-muted-foreground">Turno: </span>
-                    {pending?.entry.code}
+                    {pendingEntry?.code}
                   </p>
                 </div>
-                {queue?.config.type === 'restaurant' && (
+                {pendingQueue?.config.type === 'restaurant' && pendingEntry && (
                   <p className="flex items-center gap-1 text-xs text-muted-foreground">
                     <UsersIcon className="size-4" aria-hidden="true" />
-                    {pending?.entry.partySize} personas
-                    {pending?.entry.space
-                      ? ` · ${pending.entry.space.name}`
+                    {pendingEntry.partySize} personas
+                    {pendingEntry.space
+                      ? ` · ${pendingEntry.space.name}`
                       : ''}
                   </p>
                 )}
-                {queue?.config.type === 'reception' &&
-                  pending?.entry.receptionService && (
+                {pendingQueue?.config.type === 'reception' &&
+                  pendingEntry?.receptionService && (
                     <p className="text-xs text-muted-foreground">
-                      {receptionLabels[pending.entry.receptionService]}
+                      {receptionLabels[pendingEntry.receptionService]}
                     </p>
                   )}
               </div>
-              {commandError && (
+              {(commandError || pendingActionUnavailable) && (
                 <p role="alert" className="text-destructive">
-                  {commandError}
+                  {commandError ||
+                    'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.'}
                 </p>
               )}
               {pending?.action === 'call' && (
                 <div className="space-y-4">
                   <p>
-                    {pending.entry.assignment?.available === false
+                    {!pendingEntry
+                      ? 'El turno ya no permite esta acción.'
+                      : pendingEntry.assignment?.available === false
                       ? 'No hay una mesa compatible disponible.'
                       : `Disponibilidad compatible${
-                          pending.entry.assignment?.spaceName
-                            ? ` · ${pending.entry.assignment.spaceName}`
+                          pendingEntry.assignment?.spaceName
+                            ? ` · ${pendingEntry.assignment.spaceName}`
                             : ''
                         }. El sistema asignará la mesa.`}
                   </p>
@@ -855,7 +965,7 @@ export function Dashboard(props: DashboardProps) {
                       Cliente ya presente
                     </label>
                   </div>
-                  {pending.entry.assignment?.priorityRequired && (
+                  {pendingEntry?.assignment?.priorityRequired && (
                     <label className="space-y-2 text-sm">
                       Motivo de prioridad (obligatorio)
                       <input
@@ -883,9 +993,10 @@ export function Dashboard(props: DashboardProps) {
                   disabled={
                     busy ||
                     commandStale ||
+                    pendingActionUnavailable ||
                     (pending?.action === 'call' &&
-                      (pending.entry.assignment?.available === false ||
-                        (!!pending.entry.assignment?.priorityRequired &&
+                      (pendingEntry?.assignment?.available === false ||
+                        (!!pendingEntry?.assignment?.priorityRequired &&
                           overrideReason.trim().length < 3)))
                   }
                   onClick={() => void command()}

@@ -335,6 +335,41 @@ it('declares full without any occupancy inputs and releases a single configured 
   expect(screen.queryByLabelText('Grupo de mesas')).not.toBeInTheDocument()
 })
 
+it('closes after a committed release even when the follow-up refresh fails', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('opening-context')
+      ? {
+          ...context,
+          groups: [{ ...context.groups[0]!, occupied: 1 }],
+        }
+      : { ok: true },
+  )
+  let unmount = () => {}
+  const onClose = vi.fn(() => unmount())
+  const onSaved = vi.fn().mockRejectedValue(new Error('refresh failed'))
+  const view = render(
+    <QueueLifecycleSheet
+      queueId="q"
+      name="Restaurant"
+      action="release_unit"
+      onClose={onClose}
+      onSaved={onSaved}
+    />,
+  )
+  unmount = view.unmount
+
+  fireEvent.click(await screen.findByRole('button', { name: 'Liberar una mesa' }))
+
+  await waitFor(() => expect(onSaved).toHaveBeenCalledTimes(1))
+  expect(onClose).toHaveBeenCalledTimes(1)
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(
+    vi.mocked(api).mock.calls.filter(
+      ([path, method]) => path === '/queues/q/lifecycle' && method === 'POST',
+    ),
+  ).toHaveLength(1)
+})
+
 it('allows confirming inventory in advanced settings without activating an inactive list', async () => {
   vi.mocked(api).mockResolvedValue(context)
   render(

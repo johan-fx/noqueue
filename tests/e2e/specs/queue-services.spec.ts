@@ -1,6 +1,6 @@
 import { resolveFixtureLocation } from '../helpers/location.js'
 import { fillPublicWhatsAppConsent } from '../helpers/queue-actions.js'
-import { test, expect, type Page, type Locator } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '../fixtures.js'
 type QueueSummary = { id: string; config: { type: string } }
 type StaffEntry = { id: string; code: string }
 
@@ -122,6 +122,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     await page.request.get(`/api/v1/staff/venues/${venueId}/queues`)
   ).json()) as QueueSummary[]
   for (const q of queues) {
+    if (q.config.type !== 'restaurant') continue
     const context = (await (
       await page.request.get(`/api/v1/staff/queues/${q.id}/opening-context`)
     ).json()) as {
@@ -133,48 +134,57 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
       {
         headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
         data: {
-          ...(q.config.type === 'restaurant'
-            ? { action: 'declare_full' }
-            : {
-                action: 'open',
-                groups: context.groups.map((g) => ({ ...g, occupied: 0 })),
-              }),
+          action: 'declare_full',
           contextToken: context.contextToken,
         },
       },
     )
     expect(response.ok(), await response.text()).toBeTruthy()
-    if (q.config.type === 'restaurant')
-      for (const group of context.groups) {
-        const current = (await (
-          await page.request.get(`/api/v1/staff/queues/${q.id}/opening-context`)
-        ).json()) as { contextToken: string }
-        const freed = await page.request.post(
-          `/api/v1/staff/queues/${q.id}/lifecycle`,
-          {
-            headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
-            data: {
-              action: 'occupancy',
-              contextToken: current.contextToken,
-              group: { ...group, occupied: 0 },
-              reason: 'Fixture physical capacity update',
-            },
+    for (const group of context.groups) {
+      const current = (await (
+        await page.request.get(`/api/v1/staff/queues/${q.id}/opening-context`)
+      ).json()) as { contextToken: string }
+      const freed = await page.request.post(
+        `/api/v1/staff/queues/${q.id}/lifecycle`,
+        {
+          headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+          data: {
+            action: 'occupancy',
+            contextToken: current.contextToken,
+            group: { ...group, occupied: 0 },
+            reason: 'Fixture physical capacity update',
           },
-        )
-        expect(freed.ok(), await freed.text()).toBeTruthy()
-      }
+        },
+      )
+      expect(freed.ok(), await freed.text()).toBeTruthy()
+    }
   }
   await page.reload()
   const restaurant = queues.find((q) => q.config.type === 'restaurant')!,
     reception = queues.find((q) => q.config.type === 'reception')!,
     pool = queues.find((q) => q.config.type === 'pool')!
+  for (const quick of [reception, pool]) {
+    await expect
+      .poll(
+        async () => {
+          const response = await page.request.get(
+            `/api/v1/staff/queues/${quick.id}/opening-context`,
+          )
+          if (!response.ok()) return `http-${response.status()}`
+          const context = (await response.json()) as { queueState?: string }
+          return context.queueState
+        },
+        { timeout: 15_000 },
+      )
+      .toBe('active')
+  }
   const guest = await page.context().newPage()
   await guest.goto(`/q/${restaurant.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('María López')
   await fillPublicWhatsAppConsent(guest)
   for (let i = 0; i < 3; i++)
     await guest.getByRole('button', { name: 'Más comensales' }).click()
-  await guest.getByRole('radio', { name: 'Terraza' }).check()
+  await guest.getByRole('radio', { name: 'Terraza' }).click()
   await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)
   await page
@@ -328,7 +338,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await guest.goto(`/q/${reception.id}`)
   await guest.getByLabel('Nombre', { exact: true }).fill('Ana Recepción')
   await fillPublicWhatsAppConsent(guest)
-  await guest.getByRole('radio', { name: 'Check-out', exact: true }).check()
+  await guest.getByRole('radio', { name: 'Check-out', exact: true }).click()
   await expect(guest.getByLabel('Espacio', { exact: true })).toHaveCount(0)
   await guest.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(guest).toHaveURL(/\/t\//)

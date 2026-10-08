@@ -25,6 +25,10 @@ it('requires a name and defaults to enabled check-in with a single-person payloa
   expect(
     screen.getByRole('button', { name: 'Join waiting list' }),
   ).toBeDisabled()
+  expect(
+    screen.getByRole('radiogroup', { name: 'What do you need to do?' }),
+  ).toHaveAttribute('data-slot', 'radio-group')
+  expect(screen.getByRole('checkbox')).toHaveAttribute('data-slot', 'checkbox')
   expect(screen.getByRole('radio', { name: 'Check-in' })).toBeChecked()
   fireEvent.change(screen.getByLabelText('Name'), {
     target: { value: ' Guest ' },

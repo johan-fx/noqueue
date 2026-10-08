@@ -194,7 +194,10 @@ it('changes only the selected space on explicit save and disables incompatible r
   fireEvent.click(screen.getByRole('button', { name: 'Modificar' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Modificar sala' }))
   expect(screen.getByRole('button', { name: 'Guardar cambios' })).toBeDisabled()
-  expect(screen.getByRole('radio', { name: 'Barra' })).toBeDisabled()
+  expect(screen.getByRole('radio', { name: 'Barra' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
   fireEvent.click(screen.getByRole('radio', { name: 'Opción más rápida' }))
   expect(fetcher).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: 'Guardar cambios' }))

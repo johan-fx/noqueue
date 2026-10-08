@@ -8,6 +8,11 @@ import {
 import { Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  RadioGroup,
+  RadioGroupIndicator,
+  RadioGroupItem,
+} from '@/components/ui/radio-group'
 import { CustomerFooter, type Locale } from './shared'
 import {
   PublicWhatsAppConsentFields,
@@ -128,33 +133,33 @@ export function ServiceForm({
               <legend className="mb-4 font-medium leading-none">
                 {es ? '¿Qué tienes que hacer?' : 'What do you need to do?'}
               </legend>
-              <div className="grid grid-cols-2 gap-2">
+              <RadioGroup
+                aria-label={es ? '¿Qué tienes que hacer?' : 'What do you need to do?'}
+                className="grid grid-cols-2 gap-2"
+                name="reception-service"
+                value={selected}
+                onValueChange={(value) => {
+                  setTask(value as ServiceJoin['receptionService'])
+                  request.current = null
+                  setHasAttempt(false)
+                }}
+                disabled={busy || disabled}
+              >
                 {service.receptionServices.map((value) => (
-                  <label
+                  <RadioGroupItem
                     key={value}
-                    className={`relative flex min-h-12 cursor-pointer items-center justify-between gap-1 rounded-lg border px-4 py-2 shadow-xs has-focus-visible:ring-2 has-disabled:cursor-not-allowed has-disabled:opacity-40 ${
+                    value={value}
+                    className={`relative flex min-h-12 w-full cursor-pointer items-center justify-between gap-1 rounded-lg border px-4 py-2 shadow-xs ${
                       selected === value ? 'border-gray-800' : 'border-input'
                     }`}
                   >
-                    <input
-                      type="radio"
-                      className="absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
-                      name="reception-service"
-                      value={value}
-                      checked={selected === value}
-                      onChange={() => {
-                        setTask(value)
-                        request.current = null
-                        setHasAttempt(false)
-                      }}
-                    />
                     <span className="text-base leading-5">{labels[value]}</span>
-                    {selected === value && (
+                    <RadioGroupIndicator>
                       <Check aria-hidden="true" className="size-6 shrink-0" />
-                    )}
-                  </label>
+                    </RadioGroupIndicator>
+                  </RadioGroupItem>
                 ))}
-              </div>
+              </RadioGroup>
             </fieldset>
           )}
           {unavailable && (

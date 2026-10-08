@@ -1,5 +1,5 @@
 import { resolveFixtureLocation } from '../helpers/location.js'
-import { test, expect } from '@playwright/test'
+import { test, expect } from '../fixtures.js'
 test('mobile full declaration, quick release, pause, nested advanced keyboard tabs and desktop layout', async ({
   page,
   request,
@@ -140,10 +140,18 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
   await sheet.getByRole('combobox', { name: 'Grupo de mesas' }).click()
   await page.getByRole('option', { name: 'Terraza · 4 plazas' }).click()
   await expect(sheet).toBeVisible()
+  const releaseResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' &&
+      response.url().endsWith(`/api/v1/staff/queues/${queueId}/lifecycle`),
+  )
   await sheet
     .getByRole('button', { name: 'Liberar una mesa', exact: true })
     .click()
-  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 1])
+  expect((await releaseResponse).ok()).toBeTruthy()
+  await expect
+    .poll(async () => (await context()).groups.map((g) => g.occupied))
+    .toEqual([1, 1])
   await expect(gear).toBeFocused()
   const added = await page.request.post(
     `/api/v1/public/services/${queueId}/entries`,

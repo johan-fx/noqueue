@@ -1,4 +1,4 @@
-import { test, expect, type APIRequestContext } from '@playwright/test'
+import { test, expect, type APIRequestContext } from '../fixtures.js'
 import { resolveFixtureLocation } from '../helpers/location.js'
 import { selectCustomerLanguage } from '../helpers/customer-language.js'
 test.use({ serviceWorkers: 'block' })
@@ -102,7 +102,6 @@ test('anonymous home, exact service discovery, location consent, filtered return
 }, info) => {
   test.setTimeout(90000)
   const fixture = await catalogue(request, baseURL!)
-  await context.setExtraHTTPHeaders({ 'CF-Connecting-IP': crypto.randomUUID() })
   await context.grantPermissions(['geolocation'])
   await context.setGeolocation({ latitude: 36.72016, longitude: -4.42034 })
   await page.setViewportSize({ width: 390, height: 844 })
@@ -303,7 +302,6 @@ test('denied location and camera keep public search available', async ({
   page,
   context,
 }, info) => {
-  await context.setExtraHTTPHeaders({ 'CF-Connecting-IP': crypto.randomUUID() })
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'geolocation', {
       value: {

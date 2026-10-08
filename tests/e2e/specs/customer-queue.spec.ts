@@ -1,10 +1,11 @@
-import { test, expect } from '@playwright/test'
+import { test, expect, newClientContext } from '../fixtures.js'
 import {
   fillPublicWhatsAppConsent,
   setup,
   join,
 } from '../helpers/queue-actions.js'
 import { selectCustomerLanguage } from '../helpers/customer-language.js'
+import { strictApiMocks } from '../helpers/api-mocks.js'
 import type {
   Entry,
   PublicService,
@@ -15,13 +16,12 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
   request,
   browser,
   baseURL,
-}) => {
+}, info) => {
   test.setTimeout(90000)
   const t = await setup(page, request, baseURL!)
-  const guest = await browser.newContext({
+  const guest = await newClientContext(browser, info, 'customer-guest', {
     baseURL: baseURL!,
     viewport: { width: 390, height: 844 },
-    extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
   })
   try {
     const client = await guest.newPage()
@@ -168,14 +168,13 @@ test('a lost command response retries the same browser intent without applying i
   request,
   browser,
   baseURL,
-}) => {
+}, info) => {
   const t = await setup(page, request, baseURL!)
-  const guest = await browser.newContext({
+  const guest = await newClientContext(browser, info, 'response-loss-guest', {
     baseURL: baseURL!,
     // Intercept transport only; both POST attempts execute against the real server.
     serviceWorkers: 'block',
     viewport: { width: 390, height: 844 },
-    extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
   })
   try {
     const client = await guest.newPage()
@@ -267,12 +266,19 @@ test.describe('visual customer states', () => {
     const token = 'a'.repeat(64)
     let phase: NonNullable<Entry['customer']>['phase'] = 'waiting'
     let offline = false
-    await page.route('**/api/v1/public/services/restaurant', (route) =>
-      route.fulfill({ json: service }),
-    )
-    await page.route('**/api/v1/public/venues/venue/services', (route) =>
-      route.fulfill({
-        json: {
+    const mocks = await strictApiMocks(page, [
+      {
+        method: 'GET',
+        path: '/api/v1/public/services/restaurant',
+        expectedHits: { min: 1 },
+        respond: () => ({ json: service }),
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/public/venues/venue/services',
+        expectedHits: { min: 1 },
+        respond: () => ({
+          json: {
           id: 'venue',
           name: 'Hotel Miramar',
           services: [
@@ -294,14 +300,18 @@ test.describe('visual customer states', () => {
               averageWaitMinutes: 20,
             },
           ],
-        },
-      }),
-    )
-    await page.route(`**/api/v1/public/entries/${token}`, (route) =>
-      offline
-        ? route.abort()
-        : route.fulfill({
-            json: {
+          },
+        }),
+      },
+      {
+        method: 'GET',
+        path: `/api/v1/public/entries/${token}`,
+        expectedHits: { min: 1 },
+        respond: () =>
+          offline
+            ? { json: null, abort: true }
+            : {
+                json: {
               code: 'XP03',
               status:
                 phase === 'arrived'
@@ -331,9 +341,10 @@ test.describe('visual customer states', () => {
                     ? ['update', 'cancel', 'yield']
                     : [],
               },
-            },
-          }),
-    )
+                },
+              },
+      },
+    ])
     const capture = async (name: string) => {
       await page.mouse.move(0, 0)
       await page.evaluate(async () => {
@@ -360,7 +371,7 @@ test.describe('visual customer states', () => {
     await page.getByLabel('Nombre', { exact: true }).fill('María López')
     for (let i = 0; i < 3; i++)
       await page.getByRole('button', { name: 'Más comensales' }).click()
-    await page.getByRole('radio', { name: 'Terraza' }).check()
+    await page.getByRole('radio', { name: 'Terraza' }).click()
     await capture('join')
     for (const next of [
       'waiting',
@@ -470,6 +481,7 @@ test.describe('visual customer states', () => {
     offline = false
     await page.getByRole('button', { name: 'Reintentar' }).click()
     await expect(page.getByRole('alert')).toHaveCount(0)
+    await mocks.assertComplete()
   })
   test('yield confirmation keeps the server position and phase with responsive feedback', async ({
     page,
@@ -478,9 +490,13 @@ test.describe('visual customer states', () => {
     const token = 'b'.repeat(64)
     let yielded = false
     let phase: 'waiting' | 'approaching' | 'called' = 'approaching'
-    await page.route(`**/api/v1/public/entries/${token}`, (route) =>
-      route.fulfill({
-        json: {
+    const mocks = await strictApiMocks(page, [
+      {
+        method: 'GET',
+        path: `/api/v1/public/entries/${token}`,
+        expectedHits: { min: 1 },
+        respond: () => ({
+          json: {
           code: 'XP03',
           position: yielded ? 7 : 3,
           etaMinutes: yielded ? 35 : 10,
@@ -502,18 +518,24 @@ test.describe('visual customer states', () => {
             phase,
             actions: phase === 'called' ? [] : ['update', 'cancel', 'yield'],
           },
+          },
+        }),
+      },
+      {
+        method: 'POST',
+        path: `/api/v1/public/entries/${token}/commands`,
+        expectedHits: { min: 2, max: 2 },
+        respond: (request) => {
+          expect(request.postDataJSON()).toEqual({
+            action: 'yield',
+            version: 0,
+          })
+          yielded = true
+          phase = 'waiting'
+          return { json: { ok: true } }
         },
-      }),
-    )
-    await page.route(`**/api/v1/public/entries/${token}/commands`, (route) => {
-      expect(route.request().postDataJSON()).toEqual({
-        action: 'yield',
-        version: 0,
-      })
-      yielded = true
-      phase = 'waiting'
-      return route.fulfill({ json: { ok: true } })
-    })
+      },
+    ])
     const capture = async (name: string) => {
       await page.mouse.move(0, 0)
       await page.evaluate(async () => {
@@ -559,6 +581,7 @@ test.describe('visual customer states', () => {
       await expect(page.getByText('6 turnos')).toBeVisible()
       await expect(page.getByText('Has pasado turno')).toHaveCount(0)
     }
+    await mocks.assertComplete()
   })
 })
 
@@ -595,25 +618,22 @@ for (const type of ['reception', 'pool'] as const) {
     )
     expect(created.ok(), await created.text()).toBeTruthy()
     const { id } = (await created.json()) as { id: string }
-    const context = await (
-      await page.request.get(`/api/v1/staff/queues/${id}/opening-context`)
-    ).json()
-    const opened = await page.request.post(
-      `/api/v1/staff/queues/${id}/lifecycle`,
-      {
-        headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
-        data: {
-          action: 'open',
-          contextToken: context.contextToken,
-          groups: [],
-        },
-      },
-    )
-    expect(opened.ok(), await opened.text()).toBeTruthy()
-    const guest = await browser.newContext({
+    await expect
+      .poll(async () => {
+        const response = await page.request.get(
+          `/api/v1/staff/queues/${id}/opening-context`,
+        )
+        if (!response.ok()) return false
+        const state = (await response.json()) as {
+          open: boolean
+          queueState: string
+        }
+        return state.open && state.queueState === 'active'
+      })
+      .toBe(true)
+    const guest = await newClientContext(browser, testInfo, 'service-guest', {
       baseURL: baseURL!,
       viewport: { width: 390, height: 844 },
-      extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
     })
     try {
       const client = await guest.newPage()
@@ -626,10 +646,10 @@ for (const type of ['reception', 'pool'] as const) {
         await expect(
           client.getByRole('radio', { name: 'Check-in', exact: true }),
         ).toBeChecked()
-        await client.getByRole('radio', { name: 'Otros temas' }).check()
+        await client.getByRole('radio', { name: 'Otros temas' }).click()
         await client
           .getByRole('radio', { name: 'Check-in', exact: true })
-          .check()
+          .click()
       } else await expect(client.getByRole('radio')).toHaveCount(0)
       await expect(
         client.getByRole('button', { name: 'Ponerme en lista' }),

@@ -38,7 +38,10 @@ it('requires a name and shares compatible group/space selection for editing', as
   fireEvent.click(screen.getByRole('checkbox'))
   fireEvent.click(screen.getByRole('button', { name: 'Más comensales' }))
   fireEvent.click(screen.getByRole('button', { name: 'Más comensales' }))
-  expect(screen.getByRole('radio', { name: 'Barra' })).toBeDisabled()
+  expect(screen.getByRole('radio', { name: 'Barra' })).toHaveAttribute(
+    'aria-disabled',
+    'true',
+  )
   fireEvent.click(screen.getByRole('radio', { name: 'Terraza' }))
   fireEvent.click(screen.getByRole('button', { name: 'Ponerme en lista' }))
   await waitFor(() => expect(submit).toHaveBeenCalled())

@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../fixtures.js'
 
 test('staff and customer experiment uses the real local turn, confirmation inbox and revocation', async ({
   page,

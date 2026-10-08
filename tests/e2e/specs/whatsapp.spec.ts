@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../fixtures.js'
 test('joins the demo queue and receives provider delivery through the real worker', async ({
   page,
 }) => {

@@ -1,27 +1,41 @@
-import { test, expect, type Page, type Locator } from '@playwright/test'
+import { test, expect, type Page, type Locator } from '../fixtures.js'
+import { strictApiMocks } from '../helpers/api-mocks.js'
+
+test.use({ serviceWorkers: 'block' })
 
 async function clickOutsideHelp(page: Page, drawer: Locator, help: Locator) {
   const outer = (await drawer.boundingBox())!,
     popup = (await help.boundingBox())!
-  const x = outer.x + outer.width - 4,
-    y = outer.y + 4
-  expect(
-    x < popup.x ||
-      x > popup.x + popup.width ||
-      y < popup.y ||
-      y > popup.y + popup.height,
-  ).toBe(true)
-  await page.mouse.click(x, y)
+  const candidates = [
+    { x: outer.x + 160, y: outer.y + 32 },
+    { x: outer.x + 32, y: outer.y + outer.height / 2 },
+    { x: outer.x + outer.width / 2, y: outer.y + 32 },
+    { x: outer.x + outer.width / 2, y: outer.y + outer.height - 120 },
+    { x: outer.x + outer.width / 2, y: outer.y + outer.height - 32 },
+  ]
+  const point = candidates.find(
+    ({ x, y }) =>
+      x > outer.x + 16 &&
+      x < outer.x + outer.width - 16 &&
+      y > outer.y + 16 &&
+      y < outer.y + outer.height - 16 &&
+      (x < popup.x - 8 ||
+        x > popup.x + popup.width + 8 ||
+        y < popup.y - 8 ||
+        y > popup.y + popup.height + 8),
+  )
+  expect(point, 'expected an inert point inside the drawer and outside help').toBeDefined()
+  await page.mouse.click(point!.x, point!.y)
 }
 
 async function openMembers(page: Page) {
-  const writes: string[] = []
-  await page.route('**/api/v1/staff/**', async (route) => {
-    const request = route.request(),
-      path = new URL(request.url()).pathname
-    if (request.method() !== 'GET') writes.push(path)
-    const body = path.endsWith('/me')
-      ? {
+  const mocks = await strictApiMocks(page, [
+    {
+      method: 'GET',
+      path: '/api/v1/staff/me',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: {
           user: { id: 'actor', username: 'owner', email: 'owner@example.test' },
           commercial: false,
           platformAdmin: false,
@@ -34,9 +48,21 @@ async function openMembers(page: Page) {
               organizationName: 'Test',
             },
           ],
-        }
-      : path.endsWith('/members')
-      ? {
+        },
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/role-help/queues',
+      expectedHits: { min: 1 },
+      respond: () => ({ json: [] }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/role-help/members',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: {
           members: [
             {
               id: 'owner',
@@ -63,12 +89,16 @@ async function openMembers(page: Page) {
               canEditDetails: true,
             },
           ],
-        }
-      : path.endsWith('/queues')
-      ? []
-      : {}
-    await route.fulfill({ json: body })
-  })
+        },
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/role-help/location',
+      expectedHits: { min: 1 },
+      respond: () => ({ json: { version: 1, confirmedAt: null, location: null } }),
+    },
+  ])
   await page.goto('/staff')
   await page.getByRole('button', { name: 'Accesos', exact: true }).click()
   const parent = page.getByRole('dialog', {
@@ -76,7 +106,7 @@ async function openMembers(page: Page) {
     exact: true,
   })
   await expect(parent.getByText('Owner', { exact: true })).toBeVisible()
-  return { parent, writes }
+  return { parent, mocks }
 }
 for (const viewport of [
   { width: 320, height: 568 },
@@ -87,7 +117,7 @@ for (const viewport of [
     page,
   }, testInfo) => {
     await page.setViewportSize(viewport)
-    const { parent, writes } = await openMembers(page)
+    const { parent, mocks } = await openMembers(page)
     const ownerHelp = parent.getByRole('button', {
       name: 'Ver permisos de Owner',
       exact: true,
@@ -178,6 +208,7 @@ for (const viewport of [
     await expect(
       parent.getByRole('button', { name: 'Acciones de Staff', exact: true }),
     ).toBeFocused()
-    expect(writes).toEqual([])
+    expect(mocks.unexpected).toEqual([])
+    await mocks.assertComplete()
   })
 }

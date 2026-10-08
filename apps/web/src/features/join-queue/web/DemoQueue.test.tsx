@@ -35,7 +35,16 @@ it('requires explicit public consent and submits the current notice version', as
     fireEvent.click(option, { detail: 1 })
   }
   const consent = screen.getByRole('checkbox')
+  expect(consent).toHaveAttribute('data-slot', 'checkbox')
   expect(consent).not.toBeChecked()
+  expect(screen.getByRole('spinbutton', { name: 'Party size' })).toHaveAttribute(
+    'data-slot',
+    'input',
+  )
+  expect(screen.getByLabelText('Pilot access code')).toHaveAttribute(
+    'data-slot',
+    'input',
+  )
   expect(screen.getByText(whatsappConsentNotice.en.consent)).toBeVisible()
   expect(screen.getByRole('button', { name: 'Join waiting list' })).toBeDisabled()
   expect(screen.getByLabelText('Phone number with international prefix')).toBeVisible()

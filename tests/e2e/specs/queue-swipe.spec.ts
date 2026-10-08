@@ -1,9 +1,16 @@
-import { test, expect, type Page, type Locator } from '@playwright/test'
+import { test, expect, type Page, type Locator, newClientContext } from '../fixtures.js'
+import { strictApiMocks } from '../helpers/api-mocks.js'
+test.use({ serviceWorkers: 'block' })
 
 // Browser-level interaction test: local API fixtures isolate gestures from business mutations.
 async function openQueue(
   page: Page,
-  options: { viewer?: boolean; blocked?: boolean; quick?: boolean } = {},
+  options: {
+    viewer?: boolean
+    blocked?: boolean
+    quick?: boolean
+    expectedCommands?: number
+  } = {},
 ) {
   let commands = 0
   const queue = {
@@ -31,11 +38,13 @@ async function openQueue(
       receptionServices: [],
     },
   }
-  await page.route('**/api/v1/staff/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
-    if (path.endsWith('/commands')) commands++
-    const body = path.endsWith('/me')
-      ? {
+  const mocks = await strictApiMocks(page, [
+    {
+      method: 'GET',
+      path: '/api/v1/staff/me',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: {
           user: { id: 'u', username: 'swipe', email: 'swipe@example.test' },
           commercial: false,
           platformAdmin: false,
@@ -46,11 +55,21 @@ async function openQueue(
               role: options.viewer ? 'viewer' : 'owner',
             },
           ],
-        }
-      : path.endsWith('/queues')
-      ? [queue]
-      : path.endsWith('/entries')
-      ? Array.from({ length: 20 }, (_, i) => ({
+        },
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/venue/queues',
+      expectedHits: { min: 1 },
+      respond: () => ({ json: [queue] }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/queues/swipe/entries',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: Array.from({ length: 20 }, (_, i) => ({
           id: `e${i}`,
           code: `T${i}`,
           displayName: `Guest ${i}`,
@@ -59,10 +78,29 @@ async function openQueue(
           sequence: i + 1,
           version: 0,
           calledAt: i === 1 ? Date.now() : null,
-        }))
-      : {}
-    await route.fulfill({ json: body })
-  })
+        })),
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/venue/location',
+      respond: () => ({
+        json: { version: 1, confirmedAt: null, location: null },
+      }),
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/staff/queues/swipe/commands',
+      expectedHits: {
+        min: options.expectedCommands ?? 0,
+        max: options.expectedCommands ?? 0,
+      },
+      respond: () => {
+        commands++
+        return { json: { ok: true } }
+      },
+    },
+  ])
   await page.goto('/staff')
   await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   const drawer = page.getByRole('dialog', {
@@ -77,7 +115,7 @@ async function openQueue(
         .map((animation) => animation.finished),
     )
   })
-  return { drawer, commands: () => commands }
+  return { drawer, commands: () => commands, mocks }
 }
 const surface = (row: Locator) => row.locator('[data-swipe-surface]')
 const offset = (row: Locator) =>
@@ -100,7 +138,9 @@ async function mouseSwipe(page: Page, row: Locator, delta: number) {
 test('desktop progressive swipe, limits, thresholds, exclusivity and accessible actions', async ({
   page,
 }) => {
-  const { drawer, commands } = await openQueue(page)
+  const { drawer, commands, mocks } = await openQueue(page, {
+    expectedCommands: 1,
+  })
   const row = drawer.locator('[data-entry-code="T0"]')
   const called = drawer.locator('[data-entry-code="T1"]')
   await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveCount(
@@ -167,6 +207,7 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await expect(
     page.getByRole('dialog', { name: 'Confirmar llegada', exact: true }),
   ).toHaveCount(0)
+  await mocks.assertComplete()
 })
 
 test('swipe call respects inventory and viewer cannot drag', async ({
@@ -178,31 +219,33 @@ test('swipe call respects inventory and viewer cannot drag', async ({
   await expect(
     row.getByRole('button', { name: 'Asignar turno' }),
   ).toBeDisabled()
+  await setup.mocks.assertComplete()
   await page.unrouteAll()
   setup = await openQueue(page, { viewer: true })
   row = setup.drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 120)
   await expect.poll(() => offset(row)).toBe(0)
   await expect(row.getByRole('button')).toHaveCount(0)
+  await setup.mocks.assertComplete()
 })
 
 test('native mobile touch progressively reveals, cancels and preserves vertical scroll and Drawer', async ({
   browser,
   browserName,
   baseURL,
-}) => {
+}, info) => {
   test.skip(
     browserName !== 'chromium',
     'Native touch injection uses Chromium CDP; desktop runs in all engines.',
   )
-  const context = await browser.newContext({
+  const context = await newClientContext(browser, info, 'swipe-touch-client', {
     baseURL: baseURL!,
     viewport: { width: 390, height: 844 },
     isMobile: true,
     hasTouch: true,
   })
   const page = await context.newPage()
-  const { drawer, commands } = await openQueue(page)
+  const { drawer, commands, mocks } = await openQueue(page)
   const row = drawer.locator('[data-entry-code="T0"]')
   const session = await context.newCDPSession(page)
   const touch = async (
@@ -250,13 +293,17 @@ test('native mobile touch progressively reveals, cancels and preserves vertical 
     .toBeLessThan(before - 30)
   await expect(drawer).toBeVisible()
   expect(commands()).toBe(0)
+  await mocks.assertComplete()
   await context.close()
 })
 
 test('quick waiting swipes and keyboard expose only cancellation; footer assigns directly', async ({
   page,
 }) => {
-  const { drawer, commands } = await openQueue(page, { quick: true })
+  const { drawer, commands, mocks } = await openQueue(page, {
+    quick: true,
+    expectedCommands: 1,
+  })
   const row = drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 160)
   await expect.poll(() => offset(row)).toBe(0)
@@ -273,12 +320,13 @@ test('quick waiting swipes and keyboard expose only cancellation; footer assigns
   await expect(
     page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
   ).toHaveCount(0)
+  await mocks.assertComplete()
 })
 
 test('restaurant assignment swipe opens the existing sheet without dispatching', async ({
   page,
 }) => {
-  const { drawer, commands } = await openQueue(page)
+  const { drawer, commands, mocks } = await openQueue(page)
   const row = drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 180)
   await expect.poll(() => offset(row)).toBe(144)
@@ -288,4 +336,5 @@ test('restaurant assignment swipe opens the existing sheet without dispatching',
     page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
   ).toBeVisible()
   expect(commands()).toBe(0)
+  await mocks.assertComplete()
 })

@@ -1,4 +1,5 @@
 import { Input } from '@/components/ui/input'
+import { Checkbox } from '@/components/ui/checkbox'
 import { whatsappConsentNotice } from '../consent/whatsapp-consent-copy'
 import type { Locale } from './shared'
 
@@ -52,12 +53,14 @@ export function PublicWhatsAppConsentFields({
         </span>
       </label>
       <label className="flex items-start gap-3 text-sm leading-5">
-        <input
-          className="mt-1 size-4 shrink-0 accent-foreground"
-          type="checkbox"
+        <Checkbox
+          id="customer-whatsapp-consent"
+          className="mt-1"
           name="whatsapp-consent"
           checked={consent}
-          onChange={(event) => onConsentChange(event.target.checked)}
+          disabled={disabled}
+          aria-label={copy.consent}
+          onCheckedChange={(checked) => onConsentChange(checked === true)}
         />
         <span>{copy.consent}</span>
       </label>

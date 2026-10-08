@@ -14,6 +14,7 @@ import {
   type Entry,
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
   PublicWhatsAppConsentFields,
   validPublicWhatsAppConsent,
@@ -101,8 +102,7 @@ export function DemoQueue() {
       <form onSubmit={submit} className="space-y-4">
         <label className="block">
           {es ? 'Comensales' : 'Party size'}
-          <input
-            className="block border rounded p-2"
+          <Input
             name="partySize"
             type="number"
             min="1"
@@ -114,8 +114,7 @@ export function DemoQueue() {
         </label>
         <label className="block">
           {es ? 'Código de acceso a pruebas' : 'Pilot access code'}
-          <input
-            className="block border rounded p-2"
+          <Input
             name="pilot"
             type="password"
             autoComplete="off"

@@ -6,7 +6,8 @@ import {
   type Page,
   type TestInfo,
   type APIRequestContext,
-} from '@playwright/test'
+  newClientContext,
+} from '../fixtures.js'
 type Step = {
   scenarioId: string
   step: string
@@ -26,7 +27,7 @@ const test = base.extend<{ evidence: Step[] }>({
 })
 // Includes several independent polling intervals and context teardown; no retries.
 test.setTimeout(90_000)
-test('Q-BROWSER-ORDER public joins and skip update staff and two isolated clients', async ({
+test('Q-BROWSER-ORDER public joins and quick assignment update staff and two isolated clients', async ({
   page,
   request,
   browser,
@@ -50,22 +51,20 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
   evidence,
 }, info) => {
   const t = await setup(page, request, baseURL!),
-    guest = await browser.newContext({
+    guest = await newClientContext(browser, info, 'order-alice', {
       baseURL: baseURL!,
-      extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
     })
   try {
     const alice = await guest.newPage()
     await join(alice, t.queue, 'Alice')
-    await act(page, 'Alice', 'Llamar')
+    await act(page, 'Alice', 'Asignar turno')
     await expect(alice.getByText(/Es tu turno/)).toBeVisible()
     await act(page, 'Alice', 'Confirmar llegada')
     await expect(
       alice.getByText('Se ha confirmado tu llegada', { exact: true }),
     ).toBeVisible()
-    const second = await browser.newContext({
+    const second = await newClientContext(browser, info, 'order-bob', {
       baseURL: baseURL!,
-      extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
     })
     try {
       const bob = await second.newPage()
@@ -95,7 +94,7 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
         alice.getByText('Se ha confirmado tu llegada', { exact: true }),
       ).toBeVisible()
       await page.getByRole('tab', { name: 'Lista', exact: true }).click()
-      await act(page, 'Bob', 'Llamar')
+      await act(page, 'Bob', 'Asignar turno')
       await expect(bob.getByText(/Es tu turno/)).toBeVisible()
       await prove(
         info,
@@ -120,9 +119,8 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
   evidence,
 }, info) => {
   const t = await setup(page, request, baseURL!),
-    guest = await browser.newContext({
+    guest = await newClientContext(browser, info, 'resource-alice', {
       baseURL: baseURL!,
-      extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
     })
   try {
     const alice = await guest.newPage()
@@ -186,9 +184,8 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
     evidence,
   }, info) => {
     const t = await setup(page, request, baseURL!),
-      guest = await browser.newContext({
+      guest = await newClientContext(browser, info, `${kind.toLowerCase()}-client`, {
         baseURL: baseURL!,
-        extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
       })
     try {
       const first = await guest.newPage(),

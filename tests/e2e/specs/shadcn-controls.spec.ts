@@ -1,8 +1,27 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from '../fixtures.js'
+import { strictApiMocks } from '../helpers/api-mocks.js'
+
+test.use({ serviceWorkers: 'block' })
 
 test('demo selects and consent work with keyboard, Escape and busy state', async ({
   page,
 }) => {
+  let finish: (() => void) | undefined
+  let body: unknown
+  const mocks = await strictApiMocks(page, [
+    {
+      method: 'POST',
+      path: '/api/v1/public/queues/demo-queue/entries',
+      expectedHits: 1,
+      respond: async (request) => {
+        body = request.postDataJSON()
+        await new Promise<void>((resolve) => {
+          finish = resolve
+        })
+        return { status: 503, json: {} }
+      },
+    },
+  ])
   await page.goto('/q/demo-queue')
   const locale = page.getByRole('combobox', { name: 'Idioma' })
   await expect(locale).toHaveAttribute('data-slot', 'select-trigger')
@@ -16,45 +35,51 @@ test('demo selects and consent work with keyboard, Escape and busy state', async
   await expect(english).toBeFocused()
   const consent = page.getByRole('checkbox')
   await expect(consent).toHaveAttribute('data-slot', 'checkbox')
+  const phone = page.getByLabel('Phone number with international prefix')
+  await expect(phone).toHaveAttribute('data-slot', 'input')
+  await expect(phone).toBeVisible()
+  const join = page.getByRole('button', { name: 'Join waiting list' })
+  await phone.fill('600000000')
+  await expect(join).toBeDisabled()
+  await phone.fill('+34600000000')
+  await expect(join).toBeDisabled()
   await consent.focus()
   await consent.press('Space')
   await expect(consent).toBeChecked()
-  await expect(page.getByLabel('Phone with country code')).toBeVisible()
+  await expect(phone).toBeVisible()
+  await expect(join).toBeEnabled()
   await consent.press('Space')
   await expect(consent).not.toBeChecked()
-  await expect(page.getByLabel('Phone with country code')).toHaveCount(0)
-  await consent.click()
-  await page.getByLabel('Phone with country code').fill('+34600000000')
+  await expect(phone).toBeVisible()
+  await expect(join).toBeDisabled()
+  await consent.press('Space')
   await page.getByLabel('Pilot access code').fill('local-fixture')
-  let finish: (() => void) | undefined
-  let body: unknown
-  await page.route(
-    '**/api/v1/public/queues/demo-queue/entries',
-    async (route) => {
-      body = route.request().postDataJSON()
-      await new Promise<void>((resolve) => {
-        finish = resolve
-      })
-      await route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: '{}',
-      })
-    },
-  )
-  await page.getByRole('button', { name: 'Join waiting list' }).click()
+  await expect(join).toBeEnabled()
+  await join.click()
   await expect(consent).toBeDisabled()
   await expect(english).toBeDisabled()
   expect(body).toMatchObject({
     locale: 'en',
-    whatsapp: { consent: true, phone: '+34600000000' },
+    whatsapp: {
+      consent: true,
+      phone: '+34600000000',
+      version: 'whatsapp-public-service-updates-v1',
+    },
   })
   finish!()
   await expect(page.getByRole('alert')).toBeVisible()
   await expect(english).toBeEnabled()
+  await mocks.assertComplete()
 })
 
-async function openControlFixture(page: import('@playwright/test').Page) {
+async function openControlFixture(
+  page: import('@playwright/test').Page,
+  expected: { commands: number; patches: number; openingContext?: number } = {
+    commands: 0,
+    patches: 0,
+    openingContext: 1,
+  },
+) {
   const config = {
     name: 'Control restaurant',
     type: 'restaurant',
@@ -93,14 +118,13 @@ async function openControlFixture(page: import('@playwright/test').Page) {
   }
   const commands: unknown[] = []
   const saved: (typeof config)[] = []
-  await page.route('**/api/v1/staff/**', async (route) => {
-    const path = new URL(route.request().url()).pathname
-    if (route.request().method() === 'PATCH')
-      saved.push(route.request().postDataJSON())
-    if (path.endsWith('/lifecycle'))
-      commands.push(route.request().postDataJSON())
-    const body = path.endsWith('/me')
-      ? {
+  const mocks = await strictApiMocks(page, [
+    {
+      method: 'GET',
+      path: '/api/v1/staff/me',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: {
           user: {
             id: 'u',
             username: 'controls',
@@ -109,9 +133,15 @@ async function openControlFixture(page: import('@playwright/test').Page) {
           commercial: false,
           platformAdmin: false,
           venues: [{ id: 'venue', name: 'Control venue', role: 'owner' }],
-        }
-      : path.endsWith('/queues')
-      ? [
+        },
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/venue/queues',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: [
           {
             id: 'controls',
             venueId: 'venue',
@@ -126,9 +156,18 @@ async function openControlFixture(page: import('@playwright/test').Page) {
             readiness: { state: 'ready', reasons: [] },
             config,
           },
-        ]
-      : path.endsWith('/opening-context')
-      ? {
+        ],
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/queues/controls/opening-context',
+      expectedHits:
+        expected.openingContext === 0
+          ? { min: 0, max: 0 }
+          : { min: expected.openingContext ?? 1 },
+      respond: () => ({
+        json: {
           open: true,
           version: 1,
           contextToken: 'control-context',
@@ -153,22 +192,53 @@ async function openControlFixture(page: import('@playwright/test').Page) {
               occupied: 1,
             },
           ],
-        }
-      : path.endsWith('/entries')
-      ? []
-      : {}
-    await route.fulfill({ json: body })
-  })
+        },
+      }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/queues/controls/entries',
+      expectedHits: { min: 1 },
+      respond: () => ({ json: [] }),
+    },
+    {
+      method: 'GET',
+      path: '/api/v1/staff/venues/venue/location',
+      expectedHits: { min: 1 },
+      respond: () => ({ json: { version: 1, confirmedAt: null, location: null } }),
+    },
+    {
+      method: 'POST',
+      path: '/api/v1/staff/queues/controls/lifecycle',
+      expectedHits: expected.commands,
+      respond: (request) => {
+        commands.push(request.postDataJSON())
+        return { json: { ok: true } }
+      },
+    },
+    {
+      method: 'PATCH',
+      path: '/api/v1/staff/queues/controls',
+      expectedHits: expected.patches,
+      respond: (request) => {
+        saved.push(request.postDataJSON())
+        return { json: { ok: true } }
+      },
+    },
+  ])
   await page.goto('/staff')
   const gear = page.getByRole('button', { name: 'Opciones del servicio' })
   await expect(gear).toBeVisible()
-  return { gear, commands, saved, config }
+  return { gear, commands, saved, config, mocks }
 }
 
 test('release group popup preserves its Sheet and restores focus after submitting the selected tuple', async ({
   page,
 }) => {
-  const { gear, commands } = await openControlFixture(page)
+  const { gear, commands, mocks } = await openControlFixture(page, {
+    commands: 1,
+    patches: 0,
+  })
   await gear.click()
   await page.getByRole('menuitem', { name: 'Mesa libre', exact: true }).click()
   const sheet = page.getByRole('dialog', {
@@ -204,12 +274,17 @@ test('release group popup preserves its Sheet and restores focus after submittin
     },
   ])
   await expect(gear).toBeFocused()
+  await mocks.assertComplete()
 })
 
 test('adjustment type popup preserves metadata and submits duration and availability payloads', async ({
   page,
 }) => {
-  const { gear, saved, config } = await openControlFixture(page)
+  const { gear, saved, config, mocks } = await openControlFixture(page, {
+    commands: 0,
+    patches: 2,
+    openingContext: 0,
+  })
   for (const mode of ['duration', 'availability'] as const) {
     await gear.click()
     await page
@@ -276,4 +351,5 @@ test('adjustment type popup preserves metadata and submits duration and availabi
     else expect(adjustment).not.toHaveProperty('minutes')
     await expect(gear).toBeFocused()
   }
+  await mocks.assertComplete()
 })

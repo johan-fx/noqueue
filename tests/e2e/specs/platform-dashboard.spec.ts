@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test'
+import { test, expect } from '../fixtures.js'
+import { strictApiMocks } from '../helpers/api-mocks.js'
 
 // Route-mocked identities must not be bypassed by the app's service worker.
 test.use({ serviceWorkers: 'block' })
@@ -30,20 +31,34 @@ for (const width of [320, 390, 1280]) {
         receptionServices: [],
       },
     }
-    await page.route('**/api/v1/staff/**', async (route) => {
-      const url = new URL(route.request().url())
-      const path = url.pathname.split('/staff')[1]!
-      requests.push(`${route.request().method()} ${path}`)
-      let body: unknown
-      if (path === '/me')
-        body = {
+    const recorded = (
+      request: import('@playwright/test').Request,
+      body: unknown,
+    ) => {
+      const path = new URL(request.url()).pathname.split('/staff')[1]!
+      requests.push(`${request.method()} ${path}`)
+      return { json: body }
+    }
+    const mocks = await strictApiMocks(page, [
+      {
+        method: 'GET',
+        path: '/api/v1/staff/me',
+        expectedHits: { min: 1 },
+        respond: (request) =>
+          recorded(request, {
           user: { username: 'platform' },
           commercial: true,
           platformAdmin: true,
           venues: [],
-        }
-      else if (path === '/commercial/organizations')
-        body = {
+          }),
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/staff/commercial/organizations',
+        expectedHits: { min: 1 },
+        respond: (request) => {
+          const url = new URL(request.url())
+          return recorded(request, {
           items: [
             {
               id: 'org',
@@ -56,17 +71,33 @@ for (const width of [320, 390, 1280]) {
           ],
           page: Number(url.searchParams.get('page') ?? 1),
           hasMore: true,
-        }
-      else if (path === '/commercial/venues/hotel')
-        body = {
+          })
+        },
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/staff/commercial/venues/hotel',
+        expectedHits: { min: 1 },
+        respond: (request) =>
+          recorded(request, {
           id: 'hotel',
           name: 'Hotel Madrid',
           organizationId: 'org',
           organizationName: 'Empresa',
-        }
-      else if (path === '/venues/hotel/queues') body = [service]
-      else if (path === '/queues/queue/entries')
-        body = [
+          }),
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/staff/venues/hotel/queues',
+        expectedHits: { min: 1 },
+        respond: (request) => recorded(request, [service]),
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/staff/queues/queue/entries',
+        expectedHits: { min: 1 },
+        respond: (request) =>
+          recorded(request, [
           {
             id: 'entry',
             code: 'A001',
@@ -76,10 +107,15 @@ for (const width of [320, 390, 1280]) {
             version: 1,
             calledAt: null,
           },
-        ]
-      else return route.fulfill({ status: 404, json: { error: 'not_found' } })
-      await route.fulfill({ json: body })
-    })
+          ]),
+      },
+      {
+        method: 'GET',
+        path: '/api/v1/staff/venues/hotel/location',
+        respond: (request) =>
+          recorded(request, { version: 1, confirmedAt: null, location: null }),
+      },
+    ])
     await page.goto('/staff?page=2')
     const card = page.getByRole('link', { name: /Hotel Madrid/ })
     await expect(card).toBeVisible()
@@ -128,5 +164,6 @@ for (const width of [320, 390, 1280]) {
     await expect(
       page.getByRole('link', { name: 'Volver a establecimientos' }),
     ).toHaveAttribute('href', '/staff')
+    await mocks.assertComplete()
   })
 }

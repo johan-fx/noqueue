@@ -19,6 +19,7 @@ export async function setup(
   page: Page,
   request: APIRequestContext,
   origin: string,
+  serviceType: 'restaurant' | 'reception' = 'restaurant',
 ) {
   const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 12),
     owner = `o_${suffix}`,
@@ -56,23 +57,26 @@ export async function setup(
         ownerPassword: password,
         services: [
           {
-            name: 'Restaurant',
-            type: 'restaurant',
+            name: serviceType === 'reception' ? 'Reception' : 'Restaurant',
+            type: serviceType,
             capacity: 99,
             averageMinutes: 30,
-            graceMinutes: 5,
+            graceMinutes: serviceType === 'restaurant' ? 5 : 2,
             cutoffMinutes: 0,
             twentyFourHours: true,
             schedules: [],
-            receptionServices: [],
-            spaces: [
-              {
-                id: 'terrace',
-                name: 'Terrace',
-                tables: 1,
-                tableTypes: [{ seats: 4, count: 1, averageMinutes: 50 }],
-              },
-            ],
+            receptionServices: serviceType === 'reception' ? ['check_in'] : [],
+            spaces:
+              serviceType === 'restaurant'
+                ? [
+                    {
+                      id: 'terrace',
+                      name: 'Terrace',
+                      tables: 1,
+                      tableTypes: [{ seats: 4, count: 1, averageMinutes: 50 }],
+                    },
+                  ]
+                : [],
           },
         ],
       },
@@ -95,50 +99,57 @@ export async function setup(
     config: Record<string, unknown>
   }[]
   const queue = queues[0]!
-  const ctx = (await (
-    await page.request.get(`/api/v1/staff/queues/${queue.id}/opening-context`)
-  ).json()) as {
-    contextToken: string
-    groups: { spaceId: string; seats: number }[]
-  }
-  expect(
-    (
-      await page.request.post(`/api/v1/staff/queues/${queue.id}/lifecycle`, {
-        headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
-        data: {
-          action: 'declare_full',
-          contextToken: ctx.contextToken,
-        },
-      })
-    ).ok(),
-  ).toBeTruthy()
-  for (const group of ctx.groups) {
-    const current = (await (
+  if (serviceType === 'restaurant') {
+    const ctx = (await (
       await page.request.get(`/api/v1/staff/queues/${queue.id}/opening-context`)
-    ).json()) as { contextToken: string }
+    ).json()) as {
+      contextToken: string
+      groups: { spaceId: string; seats: number }[]
+    }
     expect(
       (
         await page.request.post(`/api/v1/staff/queues/${queue.id}/lifecycle`, {
           headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
           data: {
-            action: 'occupancy',
-            contextToken: current.contextToken,
-            group: { ...group, occupied: 0 },
-            reason: 'Fixture physical capacity update',
+            action: 'declare_full',
+            contextToken: ctx.contextToken,
           },
         })
       ).ok(),
     ).toBeTruthy()
+    for (const group of ctx.groups) {
+      const current = (await (
+        await page.request.get(`/api/v1/staff/queues/${queue.id}/opening-context`)
+      ).json()) as { contextToken: string }
+      expect(
+        (
+          await page.request.post(`/api/v1/staff/queues/${queue.id}/lifecycle`, {
+            headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+            data: {
+              action: 'occupancy',
+              contextToken: current.contextToken,
+              group: { ...group, occupied: 0 },
+              reason: 'Fixture physical capacity update',
+            },
+          })
+        ).ok(),
+      ).toBeTruthy()
+    }
   }
   await page.reload()
   await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   return { queue: queue.id, venueId, headers }
 }
-export async function join(page: Page, queue: string, name: string) {
+export async function join(
+  page: Page,
+  queue: string,
+  name: string,
+  partySize = 4,
+) {
   await page.goto(`/q/${queue}`)
   await page.getByLabel('Nombre', { exact: true }).fill(name)
   await fillPublicWhatsAppConsent(page)
-  for (let i = 0; i < 3; i++)
+  for (let i = 1; i < partySize; i++)
     await page.getByRole('button', { name: 'Más comensales' }).click()
   await page.getByRole('button', { name: 'Ponerme en lista' }).click()
   await expect(page).toHaveURL(/\/t\//)
@@ -163,6 +174,8 @@ export async function act(
   await row.getByRole('button', { name: /Acciones del turno/ }).click()
   await row.getByRole('button', { name: label, exact: true }).click()
   await beforeConfirm?.()
+  // Arrival confirmation is a direct action; the dashboard does not open a sheet.
+  if (label === 'Confirmar llegada') return
   await page
     .getByRole('dialog', { name: label, exact: true })
     .getByRole('button', { name: 'Confirmar', exact: true })

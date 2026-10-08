@@ -41,9 +41,11 @@ it('requires explicit consent and phone, starts at one diner and retains the req
     target: { value: '600000000' },
   })
   expect(button).toBeDisabled()
-  expect(
-    screen.getByRole('spinbutton', { name: 'Número de comensales' }),
-  ).toHaveValue(1)
+  const partySize = screen.getByRole('spinbutton', {
+    name: 'Número de comensales',
+  })
+  expect(partySize).toHaveValue(1)
+  expect(partySize).toHaveAttribute('data-slot', 'input')
   fireEvent.click(screen.getByRole('button', { name: 'Terraza' }))
   fireEvent.click(consent)
   fireEvent.click(button)

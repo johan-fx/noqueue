@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../fixtures.js'
 test.describe.configure({ mode: 'serial' })
 
 // Same deployable UI + DO/D1/outbox. Only WhatsApp transport and customer callback

@@ -201,7 +201,7 @@ export function ManualQueueEntryForm({
                   >
                     <Minus aria-hidden="true" />
                   </Button>
-                  <input
+                  <Input
                     id={`${id}-size`}
                     aria-label={copy.dinerCount}
                     type="number"
@@ -209,7 +209,7 @@ export function ManualQueueEntryForm({
                     max={20}
                     required
                     value={partySize}
-                    className="h-11 w-8 appearance-none bg-transparent text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    className="h-11 w-12 appearance-none bg-transparent px-0 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                     onChange={(e) => setPartySize(e.target.valueAsNumber)}
                   />
                   <Button

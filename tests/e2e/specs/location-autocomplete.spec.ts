@@ -3,7 +3,8 @@ import {
   expect,
   type Page,
   type APIRequestContext,
-} from '@playwright/test'
+  newClientContext,
+} from '../fixtures.js'
 import { resolveFixtureLocation } from '../helpers/location.js'
 test.use({ serviceWorkers: 'block' })
 const pilot = {
@@ -179,10 +180,9 @@ test('venue edit autocomplete preserves the stored address until explicit save a
       ).json()
     ).location.formatted,
   ).toBe('Calle Colón 1, Valencia')
-  const staff = await browser.newContext({
+  const staff = await newClientContext(browser, testInfo, 'location-owner', {
     baseURL: baseURL!,
     viewport: { width: 390, height: 844 },
-    extraHTTPHeaders: { 'CF-Connecting-IP': crypto.randomUUID() },
   })
   try {
     const owner = await staff.newPage()

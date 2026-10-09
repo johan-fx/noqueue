@@ -522,3 +522,173 @@ it('suppresses an obsolete approaching intent if the configured threshold no lon
     )?.status,
   ).toBe('cancelled')
 })
+
+it('timestamps only real service configuration, not operational activity or no-op saves', async () => {
+  const t = await setup()
+  const stamp = () =>
+    env.DB.prepare('SELECT configuration_updated_at FROM venue WHERE id=?')
+      .bind(t.venueId)
+      .first('configuration_updated_at')
+  await env.DB.prepare(
+    'UPDATE venue SET configuration_updated_at=100 WHERE id=?',
+  )
+    .bind(t.venueId)
+    .run()
+  let state = await env.DB.prepare(
+    'SELECT version,open,config FROM queue WHERE id=?',
+  )
+    .bind(t.queue)
+    .first<{ version: number; open: number; config: string }>()
+  await configureQueue(env, t.actor, t.queue, {
+    ...JSON.parse(state!.config),
+    version: state!.version,
+    open: !!state!.open,
+  })
+  expect(await stamp()).toBe(100)
+  await configureQueue(env, t.actor, t.queue, {
+    ...JSON.parse(state!.config),
+    name: 'Renamed service',
+    version: state!.version,
+    open: !!state!.open,
+  })
+  expect(await stamp()).toEqual(expect.any(Number))
+  expect(await stamp()).not.toBe(100)
+  await env.DB.prepare(
+    'UPDATE venue SET configuration_updated_at=200 WHERE id=?',
+  )
+    .bind(t.venueId)
+    .run()
+  await recalculateQueue(env, t.queue)
+  expect(await stamp()).toBe(200)
+  state = await env.DB.prepare(
+    'SELECT version,open,config FROM queue WHERE id=?',
+  )
+    .bind(t.queue)
+    .first<{ version: number; open: number; config: string }>()
+  await expect(
+    configureQueue(env, t.actor, t.queue, {
+      ...JSON.parse(state!.config),
+      name: 'Invalid version',
+      version: state!.version - 1,
+      open: !!state!.open,
+    }),
+  ).rejects.toMatchObject({ message: 'version_conflict' })
+  expect(await stamp()).toBe(200)
+  await configureQueue(env, t.actor, t.queue, {
+    ...JSON.parse(state!.config),
+    version: state!.version,
+    open: !!state!.open,
+    adjustments: [
+      {
+        spaceId: 'terrace',
+        seats: 4,
+        minutes: 40,
+        reason: 'Temporary delay',
+        expiresAt: Date.now() + 60000,
+      },
+    ],
+  })
+  expect(await stamp()).toBe(200)
+  const context = await openingContext(env, t.queue)
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'disable_intelligence',
+    contextToken: context.contextToken,
+  })
+  expect(await stamp()).not.toBe(200)
+})
+
+it('rolls back configuration timestamps and service changes when the audit write fails', async () => {
+  const t = await setup()
+  await env.DB.prepare(
+    'UPDATE venue SET configuration_updated_at=100 WHERE id=?',
+  )
+    .bind(t.venueId)
+    .run()
+  const current = await env.DB.prepare(
+    'SELECT version,open,config FROM queue WHERE id=?',
+  )
+    .bind(t.queue)
+    .first<{ version: number; open: number; config: string }>()
+  const trigger = `fail_configuration_${crypto
+    .randomUUID()
+    .replaceAll('-', '')}`
+  // Test-only fault injection proves the transaction includes the configuration timestamp.
+  await env.DB.exec(
+    `CREATE TRIGGER ${trigger} BEFORE INSERT ON staff_audit WHEN NEW.action='queue.configured' AND NEW.venue_id='${t.venueId}' BEGIN SELECT RAISE(ABORT,'test_audit_failure'); END`,
+  )
+  try {
+    await expect(
+      configureQueue(env, t.actor, t.queue, {
+        ...JSON.parse(current!.config),
+        name: 'Rolled back',
+        version: current!.version,
+        open: !!current!.open,
+      }),
+    ).rejects.toThrow()
+    expect(
+      await env.DB.prepare(
+        'SELECT configuration_updated_at FROM venue WHERE id=?',
+      )
+        .bind(t.venueId)
+        .first('configuration_updated_at'),
+    ).toBe(100)
+    expect(
+      await env.DB.prepare('SELECT version,open,config FROM queue WHERE id=?')
+        .bind(t.queue)
+        .first(),
+    ).toEqual(current)
+  } finally {
+    await env.DB.exec(`DROP TRIGGER ${trigger}`)
+  }
+})
+it('does not timestamp queue lifecycle operations or repeated intelligence policy commands', async () => {
+  const t = await setup({
+    ...config,
+    type: 'reception',
+    spaces: [],
+    receptionServices: ['check_in'],
+    stations: 1,
+  })
+  const stamp = () =>
+    env.DB.prepare('SELECT configuration_updated_at FROM venue WHERE id=?')
+      .bind(t.venueId)
+      .first('configuration_updated_at')
+  await env.DB.prepare(
+    'UPDATE venue SET configuration_updated_at=100 WHERE id=?',
+  )
+    .bind(t.venueId)
+    .run()
+  const command = async (
+    action:
+      | 'open'
+      | 'close'
+      | 'pause'
+      | 'resume'
+      | 'disable_intelligence'
+      | 'enable_intelligence',
+  ) =>
+    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      action,
+      contextToken: (await openingContext(env, t.queue)).contextToken,
+      groups: [],
+    })
+  await command('open')
+  expect(await stamp()).toBe(100)
+  await command('pause')
+  expect(await stamp()).toBe(100)
+  await command('resume')
+  expect(await stamp()).toBe(100)
+  await command('close')
+  expect(await stamp()).toBe(100)
+  await command('disable_intelligence')
+  expect(await stamp()).not.toBe(100)
+  await env.DB.prepare(
+    'UPDATE venue SET configuration_updated_at=200 WHERE id=?',
+  )
+    .bind(t.venueId)
+    .run()
+  await command('disable_intelligence')
+  expect(await stamp()).toBe(200)
+  await command('enable_intelligence')
+  expect(await stamp()).not.toBe(200)
+})

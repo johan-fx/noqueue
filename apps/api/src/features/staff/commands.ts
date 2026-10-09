@@ -1,3 +1,4 @@
+import { sameConfiguration, touchVenueConfiguration } from './configuration'
 import { maintainServiceEntries } from '../queue/service-expiry'
 import { assignmentContext } from './assignment'
 import { noticeStatement, publishNotice } from '../queue/notices'
@@ -15,6 +16,7 @@ import {
   queueSettingsSchema,
   type QueueCommand,
   type EntryCommand,
+  type ServiceInput,
   allowedEntryActions,
 } from '@noqueue/contracts/staff'
 import { HTTPException } from 'hono/http-exception'
@@ -95,10 +97,12 @@ export async function runQueueCommand(
   }
   if (!transitions[input.action]!.includes(entry.status))
     throw new HTTPException(409, { message: 'invalid_transition' })
-  if (input.action === 'restore' && (
-    (entry.service_ends_at !== null && now >= entry.service_ends_at) ||
-    (entry.service_window_id === null && !state.config?.twentyFourHours)
-  )) throw new HTTPException(409, { message: 'invalid_transition' })
+  if (
+    input.action === 'restore' &&
+    ((entry.service_ends_at !== null && now >= entry.service_ends_at) ||
+      (entry.service_window_id === null && !state.config?.twentyFourHours))
+  )
+    throw new HTTPException(409, { message: 'invalid_transition' })
   if (input.action === 'restore' && !input.overrideReason)
     throw new HTTPException(400, { message: 'restore_reason_required' })
   if (input.action === 'no_show') {
@@ -368,8 +372,7 @@ export async function runQueueCommand(
   ])
   if (input.action === 'call' && input.arrivalMode !== 'present')
     await publishNotice(env, input.entryId, 'ready')
-  if (notifyCancellation)
-    await publishNotice(env, input.entryId, 'cancelled')
+  if (notifyCancellation) await publishNotice(env, input.entryId, 'cancelled')
   await recalculateQueue(env, queueId, now)
   return { ok: true }
 }
@@ -505,6 +508,27 @@ export async function configureQueue(
     config.resourceStateKnown = false
     config.estimationMode = 'shadow'
   }
+  // Operational adjustments do not redefine the establishment configuration.
+  const configurationOnly = (value: ServiceInput) => {
+    const {
+      adjustments: _adjustments,
+      resourceStateKnown: _known,
+      estimationMode: _mode,
+      ...configuration
+    } = value
+    return {
+      ...configuration,
+      approachTurns: value.approachTurns ?? 2,
+      approachMinutes: value.approachMinutes ?? 10,
+      etaChangeThresholdMinutes: value.etaChangeThresholdMinutes ?? 5,
+      notificationCooldownMinutes: value.notificationCooldownMinutes ?? 10,
+      intelligencePolicy: value.intelligencePolicy ?? 'automatic',
+    }
+  }
+  const configurationChanged =
+    !old.config ||
+    !sameConfiguration(configurationOnly(config), configurationOnly(old.config))
+  if (!configurationChanged && !adjustmentsChanged) return { ok: true }
   await env.DB.batch([
     ...(topologyChanged
       ? [
@@ -551,6 +575,9 @@ export async function configureQueue(
       queueId,
       version,
     ),
+    ...(configurationChanged
+      ? [touchVenueConfiguration(env, access.venueId, Date.now(), true)]
+      : []),
     directoryConfigStatement(env, queueId, JSON.stringify(config)),
     audit(
       env,

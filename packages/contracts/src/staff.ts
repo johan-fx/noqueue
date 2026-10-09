@@ -505,3 +505,19 @@ export type QueueOpeningContext = Partial<AdmissionStatus> & {
     occupied: number
   }[]
 }
+
+export type CommercialEstablishmentSummary = {
+  id: string
+  name: string
+  slug: string
+  status: 'active' | 'suspended'
+  venueId: string
+  venueName: string
+  serviceCount: number
+  configurationUpdatedAt: number | null
+}
+export type CommercialEstablishmentPage = {
+  items: CommercialEstablishmentSummary[]
+  page: number
+  hasMore: boolean
+}

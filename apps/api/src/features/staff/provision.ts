@@ -82,13 +82,14 @@ export async function provision(
         'INSERT INTO tenant_account(organization_id,created_by) VALUES (?,?)',
       ).bind(organizationId, actor),
       env.DB.prepare(
-        'INSERT INTO venue(id,organization_id,name,timezone,address_formatted,address_json,latitude,longitude,location_provider,location_provider_id,location_attribution,location_confirmed_at,location_source,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,1)',
+        'INSERT INTO venue(id,organization_id,name,timezone,address_formatted,address_json,latitude,longitude,location_provider,location_provider_id,location_attribution,location_confirmed_at,location_source,configuration_updated_at,version) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)',
       ).bind(
         venueId,
         organizationId,
         input.venueName,
         input.timezone,
         ...locationValues(location),
+        Date.now(),
       ),
       ...input.services.flatMap((service) => {
         const queueId = crypto.randomUUID()

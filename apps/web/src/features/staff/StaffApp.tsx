@@ -95,13 +95,12 @@ export function StaffApp() {
               key={detailId}
               venueId={detailId}
               returnPage={location.state?.returnPage}
+              returnSearch={location.state?.returnSearch}
             />
           ) : (
             <p role="alert">No tienes acceso a este establecimiento.</p>
           ))}
-        {me?.commercial && !detailId && (
-          <Commercial />
-        )}
+        {me?.commercial && !detailId && <Commercial />}
         {!detailId && !!me?.venues.length && (
           <>
             {me.venues.length > 1 && (

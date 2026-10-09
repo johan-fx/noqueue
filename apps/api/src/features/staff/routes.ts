@@ -1,3 +1,4 @@
+import { touchVenueConfiguration } from './configuration'
 import {
   deliveryRetentionMs,
   notificationDeliverySummary,
@@ -229,10 +230,29 @@ staffRoutes.get('/commercial/organizations', async (c) => {
     page > Math.floor(Number.MAX_SAFE_INTEGER / 24)
   )
     return c.json({ error: 'invalid_page' }, 400)
+  const status = c.req.query('status')
+  if (status && status !== 'active' && status !== 'suspended')
+    return c.json({ error: 'invalid_status' }, 400)
+  const q = (c.req.query('q') ?? '').trim()
+  const pattern = '%' + q.replace(/[\\%_]/g, '\\$&') + '%'
   const rows = await c.env.DB.prepare(
-    `SELECT o.id,o.name,o.slug,t.status,v.id AS venueId,v.name AS venueName FROM organization o JOIN tenant_account t ON t.organization_id=o.id JOIN venue v ON v.organization_id=o.id WHERE t.created_by=? OR ?='platform_admin' ORDER BY o.createdAt DESC,o.id,v.id LIMIT 25 OFFSET ?`,
+    `SELECT o.id,o.name,o.slug,t.status,v.id AS venueId,v.name AS venueName,
+      (SELECT COUNT(*) FROM queue q WHERE q.venue_id=v.id) AS serviceCount,
+      v.configuration_updated_at AS configurationUpdatedAt
+      FROM organization o JOIN tenant_account t ON t.organization_id=o.id JOIN venue v ON v.organization_id=o.id
+      WHERE (t.created_by=? OR ?='platform_admin') AND (?='' OR t.status=?)
+      AND (v.name LIKE ? ESCAPE '\\' OR o.name LIKE ? ESCAPE '\\')
+      ORDER BY o.createdAt DESC,o.id,v.id LIMIT 25 OFFSET ?`,
   )
-    .bind(c.get('actor').id, c.get('actor').role, (page - 1) * 24)
+    .bind(
+      c.get('actor').id,
+      c.get('actor').role,
+      status ?? '',
+      status ?? '',
+      pattern,
+      pattern,
+      (page - 1) * 24,
+    )
     .all()
   return c.json({
     items: rows.results.slice(0, 24),
@@ -541,7 +561,12 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   return c.json(
     await Promise.all(
       rows.results.map(async (row) => {
-        const { displayNameCipher, assignedSpaceId, cancellationReason, ...entry } = row
+        const {
+          displayNameCipher,
+          assignedSpaceId,
+          cancellationReason,
+          ...entry
+        } = row
         const projection =
           row.status === 'waiting'
             ? await readProjection(c.env, String(row.id))
@@ -761,6 +786,7 @@ staffRoutes.post('/venues/:id/queues', async (c) => {
         JSON.stringify(service),
       ),
       directoryConfigStatement(c.env, id, JSON.stringify(service)),
+      touchVenueConfiguration(c.env, c.req.param('id')),
       audit(
         c.env,
         c.get('actor').id,
@@ -803,8 +829,16 @@ staffRoutes.patch('/commercial/organizations/:id/status', async (c) => {
   if (!parsed.success) return c.json({ error: 'invalid_status' }, 400)
   await c.env.DB.batch([
     c.env.DB.prepare(
-      'UPDATE tenant_account SET status=? WHERE organization_id=?',
-    ).bind(parsed.data.status, c.req.param('id')),
+      'UPDATE venue SET configuration_updated_at=? WHERE organization_id=? AND EXISTS (SELECT 1 FROM tenant_account WHERE organization_id=? AND status IS NOT ?)',
+    ).bind(
+      Date.now(),
+      c.req.param('id'),
+      c.req.param('id'),
+      parsed.data.status,
+    ),
+    c.env.DB.prepare(
+      'UPDATE tenant_account SET status=? WHERE organization_id=? AND status IS NOT ?',
+    ).bind(parsed.data.status, c.req.param('id'), parsed.data.status),
     audit(
       c.env,
       actor.id,

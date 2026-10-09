@@ -1,3 +1,4 @@
+import { sameConfiguration } from './configuration'
 import { venueDirectoryStatements } from '../discovery/configuration'
 import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
@@ -265,13 +266,23 @@ export async function updateVenueLocation(
     kind: 'venue',
     id: venueId,
   })
+  const current = await readVenueLocation(env, venueId)
+  if (current.version !== input.version)
+    throw new HTTPException(409, { message: 'venue_version_conflict' })
+  const locationChanged = !sameConfiguration(current.location, location)
   const auditId = crypto.randomUUID()
   const snapshots = await venueDirectoryStatements(env, venueId, auditId)
   // D1 batch is a transaction; changes() refers to the immediately preceding update.
   const result = await env.DB.batch([
     env.DB.prepare(
-      'UPDATE venue SET address_formatted=?,address_json=?,latitude=?,longitude=?,location_provider=?,location_provider_id=?,location_attribution=?,location_confirmed_at=?,location_source=?,version=version+1 WHERE id=? AND version=?',
-    ).bind(...locationValues(location), venueId, input.version),
+      'UPDATE venue SET address_formatted=?,address_json=?,latitude=?,longitude=?,location_provider=?,location_provider_id=?,location_attribution=?,location_confirmed_at=?,location_source=?,configuration_updated_at=CASE WHEN ? THEN ? ELSE configuration_updated_at END,version=version+1 WHERE id=? AND version=?',
+    ).bind(
+      ...locationValues(location),
+      Number(locationChanged),
+      Date.now(),
+      venueId,
+      input.version,
+    ),
     env.DB.prepare(
       'INSERT INTO staff_audit SELECT ?,?,?,?,?,?,? WHERE changes()=1',
     ).bind(

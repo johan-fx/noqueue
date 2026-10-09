@@ -1,3 +1,4 @@
+import plusIcon from '@/assets/administration/plus.svg'
 import { LocationPicker } from './LocationPicker'
 import { useId, useState } from 'react'
 import { useForm } from 'react-hook-form'
@@ -7,7 +8,7 @@ import {
   type ProvisionInput,
   type ServiceInput,
 } from '@noqueue/contracts/staff'
-import { Eye, EyeOff, Plus } from 'lucide-react'
+import { Eye, EyeOff } from 'lucide-react'
 import {
   Drawer,
   DrawerContent,
@@ -110,7 +111,7 @@ export function CreateEstablishmentDrawer({
   return (
     <Drawer open={open} onOpenChange={changeOpen} swipeDirection="right">
       <DrawerTrigger render={<Button />}>
-        <Plus aria-hidden="true" />
+        <img src={plusIcon} alt="" />
         Crear nuevo
       </DrawerTrigger>
       <DrawerContent className="w-full sm:w-md">
@@ -157,20 +158,7 @@ export function CreateEstablishmentDrawer({
                 <FieldError errors={[form.formState.errors[name]]} />
               </Field>
             ))}
-            <LocationPicker
-              key={resetKey}
-              scope={{
-                kind: 'provision',
-                id: form.watch('locationOperationId'),
-              }}
-              disabled={saving}
-              onSelection={(token) =>
-                form.setValue('locationToken', token, {
-                  shouldValidate: form.formState.isSubmitted,
-                })
-              }
-            />
-            <FieldError errors={[form.formState.errors.locationToken]} />
+            
             <PasswordField
               id={`${prefix}-ownerPassword`}
               label={passwordLabel}
@@ -200,6 +188,20 @@ export function CreateEstablishmentDrawer({
                 if (confirmError) setConfirmError('')
               }}
             />
+            <LocationPicker
+              key={resetKey}
+              scope={{
+                kind: 'provision',
+                id: form.watch('locationOperationId'),
+              }}
+              disabled={saving}
+              onSelection={(token) =>
+                form.setValue('locationToken', token, {
+                  shouldValidate: form.formState.isSubmitted,
+                })
+              }
+            />
+            <FieldError errors={[form.formState.errors.locationToken]} />
           </form>
         </div>
         <DrawerFooter className="border-t bg-background p-4 sm:flex-row sm:justify-end">

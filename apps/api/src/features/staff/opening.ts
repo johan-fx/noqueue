@@ -1,3 +1,4 @@
+import { touchVenueConfiguration } from './configuration'
 import { admissionState } from './availability'
 import { directoryConfigStatement } from '../discovery/configuration'
 import {
@@ -343,6 +344,10 @@ export async function runLifecycleCommand(
     input.action === 'disable_intelligence' ||
     input.action === 'enable_intelligence'
   ) {
+    const nextPolicy =
+      input.action === 'disable_intelligence' ? 'disabled' : 'automatic'
+    if (nextPolicy !== (config.intelligencePolicy ?? 'automatic'))
+      statements.push(touchVenueConfiguration(env, access.venueId, now))
     const source = JSON.stringify({
       ...config,
       intelligencePolicy:

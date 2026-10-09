@@ -2875,3 +2875,185 @@ it.each(['reception', 'pool'] as const)(
     ).toBe(409)
   },
 )
+
+it('filters establishments before pagination and exposes venue metadata', async () => {
+  const t = await tenant()
+  await env.DB.prepare('UPDATE venue SET name=? WHERE id=?')
+    .bind('Literal %_ Hotel', t.venueId)
+    .run()
+  const list = async (query: string) =>
+    (
+      await request('/staff/commercial/organizations?' + query, t.sales.cookie)
+    ).json() as Promise<{
+      items: {
+        venueId: string
+        serviceCount: number
+        configurationUpdatedAt: number | null
+      }[]
+    }>
+  const matching = await list('q=%25_&status=active')
+  expect(matching.items).toHaveLength(1)
+  expect(matching.items[0]).toMatchObject({
+    venueId: t.venueId,
+    serviceCount: 1,
+    configurationUpdatedAt: expect.any(Number),
+  })
+  expect((await list('q=absent')).items).toHaveLength(0)
+  expect((await list('status=suspended')).items).toHaveLength(0)
+})
+
+it('touches all and only company venues on real status changes and keeps legacy dates unknown', async () => {
+  const t = await tenant(),
+    another = await tenant()
+  const second = crypto.randomUUID()
+  await env.DB.prepare(
+    'INSERT INTO venue(id,organization_id,name) VALUES (?,?,?)',
+  )
+    .bind(second, t.organizationId, 'Legacy second')
+    .run()
+  const stamp = (id: string) =>
+    env.DB.prepare('SELECT configuration_updated_at FROM venue WHERE id=?')
+      .bind(id)
+      .first('configuration_updated_at')
+  expect(await stamp(second)).toBeNull()
+  const otherStamp = await stamp(another.venueId)
+  const path = `/staff/commercial/organizations/${t.organizationId}/status`
+  expect(
+    (await request(path, t.sales.cookie, 'PATCH', { status: 'active' })).status,
+  ).toBe(200)
+  expect(await stamp(second)).toBeNull()
+  expect(
+    (await request(path, t.sales.cookie, 'PATCH', { status: 'suspended' }))
+      .status,
+  ).toBe(200)
+  expect(await stamp(second)).toEqual(expect.any(Number))
+  expect(await stamp(second)).toBe(await stamp(t.venueId))
+  expect(await stamp(another.venueId)).toBe(otherStamp)
+  const saved = await stamp(second)
+  expect(
+    (await request(path, t.sales.cookie, 'PATCH', { status: 'suspended' }))
+      .status,
+  ).toBe(200)
+  expect(await stamp(second)).toBe(saved)
+  const list = await request(
+    '/staff/commercial/organizations?status=suspended',
+    t.sales.cookie,
+  )
+  expect(
+    (
+      (await list.json()) as {
+        items: { venueId: string; serviceCount: number }[]
+      }
+    ).items,
+  ).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ venueId: second, serviceCount: 0 }),
+      expect.objectContaining({ venueId: t.venueId, serviceCount: 1 }),
+    ]),
+  )
+  const before = await stamp(t.venueId)
+  expect(
+    (
+      await request(
+        `/staff/venues/${t.venueId}/queues`,
+        t.owner.cookie,
+        'POST',
+        input().services[0],
+        crypto.randomUUID(),
+      )
+    ).status,
+  ).toBe(404)
+  expect(await stamp(t.venueId)).toBe(before)
+})
+
+it('applies literal company/venue filters globally before the 24-row page boundary', async () => {
+  const t = await tenant()
+  const ids = Array.from(
+    { length: 30 },
+    (_, i) => `${t.venueId}-filtered-${String(i).padStart(2, '0')}`,
+  )
+  await env.DB.batch(
+    ids.map((id) =>
+      env.DB.prepare(
+        'INSERT INTO venue(id,organization_id,name) VALUES (?,?,?)',
+      ).bind(id, t.organizationId, 'Unique filtered %_ venue'),
+    ),
+  )
+  const read = async (query: string, cookie = t.sales.cookie) =>
+    (
+      await request('/staff/commercial/organizations?' + query, cookie)
+    ).json() as Promise<{
+      items: {
+        venueId: string
+        serviceCount: number
+        configurationUpdatedAt: number | null
+      }[]
+      hasMore: boolean
+    }>
+  const first = await read('q=Unique+filtered+%25_&status=active&page=1')
+  const second = await read('q=Unique+filtered+%25_&status=active&page=2')
+  expect(first.items).toHaveLength(24)
+  expect(first.hasMore).toBe(true)
+  expect(second.items).toHaveLength(6)
+  expect(second.hasMore).toBe(false)
+  expect(
+    new Set([...first.items, ...second.items].map((v) => v.venueId)).size,
+  ).toBe(30)
+  expect(
+    first.items.every(
+      (v) => v.serviceCount === 0 && v.configurationUpdatedAt === null,
+    ),
+  ).toBe(true)
+  expect(
+    (await read('q=Unique+filtered+%25_&status=suspended')).items,
+  ).toHaveLength(0)
+  const other = await identity('commercial_operator')
+  expect(
+    (await read('q=Unique+filtered+%25_', other.cookie)).items,
+  ).toHaveLength(0)
+  const admin = await identity('platform_admin')
+  expect(
+    (await read('q=Unique+filtered+%25_', admin.cookie)).items,
+  ).toHaveLength(24)
+  expect(
+    (
+      await request(
+        '/staff/commercial/organizations?status=closed',
+        t.sales.cookie,
+      )
+    ).status,
+  ).toBe(400)
+})
+it('timestamps added services and counts closed services without per-card reads', async () => {
+  const t = await tenant()
+  await env.DB.prepare(
+    'UPDATE venue SET configuration_updated_at=100 WHERE id=?',
+  )
+    .bind(t.venueId)
+    .run()
+  const key = crypto.randomUUID(),
+    body = input().services[0]
+  const path = `/staff/venues/${t.venueId}/queues`
+  expect((await request(path, t.owner.cookie, 'POST', body, key)).status).toBe(
+    201,
+  )
+  const stamp = () =>
+    env.DB.prepare('SELECT configuration_updated_at FROM venue WHERE id=?')
+      .bind(t.venueId)
+      .first('configuration_updated_at')
+  expect(await stamp()).not.toBe(100)
+  const saved = await stamp()
+  expect((await request(path, t.owner.cookie, 'POST', body, key)).status).toBe(
+    200,
+  )
+  expect(await stamp()).toBe(saved)
+  const list = await request('/staff/commercial/organizations', t.sales.cookie)
+  expect(((await list.json()) as { items: object[] }).items).toEqual([
+    expect.objectContaining({ venueId: t.venueId, serviceCount: 2 }),
+  ])
+  expect(
+    (await request(path, t.owner.cookie, 'POST', { ...body, name: 'Bad' }, key))
+      .status,
+  ).toBe(409)
+  expect(await stamp()).toBe(saved)
+})

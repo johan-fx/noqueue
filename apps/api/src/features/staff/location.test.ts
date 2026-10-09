@@ -144,6 +144,24 @@ describe('verified venue locations', () => {
       locationToken: token.token,
     })
     expect(snapshot.version).toBe(1)
+    const stamp = await env.DB.prepare(
+      'SELECT configuration_updated_at FROM venue WHERE id=?',
+    )
+      .bind(venue)
+      .first('configuration_updated_at')
+    expect(stamp).toEqual(expect.any(Number))
+    const noOp = await updateVenueLocation(env, actor, org, venue, {
+      version: 1,
+      locationToken: token.token,
+    })
+    expect(noOp.version).toBe(2)
+    expect(
+      await env.DB.prepare(
+        'SELECT configuration_updated_at FROM venue WHERE id=?',
+      )
+        .bind(venue)
+        .first('configuration_updated_at'),
+    ).toBe(stamp)
     await expect(
       updateVenueLocation(env, actor, org, venue, {
         version: 0,
@@ -156,7 +174,7 @@ describe('verified venue locations', () => {
       )
         .bind(venue)
         .first('n'),
-    ).toBe(1)
+    ).toBe(2)
     expect(
       await env.DB.prepare('SELECT address_formatted FROM venue WHERE id=?')
         .bind(venue)
@@ -200,4 +218,36 @@ it('rolls back location fields when the audit insert fails', async () => {
       .bind(venue)
       .first('address_formatted'),
   ).toBeNull()
+})
+
+it('leaves historical configuration unknown and rolls back the timestamp with location audit failures', async () => {
+  const org = crypto.randomUUID(),
+    venue = crypto.randomUUID()
+  await env.DB.batch([
+    env.DB.prepare('INSERT INTO organization(id,name) VALUES (?,?)').bind(
+      org,
+      'Legacy',
+    ),
+    env.DB.prepare(
+      'INSERT INTO venue(id,organization_id,name) VALUES (?,?,?)',
+    ).bind(venue, org, 'Legacy'),
+  ])
+  const stamp = () =>
+    env.DB.prepare('SELECT configuration_updated_at FROM venue WHERE id=?')
+      .bind(venue)
+      .first('configuration_updated_at')
+  expect(await stamp()).toBeNull()
+  const token = await issueLocationToken(
+    env,
+    'absent',
+    { kind: 'venue', id: venue },
+    location,
+  )
+  await expect(
+    updateVenueLocation(env, 'absent', org, venue, {
+      version: 0,
+      locationToken: token.token,
+    }),
+  ).rejects.toThrow()
+  expect(await stamp()).toBeNull()
 })

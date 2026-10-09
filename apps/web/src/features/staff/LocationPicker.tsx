@@ -280,8 +280,7 @@ function AddressCombobox({
         </span>
       ))}
       <p className="text-sm text-muted-foreground">
-        Selecciona una dirección antes de guardar. Todos los servicios
-        compartirán esta ubicación.
+        Todos los servicios compartirán esta ubicación.
       </p>
     </div>
   )

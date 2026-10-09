@@ -57,9 +57,7 @@ it('loads direct detail and restores only a validated list page', async () => {
 })
 it('rejects noncommercial deep links', async () => {
   show(false, undefined, false)
-  expect(await screen.findByRole('alert')).toHaveTextContent(
-    'No tienes acceso',
-  )
+  expect(await screen.findByRole('alert')).toHaveTextContent('No tienes acceso')
   expect(api).toHaveBeenCalledTimes(1)
 })
 it('falls back to the list for invalid return state', async () => {
@@ -74,4 +72,15 @@ it('opens the same management detail for commercial operators', async () => {
   show(false)
   expect(await screen.findByText('Hotel Madrid commercial')).toBeVisible()
   expect(api).toHaveBeenCalledWith('/commercial/venues/hotel')
+})
+
+it('restores the validated search, status and page from establishment detail', async () => {
+  show(true, {
+    returnPage: 3,
+    returnSearch: 'page=3&q=Hotel+Madrid&status=suspended&untrusted=ignored',
+  })
+  await screen.findByText('Hotel Madrid commercial')
+  expect(
+    screen.getByRole('link', { name: 'Volver a establecimientos' }),
+  ).toHaveAttribute('href', '/staff?page=3&q=Hotel+Madrid&status=suspended')
 })

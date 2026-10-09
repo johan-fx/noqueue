@@ -341,3 +341,89 @@ it.each(['reception', 'pool'] as const)(
     ).toBeVisible()
   },
 )
+
+it('uses one temporal baseline through waiting, delay, call and arrival', () => {
+  const current: Entry = {
+    ...entry('waiting'),
+    etaMinutes: 50,
+    estimateQuality: 'estimated',
+    initialEtaMinutes: 50,
+  }
+  const view = (now = 1000) => (
+    <MemoryRouter>
+      <TurnView
+        entry={current}
+        locale="en"
+        now={now}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>
+  )
+  const { rerender, container } = render(view())
+  const ring = () => screen.getByRole('progressbar')
+  const arc = () => container.querySelector('circle[stroke="currentColor"]')
+  expect(ring()).toHaveAccessibleName('Estimated wait: 50 min')
+  expect(ring()).toHaveAttribute('aria-valuenow', '0')
+  expect(arc()).toBeNull()
+  for (const [remaining, percentage] of [
+    [25, 50],
+    [40, 20],
+    [10, 80],
+  ]) {
+    current.etaMinutes = remaining!
+    current.customer!.phase = remaining === 10 ? 'approaching' : 'waiting'
+    rerender(view())
+    expect(ring()).toHaveAttribute('aria-valuenow', String(percentage))
+    const [length, circumference] = arc()!
+      .getAttribute('stroke-dasharray')!
+      .split(' ')
+      .map(Number)
+    expect(length! / circumference!).toBeCloseTo(percentage! / 100)
+    expect(screen.getByText(String(remaining), { exact: true })).toBeVisible()
+  }
+  expect(ring()).toHaveClass('text-orange-500')
+  current.customer!.phase = 'called'
+  current.customer!.calledAt = 1000
+  current.customer!.arrivalDeadlineAt = 301000
+  current.estimateQuality = 'unknown'
+  for (const [now, percentage, countdown] of [
+    [1000, 90, '5:00'],
+    [181000, 96, '2:00'],
+    [301000, 100, '0:00'],
+  ] as const) {
+    rerender(view(now))
+    expect(ring()).toHaveAttribute('aria-valuenow', String(percentage))
+    expect(ring()).toHaveClass('text-red-700')
+    expect(screen.getByText(countdown as string, { exact: true })).toBeVisible()
+  }
+  expect(arc()).not.toHaveAttribute('stroke-dasharray')
+  expect(
+    screen.getByRole('heading', { name: 'It is your turn!' }),
+  ).toBeVisible()
+  current.customer!.phase = 'arrived'
+  rerender(view())
+  expect(ring()).toHaveAttribute('aria-valuenow', '100')
+  expect(ring()).toHaveClass('text-green-600')
+  expect(ring()).not.toHaveAttribute('aria-live')
+})
+
+it('keeps unknown progress track-only with no numeric ARIA value', () => {
+  const { container } = render(
+    <MemoryRouter>
+      <TurnView
+        entry={entry('waiting')}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+  expect(screen.getByRole('progressbar')).toHaveAttribute(
+    'aria-valuetext',
+    'Sin estimación disponible',
+  )
+  expect(container.querySelectorAll('circle')).toHaveLength(1)
+})

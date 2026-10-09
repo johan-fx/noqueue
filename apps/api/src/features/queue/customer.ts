@@ -318,8 +318,14 @@ export async function runCustomerCommand(
           'UPDATE queue_entry SET sequence=(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) WHERE id=?',
         ).bind(queueId, entry.id),
         env.DB.prepare(
-          "UPDATE queue_entry SET sequence=?,status='called',version=version+1,call_cycle=call_cycle+1,called_at=?,arrival_deadline_at=? WHERE id=? AND status='waiting'",
-        ).bind(entry.sequence, now, deadline, successor.id),
+          "UPDATE queue_entry SET sequence=?,status='called',version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=call_cycle+1,called_at=?,arrival_deadline_at=? WHERE id=? AND status='waiting'",
+        ).bind(
+          entry.sequence,
+          state.config.graceMinutes ?? 5,
+          now,
+          deadline,
+          successor.id,
+        ),
         env.DB.prepare(
           "UPDATE queue_entry SET sequence=?,status='waiting',version=version+1,call_cycle=call_cycle+1,called_at=NULL,arrival_deadline_at=NULL WHERE id=? AND status='called'",
         ).bind(successor.sequence, entry.id),

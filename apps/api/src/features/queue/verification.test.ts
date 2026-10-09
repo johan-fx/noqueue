@@ -413,3 +413,180 @@ it('Q-BOUNDARIES D1 learning retains only the last 30 completed durations', asyn
       )
   }
 }, 30_000)
+
+it('Q-PROGRESS captures the first positive parallel ETA, never zero, and survives polling and delay', async () => {
+  const { recalculateQueue } = await import('./projection')
+  const t = await setup(),
+    now = Date.now()
+  const ids = [
+    await entry(t.queue, now),
+    await entry(t.queue, now),
+    await entry(t.queue, now),
+  ]
+  const state = await recalculateQueue(env, t.queue, now)
+  const rows = await env.DB.prepare(
+    'SELECT id,progress_initial_eta_minutes AS initial,version FROM queue_entry WHERE queue_id=? ORDER BY sequence',
+  )
+    .bind(t.queue)
+    .all()
+  expect(rows.results.slice(0, 1)).toMatchObject([
+    { initial: null, version: 0 },
+  ])
+  const positive = state.projections.find(
+    (p) => p.etaMinutes > 0 && p.quality !== 'unknown',
+  )!
+  expect(positive).toBeDefined()
+  check(
+    'Q-PROGRESS',
+    'first positive parallel ETA baseline',
+    now,
+    rows.results.find((r) => r.id === positive.id)?.initial,
+    positive.etaMinutes,
+  )
+  await env.DB.prepare(
+    "UPDATE queue SET config=json_set(config,'$.spaces[0].tableTypes[1].averageMinutes',100) WHERE id=?",
+  )
+    .bind(t.queue)
+    .run()
+  await recalculateQueue(env, t.queue, now + minute)
+  await recalculateQueue(env, t.queue, now + 2 * minute)
+  expect(
+    await env.DB.prepare(
+      'SELECT progress_initial_eta_minutes AS initial,version FROM queue_entry WHERE id=?',
+    )
+      .bind(positive.id)
+      .first(),
+  ).toEqual({ initial: positive.etaMinutes, version: 0 })
+  // A zero estimate is not a denominator: once a party acquires a positive wait it captures that value.
+  await env.DB.prepare('UPDATE queue_entry SET sequence=99 WHERE id=?')
+    .bind(ids[0]!)
+    .run()
+  const later = await recalculateQueue(env, t.queue, now)
+  const laterPositive = later.projections.find((p) => p.id === ids[0])!
+  expect(laterPositive.etaMinutes).toBeGreaterThan(0)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT progress_initial_eta_minutes AS initial FROM queue_entry WHERE id=?',
+      )
+        .bind(ids[0]!)
+        .first()
+    )?.initial,
+  ).toBe(laterPositive.etaMinutes)
+  check(
+    'Q-PROGRESS',
+    'zero denominator captures its first later positive ETA',
+    now,
+    (
+      await env.DB.prepare(
+        'SELECT progress_initial_eta_minutes AS initial FROM queue_entry WHERE id=?',
+      )
+        .bind(ids[0]!)
+        .first()
+    )?.initial,
+    laterPositive.etaMinutes,
+  )
+})
+
+it('Q-PROGRESS captures grace in the versioned call, replays safely and never resets on restore/new call', async () => {
+  const { recalculateQueue } = await import('./projection')
+  const t = await setup(),
+    now = Date.now(),
+    id = await entry(t.queue, now)
+  await recalculateQueue(env, t.queue, now)
+  const get = () =>
+    env.DB.prepare(
+      'SELECT progress_initial_eta_minutes AS initial,version,status FROM queue_entry WHERE id=?',
+    )
+      .bind(id)
+      .first()
+  expect((await get())?.initial).toBeNull()
+  await expect(
+    runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      { action: 'call', entryId: id, version: 9 },
+      now,
+    ),
+  ).rejects.toThrow('version_conflict')
+  expect((await get())?.initial).toBeNull()
+  const key = crypto.randomUUID()
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    key,
+    { action: 'call', entryId: id, version: 0 },
+    now,
+  )
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    key,
+    { action: 'call', entryId: id, version: 0 },
+    now + minute,
+  )
+  expect(await get()).toEqual({ initial: 5, version: 1, status: 'called' })
+  await expireArrivals(env, t.queue, now + 5 * minute)
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    {
+      action: 'restore',
+      entryId: id,
+      version: 2,
+      overrideReason: 'Confirmed retry',
+    },
+    now + 6 * minute,
+  )
+  await env.DB.prepare(
+    "UPDATE queue SET config=json_set(config,'$.graceMinutes',10) WHERE id=?",
+  )
+    .bind(t.queue)
+    .run()
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    { action: 'call', entryId: id, version: 3 },
+    now + 6 * minute,
+  )
+  check(
+    'Q-PROGRESS',
+    'same baseline after expiry, restore and longer new grace',
+    now + 6 * minute,
+    await get(),
+    { initial: 5, version: 4, status: 'called' },
+  )
+})
+
+it('Q-PROGRESS does not capture grace for an already-present arrival', async () => {
+  const t = await setup(),
+    now = Date.now(),
+    id = await entry(t.queue, now)
+  await runQueueCommand(
+    env,
+    t.actor,
+    t.queue,
+    crypto.randomUUID(),
+    { action: 'call', entryId: id, version: 0, arrivalMode: 'present' },
+    now,
+  )
+  check(
+    'Q-PROGRESS',
+    'already-present arrival leaves grace baseline unset',
+    now,
+    await env.DB.prepare(
+      'SELECT progress_initial_eta_minutes AS initial,status FROM queue_entry WHERE id=?',
+    )
+      .bind(id)
+      .first(),
+    { initial: null, status: 'completed' },
+  )
+})

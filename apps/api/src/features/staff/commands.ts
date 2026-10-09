@@ -316,9 +316,12 @@ export async function runQueueCommand(
   await env.DB.batch([
     ...extra,
     env.DB.prepare(
-      `UPDATE queue_entry SET status=?,version=version+1,call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
+      `UPDATE queue_entry SET status=?,version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
     ).bind(
       status,
+      input.action === 'call' && input.arrivalMode !== 'present'
+        ? state.config?.graceMinutes ?? (quick ? 2 : 5)
+        : null,
       input.action,
       input.action === 'call'
         ? now

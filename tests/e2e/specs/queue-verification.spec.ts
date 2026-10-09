@@ -287,3 +287,120 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
       await guest.close()
     }
   })
+
+test('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call deadline and arrival', async ({
+  page,
+  evidence,
+}, info) => {
+  const token = 'a'.repeat(64)
+  const now = 1_800_000_000_000
+  await page.clock.install({ time: now })
+  const snapshot = {
+    code: 'PROGRESS',
+    position: 6,
+    etaMinutes: 50,
+    estimateQuality: 'estimated',
+    initialEtaMinutes: 50,
+    status: 'waiting',
+    notification: 'disabled',
+    customer: {
+      service: {
+        id: 'progress',
+        name: 'Restaurant',
+        venueName: 'Hotel',
+        open: 1,
+        type: 'restaurant',
+        receptionServices: [],
+        spaces: [],
+      },
+      displayName: 'Guest',
+      partySize: 4,
+      preferredSpaceId: null,
+      locale: 'en',
+      version: 0,
+      serverNow: now,
+      createdAt: now,
+      calledAt: null as number | null,
+      arrivalDeadlineAt: null as number | null,
+      arrivedAt: null as number | null,
+      phase: 'waiting',
+      actions: ['cancel', 'yield'],
+    },
+  }
+  await page.route(`**/api/v1/public/entries/${token}`, (route) =>
+    route.fulfill({ json: snapshot }),
+  )
+  await page.goto(`/t/${token}?lang=en`)
+  const ring = page.getByRole('progressbar')
+  const arc = ring.locator('circle[stroke="currentColor"]')
+  const checkProgress = async (
+    percentage: number,
+    label: string,
+    color: string,
+  ) => {
+    await expect(ring).toHaveAttribute('aria-valuenow', String(percentage))
+    await expect(ring).toContainText(label)
+    await expect(ring).toHaveClass(new RegExp(color))
+    if (percentage === 0) await expect(arc).toHaveCount(0)
+    else if (percentage === 100)
+      expect(await arc.getAttribute('stroke-dasharray')).toBeNull()
+    else {
+      const dash = (await arc.getAttribute('stroke-dasharray'))!
+        .split(' ')
+        .map(Number)
+      expect(dash[0]! / dash[1]!).toBeCloseTo(percentage / 100)
+    }
+    await prove(
+      info,
+      evidence,
+      'Q-BROWSER-PROGRESS',
+      `${label}: temporal arc and numeric label`,
+      Number(await ring.getAttribute('aria-valuenow')),
+      percentage,
+    )
+  }
+  await checkProgress(0, '50', 'text-gray-700')
+  // Waiting changes only when the next backend poll delivers a different estimate.
+  await page.clock.runFor(2000)
+  await checkProgress(0, '50', 'text-gray-700')
+  for (const [remaining, percentage] of [
+    [25, 50],
+    [40, 20],
+    [10, 80],
+  ]) {
+    snapshot.etaMinutes = remaining!
+    snapshot.customer.phase = remaining === 10 ? 'approaching' : 'waiting'
+    snapshot.customer.serverNow =
+      now + (await page.evaluate(() => Date.now())) - now
+    await page.clock.runFor(5000)
+    await checkProgress(
+      percentage!,
+      String(remaining),
+      remaining === 10 ? 'text-orange-500' : 'text-gray-700',
+    )
+  }
+  snapshot.customer.phase = 'called'
+  snapshot.status = 'called'
+  snapshot.estimateQuality = 'unknown'
+  snapshot.customer.calledAt = now
+  snapshot.customer.arrivalDeadlineAt = now + 5 * 60000
+  snapshot.customer.serverNow = now
+  await page.reload()
+  await checkProgress(90, '5:00', 'text-red-700')
+  await page.clock.runFor(1000)
+  await expect(ring).toContainText('4:59')
+  // Server-time snapshots remain authoritative after refresh/reload.
+  snapshot.customer.serverNow = now + 3 * 60000
+  await page.reload()
+  await checkProgress(96, '2:00', 'text-red-700')
+  snapshot.customer.serverNow = now + 5 * 60000
+  await page.reload()
+  await checkProgress(100, '0:00', 'text-red-700')
+  await expect(
+    page.getByRole('heading', { name: 'It is your turn!' }),
+  ).toBeVisible()
+  snapshot.customer.phase = 'arrived'
+  snapshot.status = 'completed'
+  await page.reload()
+  await checkProgress(100, 'Arrival confirmed', 'text-green-600')
+})

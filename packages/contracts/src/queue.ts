@@ -136,6 +136,7 @@ export const publicVenueSchema = z.object({
 })
 export type PublicVenue = z.infer<typeof publicVenueSchema>
 export const entrySchema = z.object({
+  initialEtaMinutes: z.number().int().positive().nullable().optional(),
   customer: z
     .object({
       service: publicServiceSchema,

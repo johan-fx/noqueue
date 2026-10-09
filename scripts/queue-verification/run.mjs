@@ -60,6 +60,7 @@ await run('harness', [
   'scripts/queue-verification/isolation.test.mjs',
   'scripts/queue-verification/vitest-reporter.test.mjs',
   'scripts/queue-verification/replay.test.mjs',
+  'scripts/queue-verification/progress-migration.test.mjs',
 ])
 await run('api', [
   '--filter',
@@ -115,6 +116,7 @@ const required = [
   'Q-BROWSER-CLOSE',
   'Q-BROWSER-MEAN',
   'Q-BROWSER-LEARNING',
+  'Q-BROWSER-PROGRESS',
 ]
 let scenarios = []
 try {

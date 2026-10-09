@@ -233,6 +233,7 @@ describe('queue vertical in workerd', () => {
     const recovered = await request(`/public/entries/${entry.recoveryToken}`)
     expect(recovered.status).toBe(200)
     expect(await recovered.json()).toEqual({
+      initialEtaMinutes: null,
       code: entry.code,
       position: 1,
       etaMinutes: 0,

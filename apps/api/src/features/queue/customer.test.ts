@@ -123,6 +123,7 @@ it('allows a called entry to pass its reservation to the next compatible waiting
       arrival_deadline_at: null,
     },
   ])
+  expect((await env.DB.prepare('SELECT progress_initial_eta_minutes AS initial FROM queue_entry WHERE id=?').bind(entries[2]!.id).first())?.initial).toBe(5)
   const allocations = (
     await env.DB.prepare(
       'SELECT entry_id,released_at,outcome FROM queue_allocation WHERE queue_id=?',
@@ -448,6 +449,8 @@ it('projects waiting actions and keeps yield/cancel available while called', asy
     .run()
   const waiting = await readEntrySnapshot(env, entries[2]!.token)
   expect(waiting?.customer?.phase).toBe('waiting')
+  expect(waiting).toHaveProperty('initialEtaMinutes', null)
+  expect(await readEntrySnapshot(env, entries[2]!.token)).toHaveProperty('initialEtaMinutes', null)
   expect(waiting?.customer?.actions).toEqual(['update', 'cancel', 'yield'])
   await env.DB.prepare("UPDATE queue_entry SET status='called' WHERE id=?")
     .bind(entries[2]!.id)
@@ -531,3 +534,53 @@ it.each(['reception', 'pool'])(
     ).rejects.toThrow('no_compatible_successor')
   },
 )
+
+it('captures unknown-to-positive once and shares immutable progress across edits, yield and separate reads', async () => {
+  const { recalculateQueue } = await import('./projection')
+  const { readEntrySnapshot } = await import('./entries')
+  const { queueId, entries } = await fixture()
+  const now = Date.now()
+  const id = entries[2]!.id,
+    token = entries[2]!.token
+  await recalculateQueue(env, queueId, now)
+  expect((await readEntrySnapshot(env, token))?.initialEtaMinutes).toBeNull()
+  await env.DB.prepare(
+    "UPDATE queue SET config=json_set(config,'$.resourceStateKnown',json('true')) WHERE id=?",
+  )
+    .bind(queueId)
+    .run()
+  await recalculateQueue(env, queueId, now)
+  const captured = (await readEntrySnapshot(env, token))!.initialEtaMinutes!
+  expect(captured).toBeGreaterThan(0)
+  await runCustomerCommand(
+    env,
+    queueId,
+    token,
+    crypto.randomUUID(),
+    {
+      action: 'update',
+      version: 0,
+      displayName: 'Guest',
+      partySize: 4,
+      preferredSpaceId: 'terrace',
+      locale: 'en',
+    },
+    now,
+  )
+  const deviceOne = await readEntrySnapshot(env, token)
+  const deviceTwo = await readEntrySnapshot(env, token)
+  expect(deviceOne?.initialEtaMinutes).toBe(captured)
+  expect(deviceTwo?.initialEtaMinutes).toBe(captured)
+  await runCustomerCommand(
+    env,
+    queueId,
+    entries[0]!.token,
+    crypto.randomUUID(),
+    { action: 'yield', version: 0 },
+    now,
+  )
+  await recalculateQueue(env, queueId, now + 60000)
+  expect((await readEntrySnapshot(env, token))?.initialEtaMinutes).toBe(
+    captured,
+  )
+})

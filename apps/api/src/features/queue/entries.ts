@@ -74,11 +74,12 @@ export async function readEntrySnapshot(
 async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   const row = await env.DB.prepare(
     `SELECT (SELECT COUNT(*) FROM queue_entry WHERE queue_id=? AND status='waiting' AND sequence<=?) AS position,
-    q.average_minutes, COALESCE(n.status,'disabled') AS notification FROM queue q LEFT JOIN notification_outbox n ON n.id=(SELECT latest.id FROM notification_outbox latest WHERE latest.entry_id=? ORDER BY latest.rowid DESC LIMIT 1) WHERE q.id=?`,
+    e.progress_initial_eta_minutes, q.average_minutes, COALESCE(n.status,'disabled') AS notification FROM queue q JOIN queue_entry e ON e.id=? LEFT JOIN notification_outbox n ON n.id=(SELECT latest.id FROM notification_outbox latest WHERE latest.entry_id=? ORDER BY latest.rowid DESC LIMIT 1) WHERE q.id=?`,
   )
-    .bind(entry.queue_id, entry.sequence, entry.id, entry.queue_id)
+    .bind(entry.queue_id, entry.sequence, entry.id, entry.id, entry.queue_id)
     .first<{
       position: number
+      progress_initial_eta_minutes: number | null
       average_minutes: number
       notification: string
     }>()
@@ -144,6 +145,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   }
   return entrySchema.parse({
     customer,
+    initialEtaMinutes: row.progress_initial_eta_minutes,
     code: entry.code,
     position: entry.status === 'waiting' ? row.position : 0,
     etaMinutes: 0,

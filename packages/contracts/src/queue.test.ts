@@ -148,3 +148,26 @@ it('accepts manual v1/v2 while keeping the public contract on v1', () => {
     }).success,
   ).toBe(false)
 })
+
+it('preserves an optional nullable positive integer initial ETA baseline', async () => {
+  const { entrySchema } = await import('./queue')
+  const base = {
+    code: 'ABC',
+    position: 1,
+    etaMinutes: 0,
+    status: 'waiting',
+    notification: 'disabled',
+  }
+  expect(entrySchema.parse(base)).not.toHaveProperty('initialEtaMinutes')
+  expect(entrySchema.parse({ ...base, initialEtaMinutes: 50 })).toHaveProperty(
+    'initialEtaMinutes',
+    50,
+  )
+  expect(
+    entrySchema.parse({ ...base, initialEtaMinutes: null }),
+  ).toHaveProperty('initialEtaMinutes', null)
+  for (const initialEtaMinutes of [0, -1, 0.5, NaN, Infinity, '50'])
+    expect(entrySchema.safeParse({ ...base, initialEtaMinutes }).success).toBe(
+      false,
+    )
+})

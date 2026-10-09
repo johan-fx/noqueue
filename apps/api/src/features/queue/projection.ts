@@ -282,6 +282,12 @@ export async function recalculateQueue(
     }
   }
   for (const p of state.projections) {
+    if (p.quality !== 'unknown' && p.etaMinutes > 0)
+      statements.push(
+        env.DB.prepare(
+          'UPDATE queue_entry SET progress_initial_eta_minutes=? WHERE id=? AND progress_initial_eta_minutes IS NULL',
+        ).bind(p.etaMinutes, p.id),
+      )
     const prior = await env.DB.prepare(
       'SELECT position,eta_minutes,predicted_at,quality,resource_id,callable,revision FROM queue_projection WHERE entry_id=?',
     )

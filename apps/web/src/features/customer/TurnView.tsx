@@ -9,6 +9,7 @@ import {
   StepperIndicator,
 } from '@/components/reui/stepper'
 import { CustomerFooter, type Locale } from './shared'
+import { turnProgress } from './turn-progress'
 
 export function TurnView({
   entry,
@@ -90,11 +91,14 @@ export function TurnView({
     entry.estimateQuality !== 'unknown' && entry.estimateQuality !== undefined
   const color = arrived
     ? 'text-green-600'
-    : expired
+    : expired || called
     ? 'text-red-700'
-    : approaching || called
+    : approaching
     ? 'text-orange-500'
     : 'text-gray-700'
+  const progress = turnProgress(entry, now)
+  const percentage = progress == null ? undefined : Math.round(progress * 100)
+  const circumference = 2 * Math.PI * 80
   const labels = es
     ? [
         'Lista virtual',
@@ -192,12 +196,27 @@ export function TurnView({
         )}
         {!cancelled && (
           <div
+            role="progressbar"
             aria-label={
               active && !called && known
                 ? es
                   ? `Espera aproximada: ${entry.etaMinutes} min`
                   : `Estimated wait: ${entry.etaMinutes} min`
-                : undefined
+                : es
+                ? 'Progreso de la espera'
+                : 'Waiting progress'
+            }
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={percentage}
+            aria-valuetext={
+              percentage == null
+                ? es
+                  ? 'Sin estimación disponible'
+                  : 'No estimate available'
+                : es
+                ? `Progreso de la espera: ${percentage}%`
+                : `Waiting progress: ${percentage}%`
             }
             className={`relative mx-auto grid size-43 shrink-0 place-items-center ${color}`}
           >
@@ -214,22 +233,22 @@ export function TurnView({
                 stroke="var(--secondary)"
                 strokeWidth="12"
               />
-              <circle
-                cx="86"
-                cy="86"
-                r="80"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="12"
-                strokeLinecap="round"
-                strokeDasharray={
-                  arrived || expired
-                    ? undefined
-                    : approaching
-                    ? '435 503'
-                    : '340 503'
-                }
-              />
+              {progress != null && progress > 0 && (
+                <circle
+                  cx="86"
+                  cy="86"
+                  r="80"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="12"
+                  strokeLinecap="round"
+                  strokeDasharray={
+                    progress === 1
+                      ? undefined
+                      : `${progress * circumference} ${circumference}`
+                  }
+                />
+              )}
             </svg>
             {arrived ? (
               <div className="relative grid justify-items-center gap-3 text-xs">

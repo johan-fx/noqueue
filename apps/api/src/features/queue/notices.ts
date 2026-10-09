@@ -1,4 +1,6 @@
 import { copyVersion } from '../../integrations/whatsapp-copy-v3'
+import type { LifecycleV4Variant } from '../../integrations/whatsapp-copy-v4'
+import type { WhatsAppActionPhase } from './whatsapp-actions'
 export type QueueNoticeKind =
   | 'ready'
   | 'approaching'
@@ -9,8 +11,16 @@ export type QueueNoticeKind =
   | 'service_ended'
 export type QueueNoticeSnapshot = {
   schemaVersion: 2
-  copyVersion?: 2 | 3
+  copyVersion?: 2 | 3 | 4
+  copyVariant?: LifecycleV4Variant
+  actionContext?: {
+    phase: WhatsAppActionPhase
+    callCycle: number
+    expiresAt: number
+  }
   approachRecommended?: boolean
+  /** V4 joined intents stay undispatchable until their canonical projection is frozen. */
+  projectionPending?: boolean
   serviceName: string
   ahead: number | null
   etaMinutes: number | null
@@ -19,6 +29,61 @@ export type QueueNoticeSnapshot = {
   resourceName: string | null
   arrivalDeadlineAt: number | null
   reason?: 'customer_cancel' | 'staff_cancel' | 'service_ended'
+}
+
+function v4Variant(kind: QueueNoticeKind, snapshot: QueueNoticeSnapshot) {
+  if (snapshot.copyVariant) return snapshot.copyVariant
+  if (kind === 'approaching') return 'approaching'
+  if (kind === 'delayed') return 'delayed'
+  if (kind === 'improved')
+    return snapshot.approachRecommended
+      ? 'improved_wait_recommended'
+      : 'improved_wait_neutral'
+  if (kind === 'ready') return 'ready'
+  if (kind === 'expired') return 'expired'
+  if (kind === 'service_ended') return 'service_ended'
+  if (kind === 'cancelled') {
+    if (snapshot.reason === 'customer_cancel') return 'cancelled_customer'
+    if (snapshot.reason === 'staff_cancel') return 'cancelled_staff'
+    return 'cancelled_unknown'
+  }
+  throw new Error('Unsupported v4 notice kind')
+}
+
+function freezeV4Snapshot(
+  kind: QueueNoticeKind,
+  snapshot: QueueNoticeSnapshot,
+  now: number,
+  callCycle: number,
+): QueueNoticeSnapshot {
+  const variant = v4Variant(kind, snapshot)
+  const actionPhase =
+    variant === 'approaching' ||
+    variant === 'improved_wait_recommended' ||
+    variant === 'improved_wait_neutral'
+      ? 'waiting'
+      : variant === 'ready' || variant === 'improved_ready'
+        ? 'called'
+        : null
+  const snapshotWithoutAction = { ...snapshot }
+  delete snapshotWithoutAction.actionContext
+  return {
+    ...snapshotWithoutAction,
+    copyVersion: 4,
+    copyVariant: variant,
+    ...(actionPhase
+      ? {
+          actionContext: {
+            phase: actionPhase,
+            callCycle,
+            expiresAt:
+              actionPhase === 'called'
+                ? snapshot.arrivalDeadlineAt ?? now + 86_400_000
+                : now + 86_400_000,
+          },
+        }
+      : {}),
+  }
 }
 /** Preserve an observable terminal intent when a selected profile cannot render legacy data. */
 export function unavailableCopyStatement(
@@ -69,7 +134,7 @@ export function noticeStatement(
   const idempotencyKey = snapshot
     ? `${entryId}:${kind}:v2:r${revision}:c${callCycle}`
     : `${entryId}:${kind}`
-  if (copyVersion(env) === 3 && !configuredService)
+  if ((copyVersion(env) === 3 || copyVersion(env) === 4) && !configuredService)
     return unavailableCopyStatement(
       env,
       entryId,
@@ -90,7 +155,9 @@ export function noticeStatement(
       kind,
       now,
       JSON.stringify({
-        ...snapshot,
+        ...(copyVersion(env) === 4
+          ? freezeV4Snapshot(kind, snapshot, now, callCycle)
+          : snapshot),
         copyVersion: copyVersion(env) ?? 'invalid',
       }),
       revision,
@@ -112,7 +179,7 @@ export function noticeStatement(
 export async function publishNotice(
   env: CloudflareBindings,
   entryId: string,
-  kind: QueueNoticeKind,
+  kind: QueueNoticeKind | 'action_result',
 ) {
   try {
     const rows = await env.DB.prepare(

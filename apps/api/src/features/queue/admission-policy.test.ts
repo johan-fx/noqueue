@@ -1,4 +1,5 @@
 import { whatsappV3Catalog } from '../../integrations/whatsapp-copy-v3'
+import { whatsappV4Catalog } from '../../integrations/whatsapp-copy-v4'
 import { describe, expect, it } from 'vitest'
 import { publicWhatsappAdmissionError } from './entries'
 
@@ -121,4 +122,35 @@ it('requires every selected-locale v3 variant and keeps locale readiness indepen
       ),
     ).toBe('whatsapp_unavailable')
   }
+})
+
+it('fails closed for v4 until all selected-locale templates are registered and approved', () => {
+  const configured = Object.fromEntries(
+    whatsappV4Catalog
+      .filter((template) => template.locale === 'es')
+      .map((template) => [template.binding, template.name]),
+  )
+  const ready = bindings({
+    ...configured,
+    WHATSAPP_COPY_VERSION: '4',
+    WHATSAPP_V4_TEMPLATES_APPROVED: 'true',
+  })
+  expect(publicWhatsappAdmissionError(ready, contact, 'es')).toBeNull()
+  expect(publicWhatsappAdmissionError(ready, contact, 'en')).toBe(
+    'whatsapp_unavailable',
+  )
+  expect(
+    publicWhatsappAdmissionError(
+      { ...ready, WHATSAPP_V4_TEMPLATES_APPROVED: 'false' },
+      contact,
+      'es',
+    ),
+  ).toBe('whatsapp_unavailable')
+  const missingOne = {
+    ...ready,
+    [whatsappV4Catalog.find((template) => template.locale === 'es')!.binding]: '',
+  }
+  expect(publicWhatsappAdmissionError(missingOne, contact, 'es')).toBe(
+    'whatsapp_unavailable',
+  )
 })

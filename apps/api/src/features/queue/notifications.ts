@@ -1,11 +1,25 @@
 import { deliveryTraceStatement, purgeDeliveryTrace } from './delivery-trace'
 import { confirmEntry, confirmationExperimentEnabled } from './confirmation'
 import { queueCoordinator, openExperimentRecipientAllowed } from './experiment'
+import { recalculateQueue } from './projection'
 import { z } from 'zod'
 import { createWhatsAppSender } from '../../integrations/360dialog'
 import { decryptPhone, recoveryToken } from './crypto'
 import { evaluateEstimateNotice } from './estimate-notices'
 import type { QueueNoticeSnapshot } from './notices'
+import {
+  renderWhatsAppActionSelectorLabel,
+  signWhatsAppAction,
+} from './whatsapp-actions'
+const actionResultSnapshotSchema = z.object({
+  schemaVersion: z.literal(1),
+  copyVersion: z.literal(4),
+  action: z.enum(['yield', 'cancel']),
+  textBody: z.string().min(1).max(4096),
+  webhookEventId: z.string().uuid(),
+  providerContextId: z.string().min(1).max(512),
+  occurredAt: z.number().int().nonnegative(),
+})
 export const jobSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('dispatch-notification'),
@@ -84,9 +98,41 @@ export async function dispatchNotificationSerialized(
   id: string,
 ) {
   if (env.WHATSAPP_ENABLED !== 'true') return
+  const pendingJoin = await env.DB.prepare(
+    'SELECT n.status,n.kind,n.payload_version,n.payload_snapshot,e.queue_id FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE n.id=?',
+  )
+    .bind(id)
+    .first<{
+      status: string
+      kind: string
+      payload_version: number
+      payload_snapshot: string | null
+      queue_id: string
+    }>()
+  if (
+    pendingJoin?.status === 'pending' &&
+    pendingJoin.kind === 'queue_joined' &&
+    pendingJoin.payload_version === 2 &&
+    pendingJoin.payload_snapshot
+  ) {
+    let snapshot: QueueNoticeSnapshot | null = null
+    try {
+      snapshot = JSON.parse(
+        pendingJoin.payload_snapshot,
+      ) as QueueNoticeSnapshot
+    } catch {
+      // Malformed frozen input is rejected by the existing dispatch guard.
+    }
+    if (
+      snapshot?.copyVersion === 4 &&
+      snapshot.copyVariant === 'queue_joined' &&
+      snapshot.projectionPending === true
+    )
+      await recalculateQueue(env, pendingJoin.queue_id)
+  }
   const row = await env.DB.prepare(
     `SELECT n.status,n.attempts,n.kind,n.position,n.payload_version,n.payload_snapshot,n.revision,n.call_cycle,n.accepted_at,
-    e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,
+    e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,v.id AS venue_id,
     c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
     LEFT JOIN queue_confirmation f ON f.entry_id=e.id
@@ -113,6 +159,7 @@ export async function dispatchNotificationSerialized(
       id: string
       locale: 'es' | 'en'
       code: string
+      venue_id: string
       phone_cipher: string
       phone_hash: string
       venue: string
@@ -124,6 +171,60 @@ export async function dispatchNotificationSerialized(
       entry_call_cycle: number
     }>()
   if (!row || row.status !== 'pending') return
+  let actionResult: z.infer<typeof actionResultSnapshotSchema> | null = null
+  if (row.kind === 'action_result') {
+    let raw: unknown
+    try {
+      raw = JSON.parse(row.payload_snapshot ?? '')
+    } catch {
+      raw = null
+    }
+    const snapshot = actionResultSnapshotSchema.safeParse(raw)
+    const event = snapshot.success
+      ? await env.DB.prepare(
+          `SELECT w.kind,w.context_id,w.phone_hash,w.occurred_at,w.processed_at,
+            EXISTS(SELECT 1 FROM notification_outbox n WHERE n.provider_id=w.context_id
+              AND n.entry_id=? AND n.payload_version=2
+              AND n.kind IN ('approaching','improved','ready')
+              AND json_extract(n.payload_snapshot,'$.copyVersion')=4) AS notice_matches
+           FROM webhook_event w WHERE w.id=?`,
+        )
+          .bind(row.id, snapshot.data.webhookEventId)
+          .first<{
+            kind: string
+            context_id: string | null
+            phone_hash: string | null
+            occurred_at: number
+            processed_at: number | null
+            notice_matches: number
+          }>()
+      : null
+    const actionNow = Date.now()
+    if (
+      !snapshot.success ||
+      !event ||
+      event.kind !== 'action' ||
+      event.processed_at === null ||
+      event.notice_matches !== 1 ||
+      event.context_id !== snapshot.data.providerContextId ||
+      event.phone_hash !== row.phone_hash ||
+      event.occurred_at !== snapshot.data.occurredAt ||
+      event.occurred_at > actionNow + 1_000 ||
+      event.occurred_at <= actionNow - 86_400_000
+    ) {
+      await env.DB.batch([
+        env.DB.prepare(
+          "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE id=? AND status='pending'",
+        ).bind(actionNow, id),
+        deliveryTraceStatement(env, {
+          notificationId: id,
+          event: 'obsolete',
+        }),
+      ])
+      return
+    }
+    actionResult = snapshot.data
+  }
   const notice =
     [
       'ready',
@@ -144,10 +245,12 @@ export async function dispatchNotificationSerialized(
         typeof parsed.serviceName === 'string' &&
         (parsed.copyVersion === undefined ||
           parsed.copyVersion === 2 ||
-          parsed.copyVersion === 3) &&
+          parsed.copyVersion === 3 ||
+          parsed.copyVersion === 4) &&
         (parsed.copyVersion !== 3 ||
           typeof parsed.approachRecommended === 'boolean' ||
-          row.kind !== 'improved')
+          row.kind !== 'improved') &&
+        (parsed.copyVersion !== 4 || typeof parsed.copyVariant === 'string')
       )
         snapshot = parsed
     } catch {
@@ -228,6 +331,10 @@ export async function dispatchNotificationSerialized(
   if (
     notice &&
     (row.payload_version === 2 && !snapshot ||
+      (row.payload_version === 2 &&
+        snapshot?.copyVersion === 4 &&
+        snapshot.actionContext !== undefined &&
+        snapshot.actionContext.expiresAt <= Date.now()) ||
       (row.kind === 'ready' &&
       (row.entry_status !== 'called' ||
         (row.arrival_deadline_at ?? 0) <= Date.now() ||
@@ -316,15 +423,38 @@ export async function dispatchNotificationSerialized(
     return
   }
   const now = Date.now()
-  const claim = await env.DB.prepare(
-    `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=?
+  const claim = actionResult
+    ? await env.DB.prepare(
+        `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=?
+         AND EXISTS(SELECT 1 FROM webhook_event w JOIN notification_outbox n ON n.provider_id=w.context_id
+           WHERE w.id=? AND w.kind='action' AND w.context_id=? AND w.phone_hash=?
+             AND w.occurred_at=? AND w.processed_at IS NOT NULL
+             AND w.occurred_at>? AND w.occurred_at<=?
+             AND n.entry_id=notification_outbox.entry_id AND n.payload_version=2
+             AND n.kind IN ('approaching','improved','ready')
+             AND json_extract(n.payload_snapshot,'$.copyVersion')=4)`,
+      )
+        .bind(
+          now,
+          id,
+          now,
+          actionResult.webhookEventId,
+          actionResult.providerContextId,
+          row.phone_hash,
+          actionResult.occurredAt,
+          now - 86_400_000,
+          now + 1_000,
+        )
+        .run()
+    : await env.DB.prepare(
+        `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=?
     AND EXISTS(SELECT 1 FROM consent WHERE entry_id=notification_outbox.entry_id AND revoked_at IS NULL AND purpose=CASE notification_outbox.kind WHEN 'confirmation' THEN 'confirmation_contact' ELSE 'queue_updates' END)
     AND NOT EXISTS(SELECT 1 FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN whatsapp_contact_state w ON w.phone_hash=p.phone_hash WHERE e.id=notification_outbox.entry_id AND e.queue_id='confirmation-experiment' AND w.stopped_at IS NOT NULL)
     AND (notification_outbox.kind!='position_update' OR EXISTS(SELECT 1 FROM queue_entry_contact p JOIN whatsapp_contact_state w ON w.phone_hash=p.phone_hash WHERE p.entry_id=notification_outbox.entry_id AND w.stopped_at IS NULL AND w.last_inbound_at>?))
     AND NOT EXISTS(SELECT 1 FROM webhook_event w JOIN consent c ON c.entry_id=notification_outbox.entry_id WHERE w.kind='opt_out' AND w.phone_hash=? AND w.occurred_at+999>=c.granted_at)`,
-  )
-    .bind(now, id, now, now - 86400000, row.phone_hash)
-    .run()
+      )
+        .bind(now, id, now, now - 86400000, row.phone_hash)
+        .run()
   if (!claim.meta.changes) return
   await deliveryTraceStatement(env, {
     notificationId: id,
@@ -352,8 +482,12 @@ export async function dispatchNotificationSerialized(
       ? {
           payloadVersion: 2 as const,
           copyVersion: snapshot?.copyVersion ?? 2,
+          ...(snapshot?.copyVariant
+            ? { copyVariant: snapshot.copyVariant }
+            : {}),
           approachRecommended: snapshot?.approachRecommended ?? false,
           notificationId: id,
+          venueId: row.venue_id,
           serviceName: snapshot?.serviceName ?? row.venue,
           ahead: snapshot?.ahead ?? null,
           etaMinutes: snapshot?.etaMinutes ?? null,
@@ -362,6 +496,24 @@ export async function dispatchNotificationSerialized(
           arrivalDeadlineAt: snapshot?.arrivalDeadlineAt ?? null,
           ...(snapshot?.reason
             ? { cancellationReason: snapshot.reason }
+            : {}),
+          ...(snapshot?.actionContext
+            ? {
+                actionPayloads: {
+                  yield: await signWhatsAppAction(env.RECOVERY_TOKEN_KEY, {
+                    notificationId: id,
+                    entryId: row.id,
+                    action: 'yield',
+                    ...snapshot.actionContext,
+                  }),
+                  cancel: await signWhatsAppAction(env.RECOVERY_TOKEN_KEY, {
+                    notificationId: id,
+                    entryId: row.id,
+                    action: 'cancel',
+                    ...snapshot.actionContext,
+                  }),
+                },
+              }
             : {}),
         }
       : { payloadVersion: 1 as const }),
@@ -372,6 +524,20 @@ export async function dispatchNotificationSerialized(
       : {}),
     ...(row.kind === 'confirmation' && row.payload
       ? { confirmationPayload: row.payload }
+      : {}),
+    ...(actionResult
+      ? {
+          textBody: actionResult.textBody,
+          serviceWindowReply: true as const,
+          venueId: row.venue_id,
+          ...(actionResult.action === 'cancel'
+            ? {
+                serviceWindowCta: {
+                  label: renderWhatsAppActionSelectorLabel(row.locale),
+                },
+              }
+            : {}),
+        }
       : {}),
   })
   await deliveryTraceStatement(env, {
@@ -463,6 +629,7 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
     .first<{
       kind: string
       provider_id: string
+      context_id: string | null
       status: string
       phone_hash: string
       occurred_at: number
@@ -474,6 +641,22 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
     await env.DB.prepare('UPDATE webhook_event SET processed_at=? WHERE id=?')
       .bind(now, id)
       .run()
+    return
+  }
+  if (event.kind === 'action') {
+    if (!event.context_id) return
+    const target = await env.DB.prepare(
+      `SELECT e.queue_id FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id
+       WHERE n.provider_id=? AND n.payload_version=2
+         AND n.kind IN ('approaching','improved','ready')
+         AND json_extract(n.payload_snapshot,'$.copyVersion')=4
+       LIMIT 1`,
+    )
+      .bind(event.context_id)
+      .first<{ queue_id: string }>()
+    // The provider callback may arrive before the original send response is durable.
+    if (!target) return
+    await queueCoordinator(env, target.queue_id).whatsappAction(target.queue_id, id)
     return
   }
   if (event.kind === 'confirmation') {
@@ -491,7 +674,7 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
         AND entry_id IN (SELECT entry_id FROM queue_entry_contact WHERE phone_hash=?)`,
       ).bind(now, event.occurred_at + 999, event.phone_hash),
       env.DB.prepare(
-        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE (status='pending' OR (kind='confirmation' AND status='sending')) AND entry_id IN (SELECT entry_id FROM consent WHERE revoked_at IS NOT NULL)",
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE kind!='action_result' AND (status='pending' OR (kind='confirmation' AND status='sending')) AND entry_id IN (SELECT entry_id FROM consent WHERE revoked_at IS NOT NULL)",
       ).bind(now),
       env.DB.prepare('UPDATE webhook_event SET processed_at=? WHERE id=?').bind(
         now,
@@ -587,7 +770,13 @@ export async function reconcile(env: CloudflareBindings) {
     .bind(now)
     .all<{ id: string }>()
   const events = await env.DB.prepare(
-    `SELECT w.id FROM webhook_event w WHERE w.processed_at IS NULL AND (w.kind IN ('opt_out','confirmation','inbound') OR EXISTS(SELECT 1 FROM notification_outbox n WHERE n.provider_id=w.provider_id)) ORDER BY w.received_at LIMIT 100`,
+    `SELECT w.id FROM webhook_event w WHERE w.processed_at IS NULL AND (
+      w.kind IN ('opt_out','confirmation','inbound')
+      OR EXISTS(SELECT 1 FROM notification_outbox n WHERE n.provider_id=w.provider_id)
+      OR (w.kind='action' AND EXISTS(SELECT 1 FROM notification_outbox n WHERE n.provider_id=w.context_id
+        AND n.payload_version=2 AND n.kind IN ('approaching','improved','ready')
+        AND json_extract(n.payload_snapshot,'$.copyVersion')=4))
+    ) ORDER BY w.received_at LIMIT 100`,
   ).all<{ id: string }>()
   for (const row of notifications.results)
     await env.NOTIFICATIONS.send({

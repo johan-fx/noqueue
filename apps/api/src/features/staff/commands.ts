@@ -20,6 +20,8 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { queueAccess, audit } from '../../auth/access'
 import { hash } from '../queue/crypto'
+import { copyVersion } from '../../integrations/whatsapp-copy-v3'
+import { actualCallCopyVariant } from '../../integrations/whatsapp-copy-v4'
 export async function runQueueCommand(
   env: CloudflareBindings,
   actor: string,
@@ -262,9 +264,23 @@ export async function runQueueCommand(
     }
   }
   if (input.action === 'call' && input.arrivalMode !== 'present') {
+    let copyVariant: 'ready' | 'improved_ready' = 'ready'
+    if (copyVersion(env) === 4) {
+      const accepted = await env.DB.prepare(
+        'SELECT last_accepted_predicted_at FROM queue_notification_state WHERE entry_id=?',
+      )
+        .bind(input.entryId)
+        .first<{ last_accepted_predicted_at: number | null }>()
+      copyVariant = actualCallCopyVariant(
+        accepted?.last_accepted_predicted_at ?? null,
+        now,
+        state.config?.etaChangeThresholdMinutes ?? 5,
+      )
+    }
     const serviceName = state.config?.name ?? 'Servicio'
     const snapshot = {
       schemaVersion: 2 as const,
+      ...(copyVersion(env) === 4 ? { copyVariant } : {}),
       serviceName,
       ahead: null,
       etaMinutes: null,

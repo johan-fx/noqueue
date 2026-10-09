@@ -125,8 +125,12 @@ export async function receiveWebhook(
         senderHash,
         event.timestamp,
         now,
-        event.kind === 'confirmation' ? event.payload : null,
-        event.kind === 'confirmation' ? event.contextId : null,
+        event.kind === 'confirmation' || event.kind === 'action'
+          ? event.payload
+          : null,
+        event.kind === 'confirmation' || event.kind === 'action'
+          ? event.contextId
+          : null,
         target?.entry_id ?? null,
       )
       .run()

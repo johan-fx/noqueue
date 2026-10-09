@@ -20,13 +20,17 @@ export type LifecycleV3Template = {
 /** Missing means historical/default v2; an explicitly invalid profile never falls back. */
 export function copyVersion(env: {
   WHATSAPP_COPY_VERSION?: string
-}): 2 | 3 | null {
+}): 2 | 3 | 4 | null {
   if (
     env.WHATSAPP_COPY_VERSION === undefined ||
     env.WHATSAPP_COPY_VERSION === '2'
   )
     return 2
-  return env.WHATSAPP_COPY_VERSION === '3' ? 3 : null
+  return env.WHATSAPP_COPY_VERSION === '3'
+    ? 3
+    : env.WHATSAPP_COPY_VERSION === '4'
+    ? 4
+    : null
 }
 
 const openings: Record<Kind, Record<Locale, string>> = {

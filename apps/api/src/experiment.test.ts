@@ -540,6 +540,174 @@ it('preserves STOP safety when open experiment recipients are enabled', async ()
   expect(await response.json()).toEqual({ error: 'contact_stopped' })
 })
 
+it('durably stores native button payload and provider context before processing', async () => {
+  const messageId = crypto.randomUUID()
+  const payload = `wa1.c.${'c'.repeat(64)}`
+  const response = await app.request(
+    `http://localhost/api/v1/integrations/360dialog/webhook/${env.D360DIALOG_WEBHOOK_TOKEN}`,
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        entry: [
+          {
+            changes: [
+              {
+                value: {
+                  messages: [
+                    {
+                      id: messageId,
+                      from: '34600000000',
+                      timestamp: String(Math.floor(Date.now() / 1000)),
+                      type: 'interactive',
+                      interactive: {
+                        type: 'button_reply',
+                        button_reply: { id: payload, title: 'Ignore this label' },
+                      },
+                      context: { id: 'wamid.notice-context' },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ],
+      }),
+    },
+    env,
+  )
+  expect(response.status).toBe(200)
+  expect(
+    await env.DB.prepare(
+      'SELECT kind,confirmation_payload,context_id FROM webhook_event WHERE provider_id=?',
+    )
+      .bind(messageId)
+      .first(),
+  ).toEqual({
+    kind: 'action',
+    confirmation_payload: payload,
+    context_id: 'wamid.notice-context',
+  })
+})
+
+it('delivers only the event-bound cancellation CTA after STOP without restoring consent', async () => {
+  const entry = await confirmed()
+  const now = Date.now()
+  const eventId = crypto.randomUUID()
+  const resultId = crypto.randomUUID()
+  const noticeId = crypto.randomUUID()
+  const phoneHash = await env.DB.prepare(
+    'SELECT phone_hash FROM queue_entry_contact WHERE entry_id=?',
+  )
+    .bind(entry.entry_id)
+    .first<{ phone_hash: string }>()
+  const venue = await env.DB.prepare(
+    'SELECT venue_id FROM queue WHERE id=?',
+  )
+    .bind(experimentQueueId)
+    .first<{ venue_id: string }>()
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO notification_outbox(id,entry_id,idempotency_key,kind,status,updated_at,provider_id,accepted_at,payload_version,payload_snapshot) VALUES (?,?,?,'approaching','accepted',?,?,?,2,?)",
+    ).bind(
+      noticeId,
+      entry.entry_id,
+      `notice:${noticeId}`,
+      now,
+      'wamid.original-notice',
+      now,
+      JSON.stringify({ schemaVersion: 2, copyVersion: 4 }),
+    ),
+    env.DB.prepare(
+      "INSERT INTO webhook_event(id,dedupe_key,kind,provider_id,phone_hash,occurred_at,received_at,confirmation_payload,context_id,processed_at) VALUES (?,?,'action',?,?,?,?,?,?,?)",
+    ).bind(
+      eventId,
+      `dedupe:${eventId}`,
+      `wamid.action.${eventId}`,
+      phoneHash!.phone_hash,
+      now,
+      now,
+      `wa1.c.${'a'.repeat(64)}`,
+      'wamid.original-notice',
+      now,
+    ),
+    env.DB.prepare(
+      "INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot) VALUES (?,?,?,'pending',?,'action_result',0,?)",
+    ).bind(
+      resultId,
+      entry.entry_id,
+      `wa-action-result:${entry.entry_id}:yield`,
+      now,
+      JSON.stringify({
+        schemaVersion: 1,
+        copyVersion: 4,
+        action: 'cancel',
+        textBody: 'Has salido de la lista y se ha liberado tu turno.',
+        webhookEventId: eventId,
+        providerContextId: 'wamid.original-notice',
+        occurredAt: now,
+      }),
+    ),
+  ])
+  await receive('BAJA')
+
+  const sent: Record<string, any>[] = []
+  network.use(
+    http.post('https://waba-v2.360dialog.io/messages', async ({ request }) => {
+      sent.push((await request.json()) as Record<string, any>)
+      return HttpResponse.json({ messages: [{ id: 'wamid.action-result' }] })
+    }),
+  )
+  await dispatchNotificationSerialized(
+    {
+      ...env,
+      APP_ENV: 'staging',
+      WHATSAPP_MODE: 'cloud',
+      WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+      D360DIALOG_API_KEY: 'mock-key',
+      D360DIALOG_REQUEST_TIMEOUT_MS: '1000',
+      PUBLIC_APP_ORIGIN: 'https://customers.example.test',
+    },
+    resultId,
+  )
+
+  expect(sent).toEqual([
+    {
+      messaging_product: 'whatsapp',
+      to: '34600000000',
+      type: 'interactive',
+      interactive: {
+        type: 'cta_url',
+        body: { text: 'Has salido de la lista y se ha liberado tu turno.' },
+        action: {
+          name: 'cta_url',
+          parameters: {
+            display_text: 'Elegir lista',
+            url: `https://customers.example.test/v/${venue!.venue_id}?lang=es&source=whatsapp`,
+          },
+        },
+      },
+    },
+  ])
+  expect(
+    await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+      .bind(resultId)
+      .first(),
+  ).toEqual({ status: 'accepted' })
+  expect(
+    await env.DB.prepare('SELECT purpose,revoked_at FROM consent WHERE entry_id=?')
+      .bind(entry.entry_id)
+      .first(),
+  ).toMatchObject({
+    purpose: 'queue_updates',
+    revoked_at: expect.any(Number),
+  })
+  expect(
+    await env.DB.prepare('SELECT stopped_at FROM whatsapp_contact_state WHERE phone_hash=?')
+      .bind(phoneHash!.phone_hash)
+      .first<{ stopped_at: number | null }>(),
+  ).toMatchObject({ stopped_at: expect.any(Number) })
+})
+
 it('dispatches open-recipient position updates only after actual correlated confirmation', async () => {
   const staging = {
     ...env,

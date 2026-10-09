@@ -165,6 +165,48 @@ it.each(['reception', 'pool'] as const)(
     ).not.toBeInTheDocument()
   },
 )
+
+it('offers a called-turn yield only when the projected action is allowed', () => {
+  const turn = entry('called')
+  turn.customer!.actions = ['cancel', 'yield']
+  const onAction = vi.fn()
+  render(
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={onAction}
+      />
+    </MemoryRouter>,
+  )
+
+  fireEvent.click(screen.getByRole('button', { name: 'Pasar turno' }))
+  expect(onAction).toHaveBeenCalledWith('yield')
+})
+
+it('keeps reception waiting actions from showing both yield and edit', () => {
+  const turn = entry('waiting')
+  turn.customer!.service = { ...service, type: 'reception', name: 'Recepción' }
+  turn.customer!.actions = ['cancel', 'update', 'yield']
+  render(
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>,
+  )
+
+  expect(screen.getByRole('button', { name: 'Pasar turno' })).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'Modificar' }),
+  ).not.toBeInTheDocument()
+})
 it.each(['es', 'en'] as const)('explains automatic service cancellation without blaming the customer (%s)', (locale) => {
   const turn = entry('cancelled')
   turn.status = 'cancelled'

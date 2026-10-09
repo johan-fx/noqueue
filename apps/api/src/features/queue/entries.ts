@@ -3,6 +3,10 @@ import {
   whatsappV3Catalog,
   v3TemplateReady,
 } from '../../integrations/whatsapp-copy-v3'
+import {
+  whatsappV4Catalog,
+  v4TemplateReady,
+} from '../../integrations/whatsapp-copy-v4'
 import { maintainServiceEntries } from './service-expiry'
 import { customerPhase } from './customer'
 import { publicService } from './public-context'
@@ -132,6 +136,8 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
             ? service.type === 'restaurant'
               ? ['update', 'cancel', 'yield']
               : ['cancel', 'yield']
+            : phase === 'called'
+              ? ['cancel', 'yield']
             : [],
       }
     }
@@ -179,6 +185,10 @@ function whatsappAdmissionReady(
     return whatsappV3Catalog
       .filter((template) => template.locale === locale)
       .every((template) => v3TemplateReady(env, template))
+  if (env.WHATSAPP_MODE === 'cloud' && profile === 4)
+    return whatsappV4Catalog
+      .filter((template) => template.locale === locale)
+      .every((template) => v4TemplateReady(env, template))
   if (env.WHATSAPP_MODE === 'cloud') {
     const templates = env as CloudflareBindings &
       Partial<
@@ -418,6 +428,23 @@ export async function joinQueue(
   const id = crypto.randomUUID(),
     now = Date.now(),
     token = await recoveryToken(env, id)
+  const joinedV4Snapshot: QueueNoticeSnapshot | null =
+    selectedCopyVersion === 4 && queue.config
+      ? {
+          schemaVersion: 2,
+          copyVersion: 4,
+          copyVariant: 'queue_joined',
+          serviceName:
+            (JSON.parse(queue.config) as { name?: string }).name ?? 'Service',
+          ahead: null,
+          etaMinutes: null,
+          predictedAt: null,
+          estimateQuality: 'unknown',
+          resourceName: null,
+          arrivalDeadlineAt: null,
+          projectionPending: true,
+        }
+      : null
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
   const code = Array.from(
     crypto.getRandomValues(new Uint8Array(6)),
@@ -480,6 +507,18 @@ export async function joinQueue(
       ),
       !experiment && selectedCopyVersion !== 2 && !queue.config
         ? unavailableCopyStatement(env, id, 'queue_joined', now, `joined:${id}`, id)
+        : joinedV4Snapshot
+        ? env.DB.prepare(
+            'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot,revision) VALUES (?,?,?,?,?,?,2,?,0)',
+          ).bind(
+            id,
+            id,
+            `joined:${id}`,
+            env.WHATSAPP_ENABLED === 'true' ? 'pending' : 'cancelled',
+            now,
+            'queue_joined',
+            JSON.stringify(joinedV4Snapshot),
+          )
         : env.DB.prepare(
         'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind) VALUES (?,?,?,?,?,?)',
       ).bind(
@@ -500,7 +539,11 @@ export async function joinQueue(
   }
   await env.DB.batch(statements)
   const projectionState = await recalculateQueue(env, queueId)
-  if (input.whatsapp.consent && projectionState.config) {
+  if (
+    input.whatsapp.consent &&
+    projectionState.config &&
+    selectedCopyVersion !== 4
+  ) {
     const projection = projectionState.projections.find((item) => item.id === id)
     const revision = await env.DB.prepare(
       'SELECT revision FROM queue_projection WHERE entry_id=?',

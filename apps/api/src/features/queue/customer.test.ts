@@ -1,7 +1,12 @@
 import { env } from 'cloudflare:workers'
 import { expect, it, vi } from 'vitest'
-import { runCustomerCommand, customerPhase, expireArrivals } from './customer'
+import {
+  runCustomerCommand,
+  customerPhase,
+  expireArrivals,
+} from './customer'
 import { hash } from './crypto'
+import { signWhatsAppAction } from './whatsapp-actions'
 
 async function fixture() {
   const queueId = crypto.randomUUID()
@@ -87,6 +92,202 @@ it('atomically yields to the next compatible group and replays before version va
       version: 0,
     }),
   ).rejects.toThrow('idempotency_conflict')
+})
+it('allows a called entry to pass its reservation to the next compatible waiting party', async () => {
+  const { queueId, entries } = await fixture()
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE queue_entry SET status='called',version=1,call_cycle=1,called_at=1000,arrival_deadline_at=100000 WHERE id=?",
+    ).bind(entries[0]!.id),
+    env.DB.prepare(
+      "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,'terrace:4:0','terrace',4,1000)",
+    ).bind(entries[0]!.id, queueId),
+  ])
+  const key = crypto.randomUUID()
+  const command = { action: 'yield' as const, version: 1 }
+  await runCustomerCommand(env, queueId, entries[0]!.token, key, command, 2_000)
+  await runCustomerCommand(env, queueId, entries[0]!.token, key, command, 3_000)
+  const rows = await env.DB.prepare(
+    'SELECT id,status,sequence,version,call_cycle,arrival_deadline_at FROM queue_entry WHERE queue_id=? ORDER BY sequence',
+  )
+    .bind(queueId)
+    .all()
+  expect(rows.results).toMatchObject([
+    { id: entries[2]!.id, status: 'called', sequence: 1, version: 1 },
+    { id: entries[1]!.id, status: 'waiting', sequence: 2 },
+    {
+      id: entries[0]!.id,
+      status: 'waiting',
+      sequence: 3,
+      version: 2,
+      arrival_deadline_at: null,
+    },
+  ])
+  const allocations = (
+    await env.DB.prepare(
+      'SELECT entry_id,released_at,outcome FROM queue_allocation WHERE queue_id=?',
+    )
+      .bind(queueId)
+      .all()
+  ).results
+  expect(allocations).toHaveLength(2)
+  expect(allocations.find((item) => item.entry_id === entries[0]!.id)).toMatchObject({
+    released_at: 2_000,
+    outcome: 'yielded',
+  })
+  expect(allocations.find((item) => item.entry_id === entries[2]!.id)).toMatchObject({
+    released_at: null,
+    outcome: null,
+  })
+})
+it('returns a called entry to its original position and releases its reservation when nobody compatible waits', async () => {
+  const { queueId, entries } = await fixture()
+  await env.DB.batch([
+    env.DB.prepare(
+      "UPDATE queue_entry SET status='called',version=1,call_cycle=1,called_at=1000,arrival_deadline_at=100000 WHERE id=?",
+    ).bind(entries[0]!.id),
+    env.DB.prepare(
+      "UPDATE queue_entry SET status='cancelled' WHERE id IN (?,?)",
+    ).bind(entries[1]!.id, entries[2]!.id),
+    env.DB.prepare(
+      "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,'terrace:4:0','terrace',4,1000)",
+    ).bind(entries[0]!.id, queueId),
+  ])
+  await runCustomerCommand(
+    env,
+    queueId,
+    entries[0]!.token,
+    crypto.randomUUID(),
+    { action: 'yield', version: 1 },
+    2_000,
+  )
+  expect(
+    await env.DB.prepare(
+      'SELECT status,sequence,version,call_cycle,arrival_deadline_at FROM queue_entry WHERE id=?',
+    )
+      .bind(entries[0]!.id)
+      .first(),
+  ).toEqual({
+    status: 'waiting',
+    sequence: 1,
+    version: 2,
+    call_cycle: 2,
+    arrival_deadline_at: null,
+  })
+  expect(
+    await env.DB.prepare(
+      'SELECT released_at,outcome FROM queue_allocation WHERE entry_id=?',
+    )
+      .bind(entries[0]!.id)
+      .first(),
+  ).toMatchObject({ released_at: 2_000, outcome: 'yielded' })
+})
+
+it('commits one WhatsApp cancellation and one event-bound receipt across repeated taps', async () => {
+  const { queueId, entries } = await fixture()
+  const now = Date.now()
+  const noticeId = crypto.randomUUID()
+  const phoneHash = 'a'.repeat(64)
+  const context = {
+    phase: 'waiting' as const,
+    callCycle: 0,
+    expiresAt: now + 60_000,
+  }
+  const payload = await signWhatsAppAction(env.RECOVERY_TOKEN_KEY, {
+    notificationId: noticeId,
+    entryId: entries[0]!.id,
+    action: 'cancel',
+    ...context,
+  })
+  await env.DB.batch([
+    env.DB.prepare(
+      'INSERT INTO queue_entry_contact(entry_id,phone_cipher,phone_hash) VALUES (?,?,?)',
+    ).bind(entries[0]!.id, 'encrypted-phone', phoneHash),
+    env.DB.prepare(
+      "INSERT INTO notification_outbox(id,entry_id,idempotency_key,kind,status,updated_at,provider_id,accepted_at,call_cycle,payload_version,payload_snapshot) VALUES (?,?,?,'approaching','accepted',?,?,?,0,2,?)",
+    ).bind(
+      noticeId,
+      entries[0]!.id,
+      `notice:${noticeId}`,
+      now,
+      'wamid.notice',
+      now,
+      JSON.stringify({
+        schemaVersion: 2,
+        copyVersion: 4,
+        copyVariant: 'approaching',
+        serviceName: 'Restaurant',
+        ahead: 2,
+        etaMinutes: 10,
+        predictedAt: now,
+        estimateQuality: 'estimated',
+        resourceName: null,
+        arrivalDeadlineAt: null,
+        actionContext: context,
+      }),
+    ),
+  ])
+  const eventIds = [crypto.randomUUID(), crypto.randomUUID(), crypto.randomUUID()]
+  await env.DB.batch(
+    eventIds.map((id, index) =>
+      env.DB.prepare(
+        "INSERT INTO webhook_event(id,dedupe_key,kind,provider_id,phone_hash,occurred_at,received_at,confirmation_payload,context_id) VALUES (?,?,'action',?,?,?,?,?,?)",
+      ).bind(
+        id,
+        `dedupe:${id}`,
+        `wamid.inbound.${id}`,
+        index === 0 ? 'b'.repeat(64) : phoneHash,
+        now,
+        now,
+        payload,
+        'wamid.notice',
+      ),
+    ),
+  )
+
+  const { processWebhook } = await import('./notifications')
+  await processWebhook(env, eventIds[0]!)
+  expect(
+    await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+      .bind(entries[0]!.id)
+      .first(),
+  ).toEqual({ status: 'waiting' })
+  await processWebhook(env, eventIds[1]!)
+  await processWebhook(env, eventIds[2]!)
+
+  expect(
+    await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+      .bind(entries[0]!.id)
+      .first(),
+  ).toEqual({ status: 'cancelled' })
+  expect(
+    await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM queue_event WHERE entry_id=? AND kind='customer_cancel'",
+    )
+      .bind(entries[0]!.id)
+      .first(),
+  ).toEqual({ count: 1 })
+  expect(
+    await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM notification_outbox WHERE entry_id=? AND kind='action_result'",
+    )
+      .bind(entries[0]!.id)
+      .first(),
+  ).toEqual({ count: 1 })
+  expect(
+    await env.DB.prepare(
+      "SELECT COUNT(*) AS count FROM notification_outbox WHERE entry_id=? AND kind='cancelled'",
+    )
+      .bind(entries[0]!.id)
+      .first(),
+  ).toEqual({ count: 0 })
+  expect(
+    await env.DB.prepare(
+      'SELECT COUNT(*) AS count FROM webhook_event WHERE id IN (?,?,?) AND processed_at IS NOT NULL',
+    )
+      .bind(...eventIds)
+      .first(),
+  ).toEqual({ count: 3 })
 })
 it('edits preserve age and order, rejects stale versions and tokens from other queues', async () => {
   const { queueId, entries } = await fixture(),
@@ -221,7 +422,7 @@ it('runs the durable alarm without a browser and repairs a missing alarm on coor
   expect(await runDurableObjectAlarm(stub)).toBe(false)
 })
 
-it('projects service-specific waiting actions and no actions for called turns', async () => {
+it('projects waiting actions and keeps yield/cancel available while called', async () => {
   const context = await import('./public-context')
   const service = {
     id: 'restaurant',
@@ -253,7 +454,7 @@ it('projects service-specific waiting actions and no actions for called turns', 
     .run()
   expect(
     (await readEntrySnapshot(env, entries[2]!.token))?.customer?.actions,
-  ).toEqual([])
+  ).toEqual(['cancel', 'yield'])
   service.type = 'pool'
   expect(
     (await readEntrySnapshot(env, entries[1]!.token))?.customer?.actions,

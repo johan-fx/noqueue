@@ -597,6 +597,77 @@ test.describe('visual customer states', () => {
     }
     await mocks.assertComplete()
   })
+
+  test('shows both server-projected actions while called and keeps web cancellation confirmed', async ({
+    page,
+  }) => {
+    const token = 'c'.repeat(64)
+    let cancelled = false
+    const version = 4
+    const mocks = await strictApiMocks(page, [
+      {
+        method: 'GET',
+        path: `/api/v1/public/entries/${token}`,
+        expectedHits: { min: 2 },
+        respond: () => ({
+          json: {
+            code: 'XP03',
+            position: 1,
+            etaMinutes: 0,
+            estimateQuality: 'estimated',
+            status: cancelled ? 'cancelled' : 'called',
+            notification: 'disabled',
+            customer: {
+              service,
+              displayName: 'María López',
+              partySize: 4,
+              preferredSpaceId: 'terrace',
+              locale: 'es',
+              version: cancelled ? version + 1 : version,
+              serverNow: Date.now(),
+              createdAt: Date.now(),
+              calledAt: Date.now(),
+              arrivalDeadlineAt: cancelled ? null : Date.now() + 300000,
+              arrivedAt: null,
+              phase: cancelled ? 'cancelled' : 'called',
+              actions: cancelled ? [] : ['cancel', 'yield'],
+            },
+          },
+        }),
+      },
+      {
+        method: 'POST',
+        path: `/api/v1/public/entries/${token}/commands`,
+        expectedHits: { min: 1, max: 1 },
+        respond: (request) => {
+          expect(request.postDataJSON()).toEqual({
+            action: 'cancel',
+            version,
+          })
+          cancelled = true
+          return { json: { ok: true } }
+        },
+      },
+    ])
+
+    await page.goto(`/t/${token}`)
+    await expect(
+      page.getByRole('button', { name: 'Pasar turno', exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Abandonar la lista', exact: true }),
+    ).toBeVisible()
+    await page.getByRole('button', { name: 'Abandonar la lista', exact: true }).click()
+    await expect(page.getByRole('dialog')).toBeVisible()
+    await page
+      .getByRole('button', { name: 'Sí, abandonar la lista de espera' })
+      .click()
+    await expect(page.getByRole('dialog')).not.toBeVisible()
+    await expect(
+      page.getByRole('heading', { name: 'Ya no estás en la lista de espera' }),
+    ).toBeVisible()
+    await mocks.assertComplete()
+  })
 })
 
 for (const type of ['reception', 'pool'] as const) {

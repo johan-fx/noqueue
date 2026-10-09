@@ -39,6 +39,7 @@ export function TurnView({
     called = phase === 'called'
   const active = !arrived && !expired && !cancelled
   const step = arrived || called ? 3 : approaching ? 2 : 1
+  const primaryAction = approaching || called || !restaurant ? 'yield' : 'update'
   const titles = {
     waiting: es
       ? `Estás en la lista de espera de ${c.service.venueName}`
@@ -375,7 +376,7 @@ export function TurnView({
           </div>
         )}
       </div>
-      {active && !called && c.actions.length > 0 && (
+      {active && c.actions.length > 0 && (
         <CustomerFooter>
           {c.actions.includes('cancel') && (
             <Button
@@ -386,13 +387,13 @@ export function TurnView({
               {es ? 'Abandonar la lista' : 'Leave the list'}
             </Button>
           )}
-          {c.actions.includes(approaching || !restaurant ? 'yield' : 'update') && (
+          {c.actions.includes(primaryAction) && (
             <Button
               variant="outline"
               className="border-gray-800"
-              onClick={() => onAction(approaching || !restaurant ? 'yield' : 'update')}
+              onClick={() => onAction(primaryAction)}
             >
-              {approaching || !restaurant
+              {primaryAction === 'yield'
                 ? es
                   ? 'Pasar turno'
                   : 'Yield turn'

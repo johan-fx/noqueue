@@ -256,6 +256,31 @@ export async function recalculateQueue(
     .run()
   const state = await loadQueueState(env, queueId, now)
   const statements: D1PreparedStatement[] = []
+  const pendingJoinedSnapshots = new Map<
+    string,
+    { raw: string; snapshot: QueueNoticeSnapshot }
+  >()
+  const pendingJoinedRows = await env.DB.prepare(
+    "SELECT n.entry_id,n.payload_snapshot FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE e.queue_id=? AND n.kind='queue_joined' AND n.status='pending' AND n.payload_version=2 AND n.payload_snapshot IS NOT NULL ORDER BY n.rowid",
+  )
+    .bind(queueId)
+    .all<{ entry_id: string; payload_snapshot: string }>()
+  for (const row of pendingJoinedRows.results) {
+    try {
+      const frozen = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot
+      if (
+        frozen.copyVersion === 4 &&
+        frozen.copyVariant === 'queue_joined' &&
+        frozen.projectionPending === true
+      )
+        pendingJoinedSnapshots.set(row.entry_id, {
+          raw: row.payload_snapshot,
+          snapshot: frozen,
+        })
+    } catch {
+      // Malformed pending snapshots remain fail-closed at dispatch.
+    }
+  }
   for (const p of state.projections) {
     const prior = await env.DB.prepare(
       'SELECT position,eta_minutes,predicted_at,quality,resource_id,callable,revision FROM queue_projection WHERE entry_id=?',
@@ -362,6 +387,26 @@ export async function recalculateQueue(
         now,
       ),
     )
+    const joinedSnapshot = pendingJoinedSnapshots.get(p.id)
+    if (joinedSnapshot) {
+      const frozen = { ...joinedSnapshot.snapshot }
+      delete frozen.projectionPending
+      frozen.ahead = Math.max(0, p.position - 1)
+      frozen.etaMinutes = p.quality === 'unknown' ? null : p.etaMinutes
+      frozen.predictedAt = p.predictedAt
+      frozen.estimateQuality = p.quality
+      statements.push(
+        env.DB.prepare(
+          "UPDATE notification_outbox SET payload_snapshot=?,revision=?,updated_at=? WHERE entry_id=? AND kind='queue_joined' AND status='pending' AND payload_version=2 AND payload_snapshot=?",
+        ).bind(
+          JSON.stringify(frozen),
+          revision,
+          now,
+          p.id,
+          joinedSnapshot.raw,
+        ),
+      )
+    }
     if (p.predictedAt !== null)
       statements.push(
         env.DB.prepare(

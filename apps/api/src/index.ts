@@ -1,6 +1,10 @@
 import { maintainServiceEntries } from './features/queue/service-expiry'
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
-import { runCustomerCommand, expireArrivals } from './features/queue/customer'
+import {
+  runCustomerCommand,
+  runWhatsAppAction,
+  expireArrivals,
+} from './features/queue/customer'
 import type { CustomerCommand } from '@noqueue/contracts/queue'
 import { openingContext, runLifecycleCommand } from './features/staff/opening'
 import type { QueueLifecycleCommand } from '@noqueue/contracts/staff'
@@ -64,6 +68,13 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
         this.staffResult(() =>
           runCustomerCommand(this.env, queueId, token, key, input),
         ),
+      ),
+    )
+  }
+  whatsappAction(queueId: string, webhookEventId: string) {
+    return this.serialize(() =>
+      this.withQueue(queueId, () =>
+        runWhatsAppAction(this.env, queueId, webhookEventId),
       ),
     )
   }

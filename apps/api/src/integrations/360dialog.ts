@@ -1,5 +1,11 @@
 import { lifecycleV3, renderLifecycleV3, v3TemplateReady } from './whatsapp-copy-v3'
 import {
+  lifecycleV4,
+  renderLifecycleV4,
+  v4TemplateReady,
+  type LifecycleV4Variant,
+} from './whatsapp-copy-v4'
+import {
   confirmationExperimentEnabled,
   liveConfirmationEnabled,
 } from '../features/queue/confirmation'
@@ -11,7 +17,11 @@ export interface OutboundWhatsAppMessage {
   code: string
   token: string
   payloadVersion?: 1 | 2
-  copyVersion?: 2 | 3
+  copyVersion?: 2 | 3 | 4
+  copyVariant?: LifecycleV4Variant
+  venueId?: string
+  recoveryUrl?: string
+  actionPayloads?: { yield: string; cancel: string }
   approachRecommended?: boolean
   notificationId?: string
   serviceName?: string
@@ -22,6 +32,9 @@ export interface OutboundWhatsAppMessage {
   arrivalDeadlineAt?: number | null
   cancellationReason?: 'customer_cancel' | 'staff_cancel' | 'service_ended'
   confirmationPayload?: string
+  textBody?: string
+  serviceWindowReply?: true
+  serviceWindowCta?: { label: string }
   notice?:
     | 'queue_joined'
     | 'ready'
@@ -123,6 +136,21 @@ export function createWhatsAppSender(
         return configurationFailure()
       const confirmation = message.confirmationPayload !== undefined
       const positionUpdate = message.position !== undefined
+      const serviceWindowReply = message.serviceWindowReply === true
+      const serviceWindowCta = message.serviceWindowCta
+      if (
+        (serviceWindowReply &&
+          (typeof message.textBody !== 'string' ||
+            !message.textBody.trim() ||
+            message.textBody.length > (serviceWindowCta ? 1024 : 4096))) ||
+        (!serviceWindowReply &&
+          (message.textBody !== undefined || serviceWindowCta !== undefined)) ||
+        (serviceWindowCta &&
+          (!message.venueId ||
+            !serviceWindowCta.label.trim() ||
+            serviceWindowCta.label.length > 20))
+      )
+        return configurationFailure()
       if (
         (confirmation || positionUpdate) &&
         env.APP_ENV !== 'local' &&
@@ -163,12 +191,43 @@ export function createWhatsAppSender(
         >
       const version2 = message.payloadVersion === 2
       const version3 = version2 && message.copyVersion === 3
+      const version4 = version2 && message.copyVersion === 4
+      const linkUrl = new URL(`/t/${message.token}`, env.PUBLIC_APP_ORIGIN)
+      linkUrl.searchParams.set('lang', message.locale)
+      linkUrl.searchParams.set('source', 'whatsapp')
+      if (version2 && message.notificationId)
+        linkUrl.searchParams.set('notice', message.notificationId)
+      const link = linkUrl.toString()
+      let serviceWindowCtaUrl: string | null = null
+      if (serviceWindowCta && message.venueId) {
+        try {
+          const selectorUrl = new URL(
+            `/v/${encodeURIComponent(message.venueId)}`,
+            env.PUBLIC_APP_ORIGIN,
+          )
+          selectorUrl.searchParams.set('lang', message.locale)
+          selectorUrl.searchParams.set('source', 'whatsapp')
+          if (
+            selectorUrl.protocol === 'https:' &&
+            selectorUrl.toString().length <= 2000
+          )
+            serviceWindowCtaUrl = selectorUrl.toString()
+        } catch {
+          return configurationFailure()
+        }
+        if (!serviceWindowCtaUrl) return configurationFailure()
+      }
+      const templateLinkParameter = `${linkUrl.pathname.slice('/t/'.length)}${linkUrl.search}`
+      const v4Message = version4
+        ? { ...message, recoveryUrl: link }
+        : message
       if (
         message.copyVersion !== undefined &&
-        ![2, 3].includes(message.copyVersion)
+        ![2, 3, 4].includes(message.copyVersion)
       )
         return configurationFailure()
       let natural: ReturnType<typeof lifecycleV3> | undefined
+      let naturalV4: ReturnType<typeof lifecycleV4> | undefined
       if (version3) {
         try {
           natural = lifecycleV3(message)
@@ -178,12 +237,32 @@ export function createWhatsAppSender(
         if (!sandbox && !v3TemplateReady(env, natural.template))
           return configurationFailure()
       }
+      if (version4) {
+        try {
+          naturalV4 = lifecycleV4(v4Message)
+        } catch {
+          return configurationFailure()
+        }
+        if (!sandbox && !v4TemplateReady(env, naturalV4.template))
+          return configurationFailure()
+        if (
+          !sandbox &&
+          naturalV4.template.buttons.some((button) => button.type === 'quick_reply') &&
+          (!message.actionPayloads?.yield || !message.actionPayloads.cancel)
+        )
+          return configurationFailure()
+        if (
+          naturalV4.template.buttons.some((button) => button.type === 'url') &&
+          !message.venueId
+        )
+          return configurationFailure()
+      }
       if (
         version2 &&
         (!message.notice || !z.uuid().safeParse(message.notificationId).success)
       )
         return configurationFailure()
-      const name = natural ? natural.template.name : message.notice
+      const name = naturalV4?.template.name ?? (natural ? natural.template.name : message.notice
         ? version2
           ? lifecycleTemplates[
               `WHATSAPP_QUEUE_V2_${message.notice.toUpperCase() as
@@ -211,22 +290,17 @@ export function createWhatsAppSender(
         : message.locale === 'es'
         ? env.WHATSAPP_QUEUE_JOINED_TEMPLATE_ES
         : env.WHATSAPP_QUEUE_JOINED_TEMPLATE_EN
+        )
       if (
         !confirmation &&
         !positionUpdate &&
+        !serviceWindowReply &&
         !sandbox &&
         (!name ||
           env.STAGING_CONSENT_APPROVED !== 'true' ||
-          (version2 && !version3 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
+          (version2 && !version3 && !version4 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
       )
         return configurationFailure()
-      const linkUrl = new URL(`/t/${message.token}`, env.PUBLIC_APP_ORIGIN)
-      linkUrl.searchParams.set('lang', message.locale)
-      linkUrl.searchParams.set('source', 'whatsapp')
-      if (version2 && message.notificationId)
-        linkUrl.searchParams.set('notice', message.notificationId)
-      const link = linkUrl.toString()
-      const templateLinkParameter = `${linkUrl.pathname.slice('/t/'.length)}${linkUrl.search}`
       const serviceName = message.serviceName ?? message.venue
       const ahead =
         message.ahead == null
@@ -252,16 +326,69 @@ export function createWhatsAppSender(
         : 'check the link'
       const destination = message.resourceName ?? ''
       const reason = message.cancellationReason ?? ''
-      const templateParameters = (natural ? natural.parameters : [
-        serviceName,
-        message.code,
-        ahead,
-        eta,
-        destination,
-        deadline,
-        reason,
-      ]).map((text) => ({ type: 'text', text }))
-      const payload = positionUpdate
+      const templateParameters = (naturalV4
+        ? naturalV4.parameters
+        : natural
+        ? natural.parameters
+        : [
+            serviceName,
+            message.code,
+            ahead,
+            eta,
+            destination,
+            deadline,
+            reason,
+          ]
+      ).map((text) => ({ type: 'text', text }))
+      const v4ButtonComponents = naturalV4?.template.buttons.map(
+        (button, index) => ({
+          type: 'button',
+          sub_type: button.type === 'quick_reply' ? 'quick_reply' : 'url',
+          index: String(index),
+          parameters:
+            button.type === 'quick_reply'
+              ? [
+                  {
+                    type: 'payload',
+                    payload:
+                      button.action === 'yield'
+                        ? message.actionPayloads?.yield
+                        : message.actionPayloads?.cancel,
+                  },
+                ]
+              : [
+                  {
+                    type: 'text',
+                    text: `${message.venueId}?lang=${message.locale}&source=whatsapp`,
+                  },
+                ],
+        }),
+      ) ?? []
+      const payload = serviceWindowReply
+        ? serviceWindowCta
+          ? {
+              messaging_product: 'whatsapp',
+              to: message.phone.slice(1),
+              type: 'interactive',
+              interactive: {
+                type: 'cta_url',
+                body: { text: message.textBody! },
+                action: {
+                  name: 'cta_url',
+                  parameters: {
+                    display_text: serviceWindowCta.label,
+                    url: serviceWindowCtaUrl!,
+                  },
+                },
+              },
+            }
+          : {
+              messaging_product: 'whatsapp',
+              to: message.phone.slice(1),
+              type: 'text',
+              text: { body: message.textBody! },
+            }
+        : positionUpdate
         ? {
             messaging_product: 'whatsapp',
             to: message.phone.slice(1),
@@ -310,7 +437,9 @@ export function createWhatsAppSender(
             to: message.phone.slice(1),
             type: 'text',
             text: {
-              body: version3 ? renderLifecycleV3(message, link) : sandboxLifecycleCopy(message, {
+              body: version4
+                ? renderLifecycleV4(v4Message)
+                : version3 ? renderLifecycleV3(message, link) : sandboxLifecycleCopy(message, {
                 serviceName,
                 ahead,
                 eta,
@@ -336,6 +465,20 @@ export function createWhatsAppSender(
                   : message.locale === 'es'
                   ? `${message.venue}: tu turno es ${message.code}. ${link}`
                   : `${message.venue}: your waiting list code is ${message.code}. ${link}`
+            },
+          }
+        : version2 && version4 && naturalV4
+        ? {
+            messaging_product: 'whatsapp',
+            to: message.phone.slice(1),
+            type: 'template',
+            template: {
+              name: naturalV4.template.name,
+              language: { code: message.locale === 'es' ? 'es_ES' : 'en_US' },
+              components: [
+                { type: 'body', parameters: templateParameters },
+                ...v4ButtonComponents,
+              ],
             },
           }
         : version2
@@ -455,6 +598,14 @@ export type NormalizedWhatsAppEvent =
       payload: string | null
       contextId: string | null
     }
+  | {
+      kind: 'action'
+      id: string
+      phone: string
+      timestamp: number
+      payload: string
+      contextId: string
+    }
   | { kind: 'inbound'; id: string; phone: string; timestamp: number }
   | { kind: 'opt_out'; id: string; phone: string; timestamp: number }
 export interface WhatsAppWebhookParser {
@@ -473,6 +624,15 @@ const messageSchema = z.object({
   type: z.string().optional(),
   button: z
     .object({ text: z.string(), payload: z.string().min(1).max(512) })
+    .optional(),
+  interactive: z
+    .object({
+      type: z.literal('button_reply'),
+      button_reply: z.object({
+        id: z.string().regex(/^wa1\.[yc]\.[a-f0-9]{64}$/),
+        title: z.string().max(256).optional(),
+      }),
+    })
     .optional(),
   context: z.object({ id: z.string().min(1).max(512) }).optional(),
 })
@@ -535,6 +695,27 @@ export const whatsappWebhookParser: WhatsAppWebhookParser = {
               payload:
                 message.type === 'button' ? message.button!.payload : null,
               contextId: message.context?.id ?? null,
+            })
+          else if (
+            message.context &&
+            ((message.type === 'button' &&
+              message.button?.payload !== undefined &&
+              /^wa1\.[yc]\.[a-f0-9]{64}$/.test(message.button.payload) &&
+              message.button.payload.length > 0) ||
+              (message.type === 'interactive' &&
+                message.interactive?.type === 'button_reply' &&
+                message.interactive.button_reply.id))
+          )
+            result.push({
+              kind: 'action',
+              id: message.id,
+              phone: `+${message.from}`,
+              timestamp: Number(message.timestamp) * 1000,
+              payload:
+                message.type === 'button'
+                  ? message.button!.payload
+                  : message.interactive!.button_reply.id,
+              contextId: message.context.id,
             })
           else
             result.push({

@@ -2,6 +2,7 @@ import { lifecycleV3, renderLifecycleV3, v3TemplateReady } from './whatsapp-copy
 import {
   lifecycleV4,
   renderLifecycleV4,
+  v4EnvironmentForOrigin,
   v4TemplateReady,
   type LifecycleV4Variant,
 } from './whatsapp-copy-v4'
@@ -218,9 +219,8 @@ export function createWhatsAppSender(
         if (!serviceWindowCtaUrl) return configurationFailure()
       }
       const templateLinkParameter = `${linkUrl.pathname.slice('/t/'.length)}${linkUrl.search}`
-      const v4Message = version4
-        ? { ...message, recoveryUrl: link }
-        : message
+      const v4Environment = v4EnvironmentForOrigin(env.PUBLIC_APP_ORIGIN)
+      const v4Message = message
       if (
         message.copyVersion !== undefined &&
         ![2, 3, 4].includes(message.copyVersion)
@@ -239,10 +239,16 @@ export function createWhatsAppSender(
       }
       if (version4) {
         try {
-          naturalV4 = lifecycleV4(v4Message)
+          naturalV4 = lifecycleV4(v4Message, v4Environment ?? 'production')
         } catch {
           return configurationFailure()
         }
+        if (
+          !sandbox &&
+          naturalV4.template.buttons.some((button) => button.type === 'url') &&
+          v4Environment === null
+        )
+          return configurationFailure()
         if (!sandbox && !v4TemplateReady(env, naturalV4.template))
           return configurationFailure()
         if (
@@ -253,6 +259,11 @@ export function createWhatsAppSender(
           return configurationFailure()
         if (
           naturalV4.template.buttons.some((button) => button.type === 'url') &&
+          naturalV4.template.buttons.some(
+            (button) =>
+              button.type === 'url' &&
+              button.destination === 'venue-selector',
+          ) &&
           !message.venueId
         )
           return configurationFailure()
@@ -359,7 +370,10 @@ export function createWhatsAppSender(
               : [
                   {
                     type: 'text',
-                    text: `${message.venueId}?lang=${message.locale}&source=whatsapp`,
+                    text:
+                      button.destination === 'turn'
+                        ? templateLinkParameter
+                        : `${encodeURIComponent(message.venueId!)}?lang=${message.locale}&source=whatsapp`,
                   },
                 ],
         }),
@@ -438,7 +452,7 @@ export function createWhatsAppSender(
             type: 'text',
             text: {
               body: version4
-                ? renderLifecycleV4(v4Message)
+                ? renderLifecycleV4(v4Message, { includeButtonPreview: true })
                 : version3 ? renderLifecycleV3(message, link) : sandboxLifecycleCopy(message, {
                 serviceName,
                 ahead,

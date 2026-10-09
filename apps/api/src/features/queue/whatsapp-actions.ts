@@ -58,18 +58,18 @@ export function renderWhatsAppActionResult(
     if (action === 'cancel')
       return 'Has salido de la lista y se ha liberado tu turno.'
     if (outcome === 'called_handoff')
-      return 'Has pasado el turno. La plaza se ha ofrecido a la siguiente persona compatible.'
+      return '*Has pasado el turno.* La plaza se ha ofrecido a la siguiente persona compatible.'
     if (outcome === 'returned_to_waiting')
-      return 'Has pasado el turno y has vuelto a esperar en tu misma posición.'
-    return 'Has pasado el turno; tu posición en la lista se ha actualizado.'
+      return '*Has pasado el turno* y has vuelto a esperar en tu *misma posición*.'
+    return '*Has pasado el turno*; tu posición en la lista se ha actualizado.'
   }
   if (action === 'cancel')
     return 'You have left the waiting list and your place has been released.'
   if (outcome === 'called_handoff')
-    return 'You passed your turn. The place has been offered to the next compatible party.'
+    return '*You passed your turn.* The place has been offered to the next compatible party.'
   if (outcome === 'returned_to_waiting')
-    return 'You passed your turn and are waiting again in the same position.'
-  return 'You passed your turn; your position in the list has been updated.'
+    return '*You passed your turn* and are waiting again in your *same position*.'
+  return '*You passed your turn*; your position in the list has been updated.'
 }
 
 export function renderWhatsAppActionError(locale: 'es' | 'en', error: string) {

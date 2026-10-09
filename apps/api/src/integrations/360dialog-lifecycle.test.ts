@@ -101,14 +101,14 @@ it('sends v4 native reply actions with the frozen payloads and an honest venue-s
     {
       D360DIALOG_API_KEY: 'mock-key',
       D360DIALOG_REQUEST_TIMEOUT_MS: '1000',
-      PUBLIC_APP_ORIGIN: 'https://example.test',
+      PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
       WHATSAPP_MODE: 'cloud',
       APP_ENV: 'staging',
       STAGING_CONSENT_APPROVED: 'true',
       WHATSAPP_V4_TEMPLATES_APPROVED: 'true',
       WHATSAPP_QUEUE_V4_APPROACHING_TEMPLATE_ES:
         'noqueue_v4_approaching_es',
-      WHATSAPP_QUEUE_V4_EXPIRED_TEMPLATE_ES: 'noqueue_v4_expired_es',
+      WHATSAPP_QUEUE_V4_EXPIRED_TEMPLATE_ES: 'noqueue_v4_expired_es_staging',
     } as unknown as CloudflareBindings,
     fetcher as typeof fetch,
   )
@@ -157,6 +157,168 @@ it('sends v4 native reply actions with the frozen payloads and an honest venue-s
       { type: 'text', text: 'example-venue?lang=es&source=whatsapp' },
     ],
   })
+  expect(payloads[1]?.template?.name).toBe('noqueue_v4_expired_es_staging')
+})
+
+it('sends turn navigation only as environment-specific native URL buttons', async () => {
+  const payloads: Record<string, any>[] = []
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+    payloads.push(JSON.parse(String(init?.body)) as Record<string, any>)
+    return Response.json({ messages: [{ id: 'accepted-id' }] }, { status: 200 })
+  })
+  const notificationId = '550e8400-e29b-41d4-a716-446655440002'
+  const token = 'a'.repeat(64)
+  const sender = createWhatsAppSender(
+    {
+      D360DIALOG_API_KEY: 'mock-key',
+      D360DIALOG_REQUEST_TIMEOUT_MS: '1000',
+      PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
+      WHATSAPP_MODE: 'cloud',
+      APP_ENV: 'staging',
+      STAGING_CONSENT_APPROVED: 'true',
+      WHATSAPP_V4_TEMPLATES_APPROVED: 'true',
+      WHATSAPP_QUEUE_V4_QUEUE_JOINED_TEMPLATE_ES:
+        'noqueue_v4_queue_joined_es_staging',
+      WHATSAPP_QUEUE_V4_READY_TEMPLATE_ES: 'noqueue_v4_ready_es_staging',
+      WHATSAPP_QUEUE_V4_CANCELLED_STAFF_TEMPLATE_ES:
+        'noqueue_v4_cancelled_staff_es_staging',
+    } as unknown as CloudflareBindings,
+    fetcher as typeof fetch,
+  )
+
+  const joined = await sender.send({
+    ...message,
+    token,
+    payloadVersion: 2,
+    copyVersion: 4,
+    notificationId,
+    notice: 'queue_joined',
+    ahead: 2,
+    etaMinutes: 12,
+    estimateQuality: 'estimated',
+  })
+  expect(joined).toEqual({ kind: 'accepted', providerId: 'accepted-id' })
+  expect(payloads[0]?.template?.name).toBe('noqueue_v4_queue_joined_es_staging')
+  expect(payloads[0]?.template?.components).toEqual([
+    expect.objectContaining({
+      type: 'body',
+      parameters: [
+        { type: 'text', text: 'Hotel LUMOSA' },
+        { type: 'text', text: 'ABCD23' },
+        {
+          type: 'text',
+          text: 'hay 2 turnos por delante. La espera estimada es de unos 12 minutos.',
+        },
+      ],
+    }),
+    {
+      type: 'button',
+      sub_type: 'url',
+      index: '0',
+      parameters: [
+        {
+          type: 'text',
+          text: `${token}?lang=es&source=whatsapp&notice=${notificationId}`,
+        },
+      ],
+    },
+  ])
+  expect(JSON.stringify(payloads[0]?.template?.components[0])).not.toContain(token)
+  expect(JSON.stringify(payloads[0]?.template?.components[0])).not.toContain('https://')
+
+  const ready = await sender.send({
+    ...message,
+    token,
+    payloadVersion: 2,
+    copyVersion: 4,
+    notificationId,
+    notice: 'ready',
+    copyVariant: 'ready',
+    venueId: 'lumosa',
+    resourceName: 'Terraza',
+    actionPayloads: { yield: 'opaque-yield', cancel: 'opaque-cancel' },
+  })
+  expect(ready).toEqual({ kind: 'accepted', providerId: 'accepted-id' })
+  expect(payloads[1]?.template?.name).toBe('noqueue_v4_ready_es_staging')
+  expect(payloads[1]?.template?.components).toEqual([
+    expect.objectContaining({
+      type: 'body',
+      parameters: [
+        { type: 'text', text: 'Hotel LUMOSA' },
+        { type: 'text', text: 'Terraza' },
+      ],
+    }),
+    expect.objectContaining({ type: 'button', sub_type: 'quick_reply', index: '0' }),
+    expect.objectContaining({ type: 'button', sub_type: 'quick_reply', index: '1' }),
+    {
+      type: 'button',
+      sub_type: 'url',
+      index: '2',
+      parameters: [
+        {
+          type: 'text',
+          text: `${token}?lang=es&source=whatsapp&notice=${notificationId}`,
+        },
+      ],
+    },
+  ])
+
+  const staffCancelled = await sender.send({
+    ...message,
+    token,
+    payloadVersion: 2,
+    copyVersion: 4,
+    notificationId,
+    notice: 'cancelled',
+    cancellationReason: 'staff_cancel',
+  })
+  expect(staffCancelled).toEqual({ kind: 'accepted', providerId: 'accepted-id' })
+  expect(payloads[2]?.template?.components[1]).toEqual({
+    type: 'button',
+    sub_type: 'url',
+    index: '0',
+    parameters: [
+      {
+        type: 'text',
+        text: `${token}?lang=es&source=whatsapp&notice=${notificationId}`,
+      },
+    ],
+  })
+})
+
+it('keeps sandbox V4 previews plain text while displaying the modeled button labels', async () => {
+  let payload: Record<string, any> | undefined
+  const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+    payload = JSON.parse(String(init?.body)) as Record<string, any>
+    return Response.json({ messages: [{ id: 'sandbox-id' }] }, { status: 200 })
+  })
+  const sender = createWhatsAppSender(
+    {
+      D360DIALOG_API_KEY: 'mock-key',
+      D360DIALOG_REQUEST_TIMEOUT_MS: '1000',
+      PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
+      WHATSAPP_MODE: 'sandbox',
+      APP_ENV: 'staging',
+    } as unknown as CloudflareBindings,
+    fetcher as typeof fetch,
+  )
+  const token = 'a'.repeat(64)
+  const result = await sender.send({
+    ...message,
+    token,
+    payloadVersion: 2,
+    copyVersion: 4,
+    notificationId: '550e8400-e29b-41d4-a716-446655440003',
+    notice: 'queue_joined',
+    venueId: 'lumosa',
+  })
+
+  expect(result).toEqual({ kind: 'accepted', providerId: 'sandbox-id' })
+  expect(payload?.type).toBe('text')
+  expect(payload?.template).toBeUndefined()
+  expect(payload?.text?.body).toContain('[Consultar turno]')
+  expect(payload?.text?.body).not.toContain(token)
+  expect(payload?.text?.body).not.toContain('https://')
 })
 
 it('blocks v4 cloud sends when any profile approval or template binding is incomplete', async () => {

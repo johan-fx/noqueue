@@ -34,11 +34,17 @@ it('keeps action ids stable across ETA revisions but binds them to notice lifecy
 })
 
 it('returns channel-appropriate result copy for called handoff, return-to-waiting, and rejected yield', () => {
-  expect(renderWhatsAppActionResult('es', 'yield', 'called_handoff')).toContain(
-    'siguiente persona compatible',
+  expect(renderWhatsAppActionResult('es', 'yield', 'called_handoff')).toBe(
+    '*Has pasado el turno.* La plaza se ha ofrecido a la siguiente persona compatible.',
   )
-  expect(renderWhatsAppActionResult('es', 'yield', 'returned_to_waiting')).toContain(
-    'misma posición',
+  expect(renderWhatsAppActionResult('es', 'yield', 'returned_to_waiting')).toBe(
+    '*Has pasado el turno* y has vuelto a esperar en tu *misma posición*.',
+  )
+  expect(renderWhatsAppActionResult('en', 'yield', 'called_handoff')).toBe(
+    '*You passed your turn.* The place has been offered to the next compatible party.',
+  )
+  expect(renderWhatsAppActionResult('en', 'yield', 'returned_to_waiting')).toBe(
+    '*You passed your turn* and are waiting again in your *same position*.',
   )
   expect(renderWhatsAppActionError('en', 'no_compatible_successor')).toContain(
     'your place has not changed',

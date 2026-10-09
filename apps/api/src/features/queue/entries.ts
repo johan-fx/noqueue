@@ -4,7 +4,8 @@ import {
   v3TemplateReady,
 } from '../../integrations/whatsapp-copy-v3'
 import {
-  whatsappV4Catalog,
+  whatsappV4CatalogForEnvironment,
+  v4EnvironmentForOrigin,
   v4TemplateReady,
 } from '../../integrations/whatsapp-copy-v4'
 import { maintainServiceEntries } from './service-expiry'
@@ -187,10 +188,15 @@ function whatsappAdmissionReady(
     return whatsappV3Catalog
       .filter((template) => template.locale === locale)
       .every((template) => v3TemplateReady(env, template))
-  if (env.WHATSAPP_MODE === 'cloud' && profile === 4)
-    return whatsappV4Catalog
-      .filter((template) => template.locale === locale)
-      .every((template) => v4TemplateReady(env, template))
+  if (env.WHATSAPP_MODE === 'cloud' && profile === 4) {
+    const environment = v4EnvironmentForOrigin(env.PUBLIC_APP_ORIGIN)
+    return (
+      environment !== null &&
+      whatsappV4CatalogForEnvironment(environment)
+        .filter((template) => template.locale === locale)
+        .every((template) => v4TemplateReady(env, template))
+    )
+  }
   if (env.WHATSAPP_MODE === 'cloud') {
     const templates = env as CloudflareBindings &
       Partial<

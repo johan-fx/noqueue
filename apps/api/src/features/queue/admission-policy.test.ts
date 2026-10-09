@@ -1,5 +1,5 @@
 import { whatsappV3Catalog } from '../../integrations/whatsapp-copy-v3'
-import { whatsappV4Catalog } from '../../integrations/whatsapp-copy-v4'
+import { whatsappV4CatalogForEnvironment } from '../../integrations/whatsapp-copy-v4'
 import { describe, expect, it } from 'vitest'
 import { publicWhatsappAdmissionError } from './entries'
 
@@ -110,6 +110,23 @@ it('requires every selected-locale v3 variant and keeps locale readiness indepen
     WHATSAPP_V3_TEMPLATES_APPROVED: 'true',
   })
   expect(publicWhatsappAdmissionError(ready, contact, 'es')).toBeNull()
+  const productionNames = Object.fromEntries(
+    whatsappV4CatalogForEnvironment('production')
+      .filter((template) => template.locale === 'es')
+      .map((template) => [template.binding, template.name]),
+  )
+  expect(
+    publicWhatsappAdmissionError(
+      bindings({
+        ...productionNames,
+        PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
+        WHATSAPP_COPY_VERSION: '4',
+        WHATSAPP_V4_TEMPLATES_APPROVED: 'true',
+      }),
+      contact,
+      'es',
+    ),
+  ).toBe('whatsapp_unavailable')
   expect(publicWhatsappAdmissionError(ready, contact, 'en')).toBe(
     'whatsapp_unavailable',
   )
@@ -126,12 +143,13 @@ it('requires every selected-locale v3 variant and keeps locale readiness indepen
 
 it('fails closed for v4 until all selected-locale templates are registered and approved', () => {
   const configured = Object.fromEntries(
-    whatsappV4Catalog
+    whatsappV4CatalogForEnvironment('staging')
       .filter((template) => template.locale === 'es')
       .map((template) => [template.binding, template.name]),
   )
   const ready = bindings({
     ...configured,
+    PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
     WHATSAPP_COPY_VERSION: '4',
     WHATSAPP_V4_TEMPLATES_APPROVED: 'true',
   })
@@ -148,7 +166,9 @@ it('fails closed for v4 until all selected-locale templates are registered and a
   ).toBe('whatsapp_unavailable')
   const missingOne = {
     ...ready,
-    [whatsappV4Catalog.find((template) => template.locale === 'es')!.binding]: '',
+    [whatsappV4CatalogForEnvironment('staging').find(
+      (template) => template.locale === 'es',
+    )!.binding]: '',
   }
   expect(publicWhatsappAdmissionError(missingOne, contact, 'es')).toBe(
     'whatsapp_unavailable',

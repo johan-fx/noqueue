@@ -14,10 +14,8 @@ import {
   RadioGroupItem,
 } from '@/components/ui/radio-group'
 import { CustomerFooter, type Locale } from './shared'
-import {
-  PublicWhatsAppConsentFields,
-  validPublicWhatsAppConsent,
-} from './PublicWhatsAppConsentFields'
+import { PublicWhatsAppConsentFields } from './PublicWhatsAppConsentFields'
+import { validPublicWhatsAppConsent } from '@/lib/phone-validation'
 
 /** Single-person public admission for reception and pool services. */
 export function ServiceForm({

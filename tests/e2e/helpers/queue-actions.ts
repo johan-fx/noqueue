@@ -157,8 +157,8 @@ export async function join(
 
 export async function fillPublicWhatsAppConsent(page: Page) {
   await page
-    .getByLabel(/Teléfono con prefijo internacional|Phone number with international prefix/)
-    .fill('+34600000000')
+    .getByLabel(/^(?:Teléfono|Phone number)$/)
+    .fill('600000000')
   await page.getByRole('checkbox').check()
 }
 export async function act(

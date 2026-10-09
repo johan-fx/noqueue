@@ -15,10 +15,8 @@ import {
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import {
-  PublicWhatsAppConsentFields,
-  validPublicWhatsAppConsent,
-} from '@/features/customer/PublicWhatsAppConsentFields'
+import { PublicWhatsAppConsentFields } from '@/features/customer/PublicWhatsAppConsentFields'
+import { validPublicWhatsAppConsent } from '@/lib/phone-validation'
 
 export function DemoQueue() {
   const id = useId()

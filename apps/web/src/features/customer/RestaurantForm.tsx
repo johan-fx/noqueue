@@ -10,10 +10,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CustomerFooter, type Locale } from './shared'
 import { SpaceSelector } from './SpaceSelector'
-import {
-  PublicWhatsAppConsentFields,
-  validPublicWhatsAppConsent,
-} from './PublicWhatsAppConsentFields'
+import { PublicWhatsAppConsentFields } from './PublicWhatsAppConsentFields'
+import { validPublicWhatsAppConsent } from '@/lib/phone-validation'
 
 export function RestaurantForm({
   service,

@@ -4,8 +4,9 @@ export const whatsappConsentNotice = {
     consent:
       'Acepto recibir por WhatsApp avisos sobre el estado de mi turno. Puedo retirar mi consentimiento enviando STOP o BAJA.',
     details: 'Información sobre protección de datos',
-    phone: 'Teléfono con prefijo internacional',
-    phonePlaceholder: '+34600000000',
+    phone: 'Teléfono',
+    phonePlaceholder: '612 345 678',
+    phoneInvalid: 'Introduce un número de teléfono válido.',
     introduction:
       'De conformidad con la normativa vigente y aplicable en protección de datos de carácter personal, le informamos que sus datos serán incorporados al sistema de tratamiento titularidad de LUMOSA S.A. con CIF A07207848 y domicilio social sito en Avda Cas Saboners Nº8, 07181, Calviá - Illes Balears y que a continuación se relacionan sus respectivas finalidades, plazos de conservación y bases legitimadoras.',
     purposeLabel: 'Finalidad',
@@ -26,8 +27,9 @@ export const whatsappConsentNotice = {
     consent:
       'I agree to receive WhatsApp updates about my queue entry. I can withdraw my consent by sending STOP or BAJA.',
     details: 'Data protection information',
-    phone: 'Phone number with international prefix',
-    phonePlaceholder: '+34600000000',
+    phone: 'Phone number',
+    phonePlaceholder: '612 345 678',
+    phoneInvalid: 'Enter a valid phone number.',
     introduction:
       'In accordance with current applicable personal data protection legislation, we inform you that your data will be incorporated into the data processing system owned by LUMOSA S.A., with tax identification number A07207848 and registered office at Avda Cas Saboners Nº8, 07181, Calviá - Illes Balears. The corresponding purposes, retention periods and legal bases are set out below.',
     purposeLabel: 'Purpose',

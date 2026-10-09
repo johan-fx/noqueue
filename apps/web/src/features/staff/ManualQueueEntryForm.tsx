@@ -1,24 +1,18 @@
-import {
-  Select,
-  SelectTrigger,
-  SelectValue,
-  SelectContent,
-  SelectItem,
-} from '@/components/ui/select'
 import { useId, useRef, useState } from 'react'
 import { Check, Minus, Plus } from 'lucide-react'
 import {
   manualConsentVersion,
   manualJoinSchema,
-  phoneSchema,
   type ManualJoin,
   type PublicService,
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
 import { DrawerFooter } from '@/components/ui/drawer'
+import { PhoneInput } from '@/components/ui/phone-input'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Switch } from '@/components/ui/switch'
+import { isPossibleE164PhoneNumber } from '@/lib/phone-validation'
 import { cn } from 'cn'
 import { receptionLabels } from './queue-labels'
 import {
@@ -26,17 +20,6 @@ import {
   manualQueueError,
   type ManualLocale,
 } from './manual-queue-copy'
-
-const countryPrefixes = [
-  ['+34', '🇪🇸'],
-  ['+33', '🇫🇷'],
-  ['+351', '🇵🇹'],
-  ['+44', '🇬🇧'],
-  ['+49', '🇩🇪'],
-  ['+39', '🇮🇹'],
-  ['+1', '🇺🇸'],
-  ['', '🌐'],
-] as const
 
 export function ManualQueueEntryForm({
   service,
@@ -52,13 +35,11 @@ export function ManualQueueEntryForm({
   onBusyChange?: (busy: boolean) => void
 }) {
   const copy = manualQueueCopy[locale]
-  const countryCodes = countryPrefixes.map(
-    ([code, flag], index) => [code, flag, copy.countries[index]] as const,
-  )
   const id = useId()
   const [displayName, setDisplayName] = useState('')
   const [phone, setPhone] = useState('')
-  const [prefix, setPrefix] = useState('+34')
+  const [phoneTouched, setPhoneTouched] = useState(false)
+  const [phoneAttempted, setPhoneAttempted] = useState(false)
   const [consent, setConsent] = useState(false)
   const [partySize, setPartySize] = useState(1)
   const [receptionService, setReceptionService] = useState(
@@ -69,13 +50,13 @@ export function ManualQueueEntryForm({
   const [error, setError] = useState<unknown>(null)
   const lock = useRef(false)
   const attempt = useRef<{ body: string; key: string } | null>(null)
-  const compactPhone = phone.replace(/[\s()-]/g, '')
-  const internationalPhone = compactPhone.startsWith('+')
-    ? compactPhone
-    : `${prefix}${compactPhone}`
+  const validPhone = isPossibleE164PhoneNumber(phone)
   const validContact = consent
-    ? phoneSchema.safeParse(internationalPhone).success
+    ? validPhone
     : !whatsappRequired
+  const phoneRequired = whatsappRequired || consent
+  const showPhoneError =
+    (phoneTouched || phoneAttempted) && phoneRequired && !validPhone
   const compatible =
     service.type !== 'restaurant' ||
     service.spaces.some(
@@ -90,6 +71,7 @@ export function ManualQueueEntryForm({
     (service.type !== 'reception' || !!receptionService)
   async function submit(event: React.FormEvent) {
     event.preventDefault()
+    setPhoneAttempted(true)
     if (lock.current || !ready) return
     const parsed = manualJoinSchema.safeParse({
       displayName: displayName.trim(),
@@ -98,7 +80,7 @@ export function ManualQueueEntryForm({
       whatsapp: consent
         ? {
             consent: true,
-            phone: internationalPhone,
+            phone,
             version: manualConsentVersion,
           }
         : { consent: false },
@@ -284,49 +266,29 @@ export function ManualQueueEntryForm({
               {copy.phone}
               {whatsappRequired || consent ? '*' : ''}
             </FieldLabel>
-            <div className="flex gap-2">
-              <Select
-                items={countryCodes.map(([code, flag, name]) => ({
-                  value: code || 'international',
-                  label: `${flag} ${name} ${code}`,
-                }))}
-                value={prefix || 'international'}
-                onValueChange={(value) => {
-                  if (value !== null)
-                    setPrefix(value === 'international' ? '' : value)
-                }}
+            <PhoneInput
+              id={`${id}-phone`}
+              aria-label={copy.phone}
+              aria-invalid={showPhoneError}
+              aria-describedby={showPhoneError ? `${id}-phone-error` : undefined}
+              className="w-full"
+              locale={locale}
+              placeholder={copy.phonePlaceholder}
+              required={phoneRequired}
+              disabled={busy}
+              value={phone}
+              onChange={setPhone}
+              onBlur={() => setPhoneTouched(true)}
+            />
+            {showPhoneError && (
+              <p
+                id={`${id}-phone-error`}
+                role="alert"
+                className="text-xs text-destructive"
               >
-                <SelectTrigger
-                  aria-label={copy.prefix}
-                  title={prefix || copy.international}
-                  disabled={busy}
-                  className="h-11 w-20 shrink-0"
-                >
-                  <SelectValue>
-                    {countryCodes.find(([code]) => code === prefix)?.[1]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent alignItemWithTrigger={false}>
-                  {countryCodes.map(([code, flag, name]) => (
-                    <SelectItem key={code} value={code || 'international'}>
-                      {flag} {name} {code}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <Input
-                id={`${id}-phone`}
-                aria-label={copy.phone}
-                className="h-11 min-w-0 flex-1"
-                type="tel"
-                autoComplete="tel-national"
-                inputMode="tel"
-                placeholder={prefix ? copy.phonePlaceholder : '+34600000000'}
-                required={whatsappRequired || consent}
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-              />
-            </div>
+                {copy.phoneInvalid}
+              </p>
+            )}
             <label className="flex items-start gap-5 text-xs font-medium leading-[1.4] text-gray-500">
               <Switch
                 className="mt-0.5"

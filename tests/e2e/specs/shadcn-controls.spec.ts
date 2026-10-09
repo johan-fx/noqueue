@@ -35,7 +35,7 @@ test('demo selects and consent work with keyboard, Escape and busy state', async
   await expect(english).toBeFocused()
   const consent = page.getByRole('checkbox')
   await expect(consent).toHaveAttribute('data-slot', 'checkbox')
-  const phone = page.getByLabel('Phone number with international prefix')
+  const phone = page.getByLabel('Phone number')
   await expect(phone).toHaveAttribute('data-slot', 'input')
   await expect(phone).toBeVisible()
   const join = page.getByRole('button', { name: 'Join waiting list' })

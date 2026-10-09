@@ -47,14 +47,14 @@ it('requires explicit public consent and submits the current notice version', as
   )
   expect(screen.getByText(whatsappConsentNotice.en.consent)).toBeVisible()
   expect(screen.getByRole('button', { name: 'Join waiting list' })).toBeDisabled()
-  expect(screen.getByLabelText('Phone number with international prefix')).toBeVisible()
+  expect(screen.getByLabelText('Phone number')).toBeVisible()
   fireEvent.change(screen.getByLabelText('Pilot access code'), {
     target: { value: 'pilot' },
   })
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
   expect(fetch).not.toHaveBeenCalled()
-  fireEvent.change(screen.getByLabelText('Phone number with international prefix'), {
-    target: { value: '+34600000000' },
+  fireEvent.change(screen.getByLabelText('Phone number'), {
+    target: { value: '612345678' },
   })
   fireEvent.click(consent)
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
@@ -64,7 +64,7 @@ it('requires explicit public consent and submits the current notice version', as
     locale: 'en',
     whatsapp: {
       consent: true,
-      phone: '+34600000000',
+      phone: '+34612345678',
       version: publicServiceConsentVersion,
     },
   })

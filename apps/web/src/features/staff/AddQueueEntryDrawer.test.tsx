@@ -88,3 +88,23 @@ it('defaults to Spanish, preserves data across selector changes and retains subm
     window.location.origin + '/t/' + 'a'.repeat(64) + '?lang=en',
   )
 })
+
+it('keeps country search keyboard focus inside the drawer and closes only the popup on Escape', async () => {
+  render(
+    <AddQueueEntryDrawer
+      queue={queue}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+      returnFocus={null}
+    />,
+  )
+  const dialog = screen.getByRole('dialog')
+  const country = screen.getByRole('combobox', { name: 'País' })
+  fireEvent.click(country)
+  const search = await screen.findByRole('combobox', { name: 'Buscar país' })
+  expect(search).toHaveFocus()
+  fireEvent.keyDown(search, { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
+  expect(dialog).toBeVisible()
+  expect(country).toHaveFocus()
+})

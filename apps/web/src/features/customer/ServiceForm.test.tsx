@@ -34,8 +34,8 @@ it('requires a name and defaults to enabled check-in with a single-person payloa
     target: { value: ' Guest ' },
   })
   fireEvent.change(
-    screen.getByLabelText('Phone number with international prefix'),
-    { target: { value: '+34600000000' } },
+    screen.getByLabelText('Phone number'),
+    { target: { value: '612345678' } },
   )
   fireEvent.click(screen.getByRole('checkbox'))
   fireEvent.click(screen.getByRole('radio', { name: 'Other matters' }))
@@ -49,7 +49,7 @@ it('requires a name and defaults to enabled check-in with a single-person payloa
         receptionService: 'other',
         whatsapp: {
           consent: true,
-          phone: '+34600000000',
+          phone: '+34612345678',
           version: 'whatsapp-public-service-updates-v1',
         },
       },
@@ -57,13 +57,23 @@ it('requires a name and defaults to enabled check-in with a single-person payloa
     ),
   )
 })
-it('keeps public consent unchecked and blocks non-international or unconsented numbers', () => {
+it('keeps consent unchecked, retains partial input, and blocks impossible or unconsented numbers', () => {
   render(<ServiceForm service={service} locale="en" onSubmit={vi.fn()} />)
   expect(screen.getByRole('checkbox')).not.toBeChecked()
-  const phone = screen.getByLabelText('Phone number with international prefix')
-  fireEvent.change(phone, { target: { value: '600000000' } })
+  const phone = screen.getByLabelText('Phone number')
+  fireEvent.change(screen.getByLabelText('Name'), {
+    target: { value: 'Guest' },
+  })
+  fireEvent.change(phone, { target: { value: '612' } })
+  expect(phone).not.toHaveValue('')
+  fireEvent.blur(phone)
+  expect(screen.getByRole('alert')).toHaveTextContent(/valid phone number/i)
+  fireEvent.click(screen.getByRole('checkbox'))
   expect(screen.getByRole('button', { name: 'Join waiting list' })).toBeDisabled()
-  fireEvent.change(phone, { target: { value: '+34600000000' } })
+  fireEvent.change(phone, { target: { value: '612345678' } })
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Join waiting list' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('checkbox'))
   expect(screen.getByRole('button', { name: 'Join waiting list' })).toBeDisabled()
 })
 it('selects the first available task, reconciles disabled tasks and blocks empty configuration', () => {
@@ -112,8 +122,8 @@ it('pool has only name and preserves the same idempotency key after a lost respo
     target: { value: 'María' },
   })
   fireEvent.change(
-    screen.getByLabelText('Teléfono con prefijo internacional'),
-    { target: { value: '+34600000000' } },
+    screen.getByLabelText('Teléfono'),
+    { target: { value: '612345678' } },
   )
   fireEvent.click(screen.getByRole('checkbox'))
   fireEvent.click(screen.getByRole('button', { name: 'Ponerme en lista' }))
@@ -126,7 +136,7 @@ it('pool has only name and preserves the same idempotency key after a lost respo
     locale: 'es',
     whatsapp: {
       consent: true,
-      phone: '+34600000000',
+      phone: '+34612345678',
       version: 'whatsapp-public-service-updates-v1',
     },
   })

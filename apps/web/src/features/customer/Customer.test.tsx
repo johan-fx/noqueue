@@ -32,7 +32,7 @@ it('requires a name and shares compatible group/space selection for editing', as
     target: { value: 'María' },
   })
   fireEvent.change(
-    screen.getByLabelText('Teléfono con prefijo internacional'),
+    screen.getByLabelText('Teléfono'),
     { target: { value: '+34600000000' } },
   )
   fireEvent.click(screen.getByRole('checkbox'))

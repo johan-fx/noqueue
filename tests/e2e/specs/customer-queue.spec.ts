@@ -9,7 +9,7 @@ import type {
 
 async function assertWhatsAppConsentGate(page: Page) {
   const phone = page.getByLabel(
-    /Teléfono con prefijo internacional|Phone number with international prefix/,
+    /^(?:Teléfono|Phone number)$/,
   )
   const consent = page.getByRole('checkbox')
   const joinButton = page.getByRole('button', {

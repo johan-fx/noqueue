@@ -8,7 +8,7 @@ test('joins the demo queue and receives provider delivery through the real worke
     .fill('test-pilot-access-at-least-32-characters')
   await page.getByRole('checkbox').check()
   await page
-    .getByLabel('Teléfono con prefijo internacional')
+    .getByLabel('Teléfono')
     .fill('+34600000000')
   await page.getByRole('button', { name: 'Apuntarme a la lista' }).click()
   await expect(page).toHaveURL(/\/t\/[a-f0-9]{64}/)

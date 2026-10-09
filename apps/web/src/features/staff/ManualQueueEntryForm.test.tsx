@@ -38,7 +38,7 @@ it('requires explicit consent and phone, starts at one diner and retains the req
     target: { value: '  María  ' },
   })
   fireEvent.change(screen.getByLabelText('Nº de teléfono', { exact: true }), {
-    target: { value: '600000000' },
+    target: { value: '612345678' },
   })
   expect(button).toBeDisabled()
   const partySize = screen.getByRole('spinbutton', {
@@ -59,7 +59,7 @@ it('requires explicit consent and phone, starts at one diner and retains the req
     preferredSpaceId: 'terrace',
     whatsapp: {
       consent: true,
-      phone: '+34600000000',
+      phone: '+34612345678',
       version: manualConsentVersion,
     },
   })
@@ -123,7 +123,7 @@ it('guards duplicate submission while awaiting the response', async () => {
   expect(button).toBeDisabled()
 })
 
-it('maps international prefix selection to an empty prefix and disables the trigger while saving', async () => {
+it('selects France, accepts only a national number, and disables the selector while saving', async () => {
   const submit = vi.fn<
     (input: import('@noqueue/contracts/queue').ManualJoin) => Promise<void>
   >(() => new Promise<void>(() => {}))
@@ -135,27 +135,23 @@ it('maps international prefix selection to an empty prefix and disables the trig
       onSubmit={submit}
     />,
   )
-  const trigger = screen.getByRole('combobox', { name: 'Prefijo telefónico' })
-  expect(trigger).toHaveAttribute('data-slot', 'select-trigger')
+  const trigger = screen.getByRole('combobox', { name: 'País' })
   fireEvent.click(trigger)
-  {
-    const option = await screen.findByRole('option', {
-      name: /Otro: introduce/,
-    })
-    fireEvent.pointerDown(option, { pointerType: 'mouse' })
-    fireEvent.click(option, { detail: 1 })
-  }
+  fireEvent.change(screen.getByRole('combobox', { name: 'Buscar país' }), {
+    target: { value: 'Francia' },
+  })
+  fireEvent.click(await screen.findByRole('option', { name: /Francia/ }))
   fireEvent.change(screen.getByLabelText('Nombre', { exact: true }), {
     target: { value: 'Guest' },
   })
   fireEvent.change(screen.getByLabelText('Nº de teléfono', { exact: true }), {
-    target: { value: '+33600000000' },
+    target: { value: '612345678' },
   })
   fireEvent.click(screen.getByRole('switch'))
   fireEvent.click(screen.getByRole('button', { name: 'Añadir turno' }))
   expect(submit.mock.calls[0]![0].whatsapp).toMatchObject({
     consent: true,
-    phone: '+33600000000',
+    phone: '+33612345678',
   })
   expect(trigger).toBeDisabled()
 })
@@ -212,9 +208,10 @@ it('preserves input values and consent on locale changes and submits the selecte
   fireEvent.click(screen.getByRole('switch'))
   rerender(<ManualQueueEntryForm {...props} locale="en" />)
   expect(screen.getByLabelText('Name', { exact: true })).toHaveValue('María')
-  expect(screen.getByLabelText('Phone number', { exact: true })).toHaveValue(
-    '600000000',
-  )
+  expect(
+    (screen.getByLabelText('Phone number', { exact: true }) as HTMLInputElement)
+      .value.replace(/\D/g, ''),
+  ).toBe('600000000')
   expect(
     screen.getByRole('spinbutton', { name: 'Number of diners' }),
   ).toHaveValue(2)
@@ -282,6 +279,16 @@ it.each(['es', 'en'] as const)(
         { exact: true },
       ),
       { target: { value: '123' } },
+    )
+    const phone = screen.getByLabelText(
+      locale === 'es' ? 'Nº de teléfono' : 'Phone number',
+      { exact: true },
+    )
+    fireEvent.blur(phone)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      locale === 'es'
+        ? 'Introduce un número de teléfono válido.'
+        : 'Enter a valid phone number.',
     )
     fireEvent.click(screen.getByRole('switch'))
     const button = screen.getByRole('button', {

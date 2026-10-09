@@ -25,8 +25,8 @@ it('allows recovering the same submitted request after admission is paused', asy
     target: { value: 'Guest' },
   })
   fireEvent.change(
-    screen.getByLabelText('Phone number with international prefix'),
-    { target: { value: '+34600000000' } },
+    screen.getByLabelText('Phone number'),
+    { target: { value: '612345678' } },
   )
   fireEvent.click(screen.getByRole('checkbox'))
   fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
@@ -44,7 +44,7 @@ it('allows recovering the same submitted request after admission is paused', asy
   expect(submit.mock.calls[0]![0]).toMatchObject({
     whatsapp: {
       consent: true,
-      phone: '+34600000000',
+      phone: '+34612345678',
       version: 'whatsapp-public-service-updates-v1',
     },
   })

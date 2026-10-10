@@ -140,7 +140,7 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
           ...latest.config,
           version: latest.version,
           open: true,
-          approachTurns: 10,
+          approachMinutes: 200,
           applyApproachToActive: true,
         },
       },

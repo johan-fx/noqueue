@@ -314,16 +314,14 @@ export async function recalculateQueue(
     const revision = (prior?.revision ?? 0) + Number(changed)
     const approachingNow =
       !!state.config &&
-      (Math.max(p.position - 1, 0) <= (state.config.approachTurns ?? 2) ||
-        (p.quality !== 'unknown' &&
-          p.etaMinutes <= (state.config.approachMinutes ?? 10)))
+      p.quality !== 'unknown' &&
+      p.etaMinutes <= (state.config.approachMinutes ?? 10)
     const approachingBefore =
       !!state.config &&
       !!prior &&
-      (Math.max(prior.position - 1, 0) <= (state.config.approachTurns ?? 2) ||
-        (prior.quality !== 'unknown' &&
-          prior.predicted_at !== null &&
-          prior.eta_minutes <= (state.config.approachMinutes ?? 10)))
+      prior.quality !== 'unknown' &&
+      prior.predicted_at !== null &&
+      prior.eta_minutes <= (state.config.approachMinutes ?? 10)
     const snapshot: QueueNoticeSnapshot | null = state.config
       ? {
           schemaVersion: 2,

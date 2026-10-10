@@ -21,14 +21,22 @@ vi.mock('./ServiceConfigDrawer', () => ({
     onSave: (config: ServiceInput) => Promise<void>
   }) =>
     open ? (
-      <button
-        type="button"
-        onClick={() =>
-          void onSave({ ...initial, etaChangeThresholdMinutes: 8 })
-        }
-      >
-        Save test settings
-      </button>
+      <>
+        <button
+          type="button"
+          onClick={() =>
+            void onSave({ ...initial, etaChangeThresholdMinutes: 8 })
+          }
+        >
+          Save test settings
+        </button>
+        <button
+          type="button"
+          onClick={() => void onSave({ ...initial, approachTurns: 8 })}
+        >
+          Save legacy turn threshold
+        </button>
+      </>
     ) : null,
 }))
 vi.mock('./api', async (original) => ({
@@ -206,6 +214,38 @@ it('applies a confirmed notice policy update to current waiting entries', async 
       version: 1,
       open: false,
       applyApproachToActive: true,
+    }),
+  )
+})
+
+it('does not request policy confirmation for a legacy turn-count-only change', async () => {
+  const confirm = vi.fn(() => false)
+  vi.stubGlobal('confirm', confirm)
+  vi.mocked(api).mockResolvedValue(undefined)
+  render(
+    <QueueAdvancedDrawer
+      queue={queue}
+      activeWaitingCount={1}
+      canOperate
+      canConfigure
+      returnFocus={null}
+      onClose={vi.fn()}
+      onSaved={vi.fn()}
+    />,
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Recursos y ajustes de estimación' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Save legacy turn threshold' }))
+
+  await waitFor(() => expect(api).toHaveBeenCalledTimes(1))
+  expect(confirm).not.toHaveBeenCalled()
+  expect(api).toHaveBeenCalledWith(
+    '/queues/q',
+    'PATCH',
+    expect.objectContaining({
+      approachTurns: 8,
+      applyApproachToActive: false,
     }),
   )
 })

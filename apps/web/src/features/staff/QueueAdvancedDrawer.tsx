@@ -107,7 +107,6 @@ export function QueueAdvancedDrawer({
     setError('')
     try {
       const noticePolicyChanged =
-        (config.approachTurns ?? 2) !== (queue.config.approachTurns ?? 2) ||
         (config.approachMinutes ?? 10) !==
           (queue.config.approachMinutes ?? 10) ||
         (config.etaChangeThresholdMinutes ?? 5) !==

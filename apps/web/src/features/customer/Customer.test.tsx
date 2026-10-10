@@ -97,6 +97,61 @@ it('shows unknown estimates honestly and renders a noninteractive stepper', () =
   expect(screen.getByText('5 turnos')).toBeVisible()
   expect(screen.queryByRole('tab')).not.toBeInTheDocument()
 })
+it('keeps the same progress ratio while the server phase controls its color', () => {
+  const turn: Entry = {
+    ...entry('waiting'),
+    estimateQuality: 'estimated',
+    etaMinutes: 10,
+    initialEtaMinutes: 20,
+    predictedAt: 601000,
+  }
+  const view = () => (
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="en"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>
+  )
+  const { container, rerender } = render(view())
+  const progressbar = screen.getByRole('progressbar')
+  expect(progressbar).toHaveClass('text-black')
+  const arc = () => container.querySelector('circle[stroke="currentColor"]')!
+  const ratio = () => {
+    const [length, circumference] = arc()
+      .getAttribute('stroke-dasharray')!
+      .split(' ')
+      .map(Number)
+    return length! / circumference!
+  }
+  expect(ratio()).toBeCloseTo(0.5)
+
+  turn.customer!.phase = 'approaching'
+  rerender(view())
+  expect(screen.getByRole('progressbar')).toHaveClass('text-orange-500')
+  expect(ratio()).toBeCloseTo(0.5)
+})
+it.each([
+  ['called', 'text-red-700'],
+  ['expired', 'text-red-700'],
+  ['arrived', 'text-green-600'],
+] as const)('preserves %s ring color', (phase, color) => {
+  render(
+    <MemoryRouter>
+      <TurnView
+        entry={entry(phase)}
+        locale="en"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByRole('progressbar')).toHaveClass(color)
+})
 it('retains confirmed arrival for a served turn', () => {
   render(
     <MemoryRouter>

@@ -19,7 +19,7 @@ import {
 
 export function customerPhase(
   status: string,
-  position: number,
+  _position: number,
   eta: number,
   quality: string | undefined,
   config: { approachTurns?: number; approachMinutes?: number },
@@ -27,10 +27,9 @@ export function customerPhase(
   if (status === 'completed' || status === 'served') return 'arrived'
   if (status === 'no_show' || status === 'expired') return 'expired'
   if (status === 'called' || status === 'cancelled') return status
-  return Math.max(position - 1, 0) <= (config.approachTurns ?? 2) ||
-    (quality !== 'unknown' &&
-      quality !== undefined &&
-      eta <= (config.approachMinutes ?? 10))
+  return quality !== 'unknown' &&
+    quality !== undefined &&
+    eta <= (config.approachMinutes ?? 10)
     ? 'approaching'
     : 'waiting'
 }

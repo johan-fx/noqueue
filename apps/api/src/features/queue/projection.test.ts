@@ -171,11 +171,11 @@ it('recalculates an expired group adjustment without a queue event and never fre
   expect(overdue.resources[0]?.availableAt).toBeNull()
   expect(overdue.allocations[0]?.released_at).toBeNull()
 })
-it('emits approaching when a fixed forecast crosses the threshold between consecutive projections', async () => {
+it('emits approaching on the time threshold even inside the legacy position cutoff', async () => {
   const start = 1_800_000_000_000
   const queueId = crypto.randomUUID()
   const activeEntryId = crypto.randomUUID()
-  const waitingEntryIds = Array.from({ length: 4 }, () => crypto.randomUUID())
+  const waitingEntryIds = Array.from({ length: 3 }, () => crypto.randomUUID())
   const config = {
     name: 'Approach threshold',
     type: 'restaurant',
@@ -189,7 +189,7 @@ it('emits approaching when a fixed forecast crosses the threshold between consec
     estimationMode: 'active',
     resourceStateKnown: true,
     approachTurns: 2,
-    approachMinutes: 10,
+    approachMinutes: 7,
     spaces: [
       {
         id: 'desk',
@@ -226,7 +226,7 @@ it('emits approaching when a fixed forecast crosses the threshold between consec
   await env.DB.prepare('INSERT INTO consent VALUES (?,?,?,?,?,?,NULL)')
     .bind(
       crypto.randomUUID(),
-      waitingEntryIds[3],
+      waitingEntryIds[2],
       venue!.organization_id,
       'queue_updates',
       'test-explicit-consent',
@@ -236,23 +236,29 @@ it('emits approaching when a fixed forecast crosses the threshold between consec
 
   const before = await recalculateQueue(env, queueId, start)
   const targetBefore = before.projections.find(
-    (projection) => projection.id === waitingEntryIds[3],
+    (projection) => projection.id === waitingEntryIds[2],
   )
-  expect(targetBefore?.predictedAt).toBe(start + 11 * 60_000)
-  expect(targetBefore?.etaMinutes).toBe(11)
-  await recalculateQueue(env, queueId, start + 60_000)
+  expect(targetBefore?.position).toBe(3)
+  expect(targetBefore?.predictedAt).toBe(start + 8 * 60_000)
+  expect(targetBefore?.etaMinutes).toBe(8)
+  const atThreshold = await recalculateQueue(env, queueId, start + 60_000)
+  expect(
+    atThreshold.projections.find(
+      (projection) => projection.id === waitingEntryIds[2],
+    )?.etaMinutes,
+  ).toBe(7)
   const emitted = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='approaching'",
   )
-    .bind(waitingEntryIds[3])
+    .bind(waitingEntryIds[2])
     .first<{ n: number }>()
   expect(emitted?.n).toBe(1)
 
-  await recalculateQueue(env, queueId, start + 2 * 60_000)
+  await recalculateQueue(env, queueId, start + 60_000)
   const stillDeduplicated = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='approaching'",
   )
-    .bind(waitingEntryIds[3])
+    .bind(waitingEntryIds[2])
     .first<{ n: number }>()
   expect(stillDeduplicated?.n).toBe(1)
 })

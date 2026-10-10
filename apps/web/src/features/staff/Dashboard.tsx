@@ -356,7 +356,6 @@ export function Dashboard(props: DashboardProps) {
         selectQueue(result.id)
       } else if (drawer === 'edit' && queue) {
         const noticePolicyChanged =
-          (config.approachTurns ?? 2) !== (queue.config.approachTurns ?? 2) ||
           (config.approachMinutes ?? 10) !==
             (queue.config.approachMinutes ?? 10) ||
           (config.etaChangeThresholdMinutes ?? 5) !==

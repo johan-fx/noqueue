@@ -118,7 +118,7 @@ export function TurnView({
     ? 'text-red-700'
     : approaching
     ? 'text-orange-500'
-    : 'text-gray-700'
+    : 'text-black'
   const progress = turnProgress(entry, now)
   const percentage = progress == null ? undefined : Math.round(progress * 100)
   const circumference = 2 * Math.PI * 80

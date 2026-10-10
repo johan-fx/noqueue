@@ -143,3 +143,34 @@ it('keeps the per-queue arrival grace in advanced configuration and preserves ex
   )
   expect(screen.getByLabelText('Plazo de llegada (minutos)')).toHaveValue(5)
 })
+
+it('hides the legacy turn threshold while preserving it in the saved options', () => {
+  const confirm = vi.fn()
+  render(
+    <QueueConfigForm
+      spaces={[
+        {
+          id: 'terrace',
+          name: 'Terrace',
+          tables: 1,
+          tableTypes: [{ seats: 4, count: 1 }],
+        },
+      ]}
+      averageMinutes={30}
+      saved={undefined}
+      options={{ approachTurns: 8, approachMinutes: 12 }}
+      onConfirm={confirm}
+    />,
+  )
+  expect(screen.queryByLabelText('Turnos por delante')).not.toBeInTheDocument()
+  expect(
+    screen.getByLabelText('Minutos restantes para aviso de acercamiento'),
+  ).toHaveValue(12)
+  expect(screen.getByText(/espera restante/i)).toBeVisible()
+
+  fireEvent.submit(document.getElementById('queue-config')!)
+  expect(confirm).toHaveBeenCalledWith(
+    expect.any(Array),
+    expect.objectContaining({ approachTurns: 8, approachMinutes: 12 }),
+  )
+})

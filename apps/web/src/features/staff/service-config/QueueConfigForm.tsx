@@ -157,14 +157,13 @@ export function QueueConfigForm({
       <fieldset className="space-y-4 rounded-lg border p-4">
         <legend className="px-1 font-medium">Avisos de turno</legend>
         <p className="text-sm text-muted-foreground">
-          Los avisos de acercamiento se activan al cumplir cualquiera de los
-          umbrales. Los cambios de estimación comparan la hora prevista, no el
-          simple paso del tiempo.
+          El aviso de acercamiento se activa cuando la espera restante es igual
+          o inferior a este límite. Los cambios de estimación comparan la hora
+          prevista, no el simple paso del tiempo.
         </p>
         {(
           [
-            ['approachTurns', 'Turnos por delante', 2, 100],
-            ['approachMinutes', 'Minutos de espera para acercamiento', 10, 1440],
+            ['approachMinutes', 'Minutos restantes para aviso de acercamiento', 10, 1440],
             ['etaChangeThresholdMinutes', 'Cambio mínimo de estimación (min)', 5, 60],
             ['notificationCooldownMinutes', 'Intervalo mínimo entre cambios (min)', 10, 120],
           ] as const
@@ -174,7 +173,7 @@ export function QueueConfigForm({
             <Input
               id={`notice-${name}`}
               type="number"
-              min={name === 'approachTurns' || name === 'approachMinutes' ? 0 : 1}
+              min={name === 'approachMinutes' ? 0 : 1}
               max={max}
               required
               defaultValue={form.getValues(name) ?? fallback}

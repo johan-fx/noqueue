@@ -412,7 +412,6 @@ export async function configureQueue(
   )
     throw new HTTPException(409, { message: 'legacy_arrival_deadline' })
   const approachChanged =
-    (config.approachTurns ?? 2) !== (old.config?.approachTurns ?? 2) ||
     (config.approachMinutes ?? 10) !== (old.config?.approachMinutes ?? 10) ||
     (config.etaChangeThresholdMinutes ?? 5) !==
       (old.config?.etaChangeThresholdMinutes ?? 5) ||

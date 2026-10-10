@@ -248,9 +248,9 @@ it('keeps arrival grace out of basic settings and discards advanced changes on b
   fireEvent.click(
     screen.getByRole('button', { name: 'Configuración avanzada' }),
   )
-  expect(screen.getByLabelText('Turnos por delante')).toHaveValue(2)
+  expect(screen.queryByLabelText('Turnos por delante')).not.toBeInTheDocument()
   expect(
-    screen.getByLabelText('Minutos de espera para acercamiento'),
+    screen.getByLabelText('Minutos restantes para aviso de acercamiento'),
   ).toHaveValue(10)
   fireEvent.click(screen.getByRole('button', { name: 'Mesas de 4' }))
   fireEvent.change(screen.getByLabelText('Terraza · 4 plazas (min)'), {

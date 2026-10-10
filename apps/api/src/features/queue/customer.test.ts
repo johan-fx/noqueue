@@ -55,10 +55,21 @@ async function fixture() {
   }
   return { queueId, entries }
 }
-it('does not interpret unknown estimates as zero for approaching', () => {
+it('approaches only on a known ETA at or below the configured remaining-time limit', () => {
   expect(customerPhase('waiting', 5, 0, 'unknown', {})).toBe('waiting')
-  expect(customerPhase('waiting', 3, 99, 'estimated', {})).toBe('approaching')
+  expect(customerPhase('waiting', 3, 45, 'estimated', {})).toBe('waiting')
+  expect(
+    customerPhase('waiting', 1, 45, 'estimated', {
+      approachTurns: 100,
+      approachMinutes: 10,
+    }),
+  ).toBe('waiting')
+  expect(customerPhase('waiting', 3, 11, 'estimated', {})).toBe('waiting')
+  expect(customerPhase('waiting', 3, 10, 'estimated', {})).toBe('approaching')
   expect(customerPhase('waiting', 8, 10, 'provisional', {})).toBe('approaching')
+  expect(customerPhase('waiting', 1, 10, 'estimated', {})).toBe('approaching')
+  expect(customerPhase('waiting', 8, 0, 'estimated', { approachMinutes: 0 })).toBe('approaching')
+  expect(customerPhase('waiting', 1, 0, 'unknown', {})).toBe('waiting')
   expect(customerPhase('served', 0, 0, 'unknown', {})).toBe('arrived')
 })
 it('atomically yields to the next compatible group and replays before version validation', async () => {

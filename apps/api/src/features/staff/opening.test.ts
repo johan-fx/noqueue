@@ -1362,7 +1362,7 @@ it('freezes arrival deadlines, rejects late arrival, audits restoration and safe
       ...state.config,
       version: row!.version,
       open: !!row!.open,
-      approachTurns: 8,
+      approachMinutes: (state.config?.approachMinutes ?? 10) + 1,
     }),
   ).rejects.toThrow('active_approach_confirmation_required')
   await configureQueue(env, t.actor, t.queue, {
@@ -1371,6 +1371,7 @@ it('freezes arrival deadlines, rejects late arrival, audits restoration and safe
     open: !!row!.open,
     graceMinutes: 10,
     approachTurns: 8,
+    approachMinutes: (state.config?.approachMinutes ?? 10) + 1,
     applyApproachToActive: true,
   })
   expect(
@@ -1468,6 +1469,25 @@ it('freezes arrival deadlines, rejects late arrival, audits restoration and safe
         .first()
     )?.arrival_deadline_at,
   ).toBe(now + 300003 + 600000)
+})
+
+it('round-trips the legacy turn threshold without treating it as an active notice policy', async () => {
+  const t = await setup()
+  await open(t, 0)
+  await entry(t.queue)
+  const state = await loadQueueState(env, t.queue)
+  const row = await env.DB.prepare('SELECT version,open FROM queue WHERE id=?')
+    .bind(t.queue)
+    .first<{ version: number; open: number }>()
+
+  await configureQueue(env, t.actor, t.queue, {
+    ...state.config,
+    version: row!.version,
+    open: !!row!.open,
+    approachTurns: 8,
+  })
+
+  expect((await loadQueueState(env, t.queue)).config?.approachTurns).toBe(8)
 })
 
 it('preserves the promised arrival window when grace is reduced, with a legacy fallback', async () => {

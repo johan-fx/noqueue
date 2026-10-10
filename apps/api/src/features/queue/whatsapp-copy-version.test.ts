@@ -238,6 +238,67 @@ it('does not send a v4 action notice after its frozen button context expires', a
       .first(),
   ).toEqual({ status: 'cancelled' })
 })
+it('cancels an approaching notice when only position is close and the known ETA is outside the cutoff', async () => {
+  const row = await joined('4')
+  const predictedAt = Date.now() + 30 * 60_000
+  await env.DB.prepare(
+    "UPDATE queue SET config=json_set(config,'$.approachTurns',0,'$.approachMinutes',5) WHERE id=?",
+  )
+    .bind(row.queueId)
+    .run()
+  await env.DB.prepare(
+    "UPDATE queue_projection SET position=1,eta_minutes=30,predicted_at=?,quality='estimated' WHERE entry_id=?",
+  )
+    .bind(predictedAt, row.entry_id)
+    .run()
+  const projection = await env.DB.prepare(
+    'SELECT revision FROM queue_projection WHERE entry_id=?',
+  )
+    .bind(row.entry_id)
+    .first<{ revision: number }>()
+  const frozen = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot & {
+    copyVersion: number
+    copyVariant: string
+    actionContext: { phase: string; callCycle: number; expiresAt: number }
+  }
+  frozen.copyVariant = 'approaching'
+  frozen.actionContext = {
+    phase: 'waiting',
+    callCycle: 0,
+    expiresAt: predictedAt,
+  }
+  await env.DB.prepare(
+    "UPDATE notification_outbox SET kind='approaching',revision=?,payload_snapshot=? WHERE id=?",
+  )
+    .bind(projection?.revision ?? 0, JSON.stringify(frozen), row.id)
+    .run()
+
+  let sends = 0
+  network.use(
+    http.post(endpoint, async () => {
+      sends++
+      return HttpResponse.json({ messages: [{ id: 'wamid.position-only' }] })
+    }),
+  )
+  await dispatchNotificationSerialized(
+    {
+      ...env,
+      WHATSAPP_ENABLED: 'true',
+      WHATSAPP_MODE: 'sandbox',
+      D360DIALOG_API_KEY: 'mock-key',
+      WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+      WHATSAPP_COPY_VERSION: '4',
+    },
+    row.id,
+  )
+
+  expect(sends).toBe(0)
+  expect(
+    await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+      .bind(row.id)
+      .first(),
+  ).toEqual({ status: 'cancelled' })
+})
 it('freezes the canonical v4 joined projection and dispatches it successfully', async () => {
   const row = await joined('4')
   expect(row.payload_version).toBe(2)

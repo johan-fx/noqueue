@@ -261,8 +261,7 @@ export async function dispatchNotificationSerialized(
   let approaching = true
   if (row.kind === 'approaching') {
     const current = await env.DB.prepare(
-      `SELECT q.config,p.quality,p.predicted_at,
-      (SELECT COUNT(*) FROM queue_entry w WHERE w.queue_id=e.queue_id AND w.status='waiting' AND w.sequence<e.sequence) AS ahead
+      `SELECT q.config,p.quality,p.predicted_at
       FROM queue_entry e JOIN queue q ON q.id=e.queue_id LEFT JOIN queue_projection p ON p.entry_id=e.id WHERE e.id=?`,
     )
       .bind(row.id)
@@ -270,7 +269,6 @@ export async function dispatchNotificationSerialized(
         config: string | null
         quality: string | null
         predicted_at: number | null
-        ahead: number
       }>()
     const config = current?.config
       ? (JSON.parse(current.config) as {
@@ -281,11 +279,10 @@ export async function dispatchNotificationSerialized(
     approaching =
       !!current &&
       !!config &&
-      (current.ahead <= (config.approachTurns ?? 2) ||
-        (current.quality !== 'unknown' &&
-          current.predicted_at !== null &&
-          current.predicted_at - Date.now() <=
-            (config.approachMinutes ?? 10) * 60000))
+      current.quality !== 'unknown' &&
+      current.predicted_at !== null &&
+      current.predicted_at - Date.now() <=
+        (config.approachMinutes ?? 10) * 60000
   }
   let correctionIsCurrent = true
   if (row.kind === 'delayed' || row.kind === 'improved') {

@@ -57,6 +57,19 @@ export const webRoutes: RouteObject[] = [
     }),
   },
   {
+    path: '/q/:queueId/kiosk',
+    lazy: async () => ({
+      Component: (await import('@/features/customer/PublicKiosk')).PublicKiosk,
+    }),
+  },
+  {
+    path: '/q/:queueId/qr',
+    lazy: async () => ({
+      Component: (await import('@/features/customer/PublicQueueQr'))
+        .PublicQueueQr,
+    }),
+  },
+  {
     path: '/t/:recoveryToken',
     lazy: async () => ({
       Component: (await import('@/features/customer/CustomerTurn'))

@@ -49,3 +49,18 @@ it('allows recovering the same submitted request after admission is paused', asy
     },
   })
 })
+it('kiosk retries the frozen intent despite locale and space availability changes', async () => {
+  const service = { id: 'q', name: 'Restaurant', type: 'restaurant', spaces: [{ id: 'room', name: 'Room', maxPartySize: 4 }] } as PublicService
+  const submit = vi.fn().mockRejectedValue(new Error('Connection lost'))
+  const { rerender } = render(<RestaurantForm presentation="kiosk" service={service} locale="en" onSubmit={submit} />)
+  fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Guest' } })
+  fireEvent.change(screen.getByLabelText('Phone number'), { target: { value: '612345678' } })
+  fireEvent.click(screen.getByRole('switch'))
+  fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
+  await screen.findByRole('alert')
+  rerender(<RestaurantForm presentation="kiosk" service={{ ...service, spaces: [] }} locale="es" disabled onSubmit={submit} />)
+  expect(screen.getByRole('button', { name: 'Ponerme en lista' })).toBeEnabled()
+  fireEvent.click(screen.getByRole('button', { name: 'Ponerme en lista' }))
+  await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
+  expect(submit.mock.calls[1]).toEqual(submit.mock.calls[0])
+})

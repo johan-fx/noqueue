@@ -17,7 +17,9 @@ export function CustomerShell({
   locale,
   setLocale,
   children,
+  presentation = 'public',
 }: {
+  presentation?: 'public' | 'kiosk'
   title: string
   back?: string | undefined
   locale: Locale
@@ -26,7 +28,11 @@ export function CustomerShell({
 }) {
   // Desktop column is a bit wider than the previous lg cap, with no side borders.
   return (
-    <main className="mx-auto flex min-h-dvh w-full max-w-xl flex-col bg-background text-gray-700">
+    <main
+      className={`mx-auto flex min-h-dvh w-full ${
+        presentation === 'kiosk' ? 'max-w-none' : 'max-w-xl'
+      } flex-col bg-background text-gray-700`}
+    >
       <header className="flex h-11 shrink-0 items-center justify-between px-4">
         {back ? (
           <Link
@@ -68,9 +74,21 @@ export function CustomerShell({
     </main>
   )
 }
-export function CustomerFooter({ children }: { children: ReactNode }) {
+export function CustomerFooter({
+  children,
+  presentation = 'public',
+}: {
+  children: ReactNode
+  presentation?: 'public' | 'kiosk'
+}) {
   return (
-    <footer className="sticky bottom-0 mt-auto flex gap-2 border-t bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))] [&>button]:h-12 [&>button]:flex-1 [&>button]:text-sm! [&>a]:h-12 [&>a]:flex-1 [&>a]:text-sm!">
+    <footer
+      className={
+        presentation === 'kiosk'
+          ? 'mt-6 flex gap-2 bg-background py-4 pb-[max(1rem,env(safe-area-inset-bottom))] [&>button]:h-14 [&>button]:flex-1 [&>button]:text-sm!'
+          : 'sticky bottom-0 mt-auto flex gap-2 border-t bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))] [&>button]:h-12 [&>button]:flex-1 [&>button]:text-sm! [&>a]:h-12 [&>a]:flex-1 [&>a]:text-sm!'
+      }
+    >
       {children}
     </footer>
   )

@@ -309,3 +309,8 @@ it('keeps automatic service closure in cancelled history with a truthful reason'
   expect(screen.getByText('Cancelado por cierre de servicio')).toBeVisible()
   expect(screen.queryByText('No presentado')).not.toBeInTheDocument()
 })
+it('keeps public links visible for read-only staff', () => {
+  render(<Harness canOperate={false} />)
+  expect(screen.getByRole('link', { name: 'Abrir enlace público' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Opciones del enlace público' })).toBeVisible()
+})

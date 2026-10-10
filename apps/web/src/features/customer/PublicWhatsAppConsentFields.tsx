@@ -1,18 +1,23 @@
-import { useId, useState } from 'react'
+import { useId, useState, type ReactNode } from 'react'
 import { PhoneInput } from '@/components/ui/phone-input'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Switch } from '@/components/ui/switch'
 import { isPossibleE164PhoneNumber } from '@/lib/phone-validation'
 import { whatsappConsentNotice } from '../consent/whatsapp-consent-copy'
 import type { Locale } from './shared'
 
 export function PublicWhatsAppConsentFields({
   locale,
+  presentation = 'public',
+  nameField,
   phone,
   consent,
   disabled,
   onPhoneChange,
   onConsentChange,
 }: {
+  presentation?: 'public' | 'kiosk'
+  nameField?: ReactNode
   locale: Locale
   phone: string
   consent: boolean
@@ -20,6 +25,7 @@ export function PublicWhatsAppConsentFields({
   onPhoneChange: (phone: string) => void
   onConsentChange: (consent: boolean) => void
 }) {
+  const kiosk = presentation === 'kiosk'
   const copy = whatsappConsentNotice[locale]
   const id = useId()
   const phoneId = `${id}-phone`
@@ -28,57 +34,97 @@ export function PublicWhatsAppConsentFields({
   const showPhoneError = phoneTouched && !isPossibleE164PhoneNumber(phone)
   return (
     <fieldset disabled={disabled} className="space-y-4">
-      <label className="grid gap-3 font-medium" htmlFor={phoneId}>
-        <span>
-          {copy.phone}
-          <span aria-hidden="true">*</span>
-        </span>
-        <PhoneInput
-          id={phoneId}
-          name="phone"
-          locale={locale}
-          aria-label={copy.phone}
-          placeholder={copy.phonePlaceholder}
-          aria-invalid={showPhoneError}
-          aria-describedby={`${id}-phone-hint${showPhoneError ? ` ${id}-phone-error` : ''}`}
-          required
-          disabled={disabled}
-          value={phone}
-          onBlur={() => setPhoneTouched(true)}
-          onChange={onPhoneChange}
-          className="h-11 text-sm!"
-        />
-        <span
-          id={`${id}-phone-hint`}
-          className="text-xs font-normal text-muted-foreground"
-        >
-          {locale === 'es'
-            ? 'Selecciona tu país e introduce solo el número nacional.'
-            : 'Select your country and enter only your national number.'}
-        </span>
-        {showPhoneError && (
-          <span
-            id={`${id}-phone-error`}
-            role="alert"
-            className="text-xs font-normal text-destructive"
-          >
-            {copy.phoneInvalid}
+      <div
+        className={kiosk ? 'grid items-start gap-4 sm:grid-cols-2' : undefined}
+      >
+        {nameField}
+        <label className="grid gap-3 font-medium" htmlFor={phoneId}>
+          <span>
+            {copy.phone}
+            <span aria-hidden="true">*</span>
           </span>
+          <PhoneInput
+            id={phoneId}
+            name="phone"
+            locale={locale}
+            aria-label={copy.phone}
+            placeholder={copy.phonePlaceholder}
+            aria-invalid={showPhoneError}
+            aria-describedby={`${id}-phone-hint${
+              showPhoneError ? ` ${id}-phone-error` : ''
+            }`}
+            autoComplete={kiosk ? 'off' : 'tel-national'}
+            required
+            disabled={disabled}
+            value={phone}
+            onBlur={() => setPhoneTouched(true)}
+            onChange={onPhoneChange}
+            className={kiosk ? 'h-11 [&_input]:text-lg!' : 'h-11 text-sm!'}
+          />
+          <span
+            id={`${id}-phone-hint`}
+            className="text-xs font-normal text-muted-foreground"
+          >
+            {locale === 'es'
+              ? 'Selecciona tu país e introduce solo el número nacional.'
+              : 'Select your country and enter only your national number.'}
+          </span>
+          {showPhoneError && (
+            <span
+              id={`${id}-phone-error`}
+              role="alert"
+              className="text-xs font-normal text-destructive"
+            >
+              {copy.phoneInvalid}
+            </span>
+          )}
+        </label>
+      </div>
+      {kiosk && (
+        <h2 className="mt-10 text-xl font-semibold">
+          {locale === 'es'
+            ? '¿Quieres que te avisemos por WhatsApp?'
+            : 'Would you like WhatsApp updates?'}
+        </h2>
+      )}
+      <label
+        className={
+          kiosk
+            ? 'flex items-start gap-5 text-base leading-6'
+            : 'flex items-start gap-3 text-sm leading-5'
+        }
+      >
+        {kiosk ? (
+          <Switch
+            id={consentId}
+            className="mt-1"
+            name="whatsapp-consent"
+            checked={consent}
+            disabled={disabled}
+            aria-label={copy.consent}
+            onCheckedChange={(checked) => onConsentChange(checked)}
+          />
+        ) : (
+          <Checkbox
+            id={consentId}
+            className="mt-1"
+            name="whatsapp-consent"
+            checked={consent}
+            disabled={disabled}
+            aria-label={copy.consent}
+            onCheckedChange={(checked) => onConsentChange(checked === true)}
+          />
         )}
-      </label>
-      <label className="flex items-start gap-3 text-sm leading-5">
-        <Checkbox
-          id={consentId}
-          className="mt-1"
-          name="whatsapp-consent"
-          checked={consent}
-          disabled={disabled}
-          aria-label={copy.consent}
-          onCheckedChange={(checked) => onConsentChange(checked === true)}
-        />
         <span>{copy.consent}</span>
       </label>
-      <details className="text-xs leading-5 text-muted-foreground">
+      <details
+        open={kiosk || undefined}
+        className={
+          kiosk
+            ? 'ml-13 text-xs leading-5 text-muted-foreground'
+            : 'text-xs leading-5 text-muted-foreground'
+        }
+      >
         <summary className="cursor-pointer underline underline-offset-2">
           {copy.details}
         </summary>

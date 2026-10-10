@@ -18,6 +18,7 @@ export function RestaurantForm({
   locale,
   initial,
   disabled = false,
+  presentation = 'public',
   onSubmit,
   onCancel,
 }: {
@@ -25,10 +26,15 @@ export function RestaurantForm({
   locale: Locale
   initial?: ServiceJoin
   disabled?: boolean
-  onSubmit: (input: ServiceJoin | PublicServiceJoin, key: string) => Promise<void>
+  presentation?: 'public' | 'kiosk'
+  onSubmit: (
+    input: ServiceJoin | PublicServiceJoin,
+    key: string
+  ) => Promise<void>
   onCancel?: () => void
 }) {
   const es = locale === 'es'
+  const kiosk = presentation === 'kiosk'
   const [name, setName] = useState(initial?.displayName ?? '')
   const [phone, setPhone] = useState('')
   const [consent, setConsent] = useState(false)
@@ -37,13 +43,19 @@ export function RestaurantForm({
   const [hasAttempt, setHasAttempt] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const request = useRef<{ payload: string; key: string } | null>(null)
+  const request = useRef<{
+    payload: string
+    key: string
+    input: ServiceJoin | PublicServiceJoin
+  } | null>(null)
   const lock = useRef(false)
   const compatible =
     space === 'fastest'
       ? service.spaces.some((s) => s.maxPartySize >= size)
       : service.spaces.some((s) => s.id === space && s.maxPartySize >= size)
   function changeSize(next: number) {
+    if (kiosk) request.current = null
+    setHasAttempt(false)
     setSize(next)
     if (
       space !== 'fastest' &&
@@ -55,10 +67,11 @@ export function RestaurantForm({
     event.preventDefault()
     if (
       lock.current ||
-      (disabled && !request.current) ||
-      !name.trim() ||
-      !compatible ||
-      (!initial && !validPublicWhatsAppConsent(phone, consent))
+      (!(kiosk && request.current) &&
+        ((disabled && !request.current) ||
+          !name.trim() ||
+          !compatible ||
+          (!initial && !validPublicWhatsAppConsent(phone, consent))))
     )
       return
     setHasAttempt(true)
@@ -81,57 +94,82 @@ export function RestaurantForm({
         : {}),
     }
     const payload = JSON.stringify(input)
-    if (request.current?.payload !== payload)
-      request.current = { payload, key: crypto.randomUUID() }
+    if (!request.current || (!kiosk && request.current.payload !== payload))
+      request.current = { payload, key: crypto.randomUUID(), input }
     try {
-      await onSubmit(input, request.current.key)
+      await onSubmit(kiosk ? request.current.input : input, request.current.key)
     } catch (error) {
       setError(
         error instanceof Error
           ? error.message
           : es
           ? 'No se pudo guardar.'
-          : 'Could not save.',
+          : 'Could not save.'
       )
     } finally {
       lock.current = false
       setBusy(false)
     }
   }
+  const nameField = (
+    <label
+      className="grid gap-4 font-medium leading-none"
+      htmlFor="customer-name"
+    >
+      <span>
+        {es ? 'Nombre' : 'Name'}
+        <span aria-hidden="true">*</span>
+      </span>
+      <Input
+        id="customer-name"
+        aria-label={es ? 'Nombre' : 'Name'}
+        autoComplete={kiosk ? 'off' : 'name'}
+        required
+        maxLength={100}
+        value={name}
+        onChange={(e) => {
+          setName(e.target.value)
+          if (kiosk) request.current = null
+          setHasAttempt(false)
+        }}
+        disabled={busy || disabled}
+        className={kiosk ? 'h-11 text-lg!' : 'h-11 text-sm!'}
+      />
+    </label>
+  )
   return (
-    <form onSubmit={submit} className="flex flex-1 flex-col">
-      <div className="space-y-4 px-4 pt-6 pb-8">
-        <h1 className="text-3xl leading-9 font-medium text-gray-800">
-          {initial
-            ? es
-              ? 'Modifica tus datos'
-              : 'Edit your details'
-            : es
-            ? 'Introduce tus datos'
-            : 'Enter your details'}
-        </h1>
-        <div className="space-y-6">
-          <label
-            className="grid gap-4 font-medium leading-none"
-            htmlFor="customer-name"
+    <form
+      onSubmit={submit}
+      autoComplete={kiosk ? 'off' : undefined}
+      className="flex flex-1 flex-col"
+    >
+      <div className={kiosk ? 'space-y-10' : 'space-y-4 px-4 pt-6 pb-8'}>
+        {!kiosk && (
+          <h1 className="text-3xl leading-9 font-medium text-gray-800">
+            {initial
+              ? es
+                ? 'Modifica tus datos'
+                : 'Edit your details'
+              : es
+              ? 'Introduce tus datos'
+              : 'Enter your details'}
+          </h1>
+        )}
+        <div
+          className={
+            kiosk
+              ? 'space-y-10 [&_legend]:text-xl [&_legend]:font-semibold [&_label>span:first-child]:text-xl [&_label>span:first-child]:font-semibold'
+              : 'space-y-6'
+          }
+        >
+          {!kiosk && nameField}
+          <div
+            className={
+              kiosk
+                ? 'flex flex-col items-start gap-4 [&>p]:text-xl [&>p]:font-semibold'
+                : 'flex items-center justify-between gap-2'
+            }
           >
-            <span>
-              {es ? 'Nombre' : 'Name'}
-              <span aria-hidden="true">*</span>
-            </span>
-            <Input
-              id="customer-name"
-              aria-label={es ? 'Nombre' : 'Name'}
-              autoComplete="name"
-              required
-              maxLength={100}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              disabled={busy || disabled}
-              className="h-11 text-sm!"
-            />
-          </label>
-          <div className="flex items-center justify-between gap-2">
             <p className="font-medium">
               {es ? '¿Cuántos comensales?' : 'How many guests?'}
             </p>
@@ -166,24 +204,33 @@ export function RestaurantForm({
           </div>
           <SpaceSelector
             service={service}
+            presentation={presentation}
             locale={locale}
             size={size}
             value={space}
             disabled={busy || disabled}
-            onChange={setSpace}
+            onChange={(next) => {
+              setSpace(next)
+              if (kiosk) request.current = null
+              setHasAttempt(false)
+            }}
           />
           {!initial && (
             <PublicWhatsAppConsentFields
               locale={locale}
+              presentation={presentation}
+              nameField={kiosk ? nameField : undefined}
               phone={phone}
               consent={consent}
               disabled={busy || disabled}
               onPhoneChange={(value) => {
                 setPhone(value)
+                if (kiosk) request.current = null
                 setHasAttempt(false)
               }}
               onConsentChange={(value) => {
                 setConsent(value)
+                if (kiosk) request.current = null
                 setHasAttempt(false)
               }}
             />
@@ -213,7 +260,7 @@ export function RestaurantForm({
           )}
         </div>
       </div>
-      <CustomerFooter>
+      <CustomerFooter presentation={presentation}>
         {onCancel && (
           <Button
             type="button"
@@ -228,9 +275,11 @@ export function RestaurantForm({
           type="submit"
           disabled={
             busy ||
-            (disabled && !hasAttempt) ||
-            !compatible ||
-            (!initial && !validPublicWhatsAppConsent(phone, consent))
+            (!(kiosk && hasAttempt) &&
+              ((disabled && !hasAttempt) ||
+                !compatible ||
+                (kiosk && !name.trim()) ||
+                (!initial && !validPublicWhatsAppConsent(phone, consent))))
           }
         >
           {busy

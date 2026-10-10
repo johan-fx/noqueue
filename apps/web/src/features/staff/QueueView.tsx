@@ -9,6 +9,7 @@ import type {
 } from '@noqueue/contracts/staff'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
+import { QueuePublicLinks } from './QueuePublicLinks'
 
 import { receptionLabels } from './queue-labels'
 const views = [
@@ -270,14 +271,7 @@ export function QueueView({
             Actualizar
           </Button>
         </div>
-        <a
-          className="underline"
-          href={'/q/' + queue.id}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Abrir enlace público de la lista
-        </a>
+        <QueuePublicLinks queueId={queue.id} />
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import type { Locale } from './shared'
 
@@ -13,7 +13,7 @@ export function useLocale() {
           previous.set('lang', value)
           return previous
         },
-        { replace: true },
+        { replace: true }
       )
     },
   ] as const
@@ -22,6 +22,7 @@ export function usePublicResource<T>(
   url: string | null,
   parse: (data: unknown) => T,
   polling = true,
+  credentials: RequestCredentials = 'same-origin'
 ) {
   const [state, setState] = useState<{
     url: string
@@ -43,6 +44,7 @@ export function usePublicResource<T>(
           const response = await fetch(url, {
             signal: controller.signal,
             cache: 'no-store',
+            credentials,
           })
           if (!response.ok) throw new Error('unavailable')
           const data = parse(await response.json())
@@ -78,11 +80,12 @@ export function usePublicResource<T>(
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('focus', visible)
     }
-  }, [url, parse, polling])
+  }, [url, parse, polling, credentials])
+  const refreshResource = useCallback(() => refreshRef.current(), [])
   return {
     data: state?.url === url ? state.data : null,
     updatedAt: state?.url === url ? state.updatedAt : null,
     error,
-    refresh: () => refreshRef.current(),
+    refresh: refreshResource,
   }
 }

@@ -9,12 +9,14 @@ import type { Locale } from './shared'
 
 export function SpaceSelector({
   service,
+  presentation = 'public',
   locale,
   size,
   value,
   disabled,
   onChange,
 }: {
+  presentation?: 'public' | 'kiosk'
   service: PublicService
   locale: Locale
   size: number
@@ -32,7 +34,11 @@ export function SpaceSelector({
         aria-label={
           es ? '¿Dónde quieres tu mesa?' : 'Where would you like your table?'
         }
-        className="grid grid-cols-2 gap-4"
+        className={
+          presentation === 'kiosk'
+            ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4'
+            : 'grid grid-cols-2 gap-4'
+        }
         name="customer-space"
         value={value}
         onValueChange={(next) => onChange(next)}
@@ -45,7 +51,7 @@ export function SpaceSelector({
             name: es ? 'Opción más rápida' : 'Fastest option',
             maxPartySize: Math.max(
               0,
-              ...service.spaces.map((s) => s.maxPartySize),
+              ...service.spaces.map((s) => s.maxPartySize)
             ),
           },
         ].map((item) => (

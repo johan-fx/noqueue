@@ -22,14 +22,17 @@ export function ServiceForm({
   service,
   locale,
   disabled = false,
+  presentation = 'public',
   onSubmit,
 }: {
   service: PublicService
   locale: Locale
   disabled?: boolean
+  presentation?: 'public' | 'kiosk'
   onSubmit: (input: PublicServiceJoin, key: string) => Promise<void>
 }) {
   const es = locale === 'es'
+  const kiosk = presentation === 'kiosk'
   const reception = service.type === 'reception'
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -83,7 +86,7 @@ export function ServiceForm({
           ? error.message
           : es
           ? 'No se pudo guardar.'
-          : 'Could not save.',
+          : 'Could not save.'
       )
     } finally {
       lock.current = false
@@ -95,44 +98,61 @@ export function ServiceForm({
     check_out: 'Check-out',
     other: es ? 'Otros temas' : 'Other matters',
   }
+  const nameField = (
+    <label
+      className="grid gap-4 font-medium leading-none"
+      htmlFor="customer-name"
+    >
+      <span>
+        {es ? 'Nombre' : 'Name'}
+        <span aria-hidden="true">*</span>
+      </span>
+      <Input
+        id="customer-name"
+        aria-label={es ? 'Nombre' : 'Name'}
+        autoComplete={kiosk ? 'off' : 'name'}
+        required
+        maxLength={100}
+        value={name}
+        onChange={(event) => {
+          setName(event.target.value)
+          request.current = null
+          setHasAttempt(false)
+        }}
+        disabled={busy || disabled}
+        className={kiosk ? 'h-11 text-lg!' : 'h-11 text-sm!'}
+      />
+    </label>
+  )
   return (
-    <form onSubmit={submit} className="flex flex-1 flex-col">
-      <div className="space-y-4 px-4 pt-6 pb-8">
-        <h1 className="text-3xl leading-9 font-medium text-gray-800">
-          {es ? 'Introduce tus datos' : 'Enter your details'}
-        </h1>
-        <div className="space-y-6">
-          <label
-            className="grid gap-4 font-medium leading-none"
-            htmlFor="customer-name"
-          >
-            <span>
-              {es ? 'Nombre' : 'Name'}
-              <span aria-hidden="true">*</span>
-            </span>
-            <Input
-              id="customer-name"
-              aria-label={es ? 'Nombre' : 'Name'}
-              autoComplete="name"
-              required
-              maxLength={100}
-              value={name}
-              onChange={(event) => {
-                setName(event.target.value)
-                request.current = null
-                setHasAttempt(false)
-              }}
-              disabled={busy || disabled}
-              className="h-11 text-sm!"
-            />
-          </label>
+    <form
+      onSubmit={submit}
+      autoComplete={kiosk ? 'off' : undefined}
+      className="flex flex-1 flex-col"
+    >
+      <div className={kiosk ? 'space-y-10' : 'space-y-4 px-4 pt-6 pb-8'}>
+        {!kiosk && (
+          <h1 className="text-3xl leading-9 font-medium text-gray-800">
+            {es ? 'Introduce tus datos' : 'Enter your details'}
+          </h1>
+        )}
+        <div
+          className={
+            kiosk
+              ? 'space-y-10 [&_legend]:text-xl [&_legend]:font-semibold [&_label>span:first-child]:text-xl [&_label>span:first-child]:font-semibold'
+              : 'space-y-6'
+          }
+        >
+          {!kiosk && nameField}
           {reception && (
             <fieldset disabled={busy || disabled}>
               <legend className="mb-4 font-medium leading-none">
                 {es ? '¿Qué tienes que hacer?' : 'What do you need to do?'}
               </legend>
               <RadioGroup
-                aria-label={es ? '¿Qué tienes que hacer?' : 'What do you need to do?'}
+                aria-label={
+                  es ? '¿Qué tienes que hacer?' : 'What do you need to do?'
+                }
                 className="grid grid-cols-2 gap-2"
                 name="reception-service"
                 value={selected}
@@ -169,6 +189,8 @@ export function ServiceForm({
           )}
           <PublicWhatsAppConsentFields
             locale={locale}
+            presentation={presentation}
+            nameField={kiosk ? nameField : undefined}
             phone={phone}
             consent={consent}
             disabled={busy || disabled}
@@ -190,7 +212,7 @@ export function ServiceForm({
           )}
         </div>
       </div>
-      <CustomerFooter>
+      <CustomerFooter presentation={presentation}>
         <Button
           type="submit"
           disabled={

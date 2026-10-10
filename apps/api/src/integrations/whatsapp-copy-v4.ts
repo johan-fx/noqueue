@@ -1,4 +1,5 @@
 import type { OutboundWhatsAppMessage } from './360dialog'
+import { isOpenStagingV4 } from './whatsapp-policy'
 
 export type LifecycleV4Variant =
   | 'queue_joined'
@@ -113,15 +114,18 @@ export function v4TemplateReady(
   env: CloudflareBindings,
   spec: LifecycleV4Template,
 ) {
+  const openStaging = isOpenStagingV4(env)
+  const environment = v4EnvironmentForOrigin(env.PUBLIC_APP_ORIGIN)
   if (
-    spec.environment &&
-    v4EnvironmentForOrigin(env.PUBLIC_APP_ORIGIN) !== spec.environment
+    (openStaging && environment !== 'staging') ||
+    (spec.environment && environment !== spec.environment)
   )
     return false
   const binding = (env as unknown as Record<string, unknown>)[spec.binding]
   return (
-    env.STAGING_CONSENT_APPROVED === 'true' &&
-    env.WHATSAPP_V4_TEMPLATES_APPROVED === 'true' &&
+    (openStaging ||
+      (env.STAGING_CONSENT_APPROVED === 'true' &&
+        env.WHATSAPP_V4_TEMPLATES_APPROVED === 'true')) &&
     binding === spec.name
   )
 }

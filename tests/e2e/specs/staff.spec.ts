@@ -202,8 +202,11 @@ test.describe('commercial provisioning save retry', () => {
     await page.getByLabel('Contraseña', { exact: true }).fill(password)
     await page.getByRole('button', { name: 'Entrar', exact: true }).click()
     await expect(
-      page.getByRole('heading', { name: 'Establecimientos', exact: true }),
+      page.getByRole('heading', { name: 'Administración', exact: true }),
     ).toBeVisible()
+    await expect(
+      page.getByRole('tab', { name: 'Establecimientos', exact: true }),
+    ).toHaveAttribute('aria-selected', 'true')
     await expect(page.getByRole('dialog')).toHaveCount(0)
 
     await page.getByRole('button', { name: 'Crear nuevo' }).click()
@@ -252,9 +255,35 @@ test.describe('commercial provisioning save retry', () => {
     await creationService
       .getByLabel('Nombre del servicio')
       .fill('Restaurante E2E')
-    await creationService
-      .getByRole('switch', { name: '24 horas, todos los días' })
-      .click()
+    const openingSchedule = creationService.getByRole('region', {
+      name: 'Horario 1',
+      exact: true,
+    })
+    for (const day of [
+      'Lunes',
+      'Martes',
+      'Miércoles',
+      'Jueves',
+      'Viernes',
+      'Sábado',
+      'Domingo',
+    ]) {
+      const dayButton = openingSchedule.getByRole('button', {
+        name: day,
+        exact: true,
+      })
+      if ((await dayButton.getAttribute('aria-pressed')) !== 'true')
+        await dayButton.click()
+      await expect(dayButton).toHaveAttribute('aria-pressed', 'true')
+    }
+    const allDay = openingSchedule.getByRole('switch', {
+      name: 'Abierto 24 horas',
+      exact: true,
+    })
+    if ((await allDay.getAttribute('aria-checked')) !== 'true')
+      await allDay.click()
+    await expect(allDay).toHaveAttribute('aria-checked', 'true')
+    await openingSchedule.getByRole('button', { name: 'Listo', exact: true }).click()
     await creationService.getByRole('button', { name: 'Siguiente' }).click()
     await creationService
       .getByRole('button', { name: 'Configuración avanzada' })
@@ -289,6 +318,15 @@ test.describe('commercial provisioning save retry', () => {
       '**/api/v1/staff/commercial/organizations',
       async (route) => {
         if (route.request().method() !== 'POST') return route.continue()
+        const body = route.request().postDataJSON() as {
+          services: {
+            scheduleGroups: { days: number[]; twentyFourHours: boolean }[]
+          }[]
+        }
+        expect(body.services[0]!.scheduleGroups).toHaveLength(1)
+        const schedule = body.services[0]!.scheduleGroups[0]!
+        expect([...schedule.days].sort()).toEqual([0, 1, 2, 3, 4, 5, 6])
+        expect(schedule.twentyFourHours).toBe(true)
         organizationPosts++
         if (!firstKey) {
           firstKey = route.request().headers()['idempotency-key']!
@@ -315,9 +353,15 @@ test.describe('commercial provisioning save retry', () => {
     ).toBeVisible()
     await expect(page.getByRole('status')).toContainText('Establecimiento creado')
 
-    await page.getByRole('link', { name: /Hotel Madrid E2E/ }).click()
+    const createdVenue = page.getByRole('link', { name: /Hotel Madrid E2E/ })
+    const detailUrl = new URL((await createdVenue.getAttribute('href'))!, page.url()).href
+    await createdVenue.click()
+    await expect(page).toHaveURL(detailUrl)
     await expect(
       page.getByRole('heading', { name: 'Hotel Madrid E2E', exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Opciones del servicio' }),
     ).toBeVisible()
     await page.reload()
     await expect(
@@ -584,7 +628,13 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
     name: 'Gestionar lista',
     exact: true,
   })
-  await queueDrawer.getByRole('button', { name: 'Actualizar', exact: true }).click()
+  const occupiedPoll = await page.waitForResponse(
+    (response) =>
+      response.request().method() === 'GET' &&
+      response.url().includes(`/api/v1/staff/queues/${queue}/entries`) &&
+      response.ok(),
+  )
+  expect(await occupiedPoll.json()).toEqual([])
   const guestIp = clientIpAddress(testInfo, 'staff-lifecycle-guest')
   const guestContext = await newClientContext(
     browser,
@@ -622,9 +672,28 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
     const guest = await guestContext.newPage()
     await guest.goto(`/t/${recoveryToken}`)
     await expect(guest.getByText('Sin estimación', { exact: true })).toBeVisible()
-    await queueDrawer
-      .getByRole('button', { name: 'Actualizar', exact: true })
-      .click()
+    await page.waitForResponse(async (response) => {
+      if (
+        response.request().method() !== 'GET' ||
+        !response.url().includes(`/api/v1/staff/queues/${queue}/entries`) ||
+        !response.ok()
+      )
+        return false
+      const rows = (await response.json()) as {
+        displayName?: string
+        status?: string
+        assignment?: { available?: boolean }
+      }[]
+      return rows.some(
+        (entry) =>
+          entry.displayName === 'Cliente Staff E2E' &&
+          entry.status === 'waiting' &&
+          entry.assignment?.available === false,
+      )
+    })
+    await expect(
+      queueDrawer.getByText('Cliente Staff E2E', { exact: true }),
+    ).toBeVisible()
 
     await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
     await queueDrawer

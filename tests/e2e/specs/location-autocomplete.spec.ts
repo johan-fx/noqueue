@@ -27,8 +27,11 @@ async function login(page: Page, request: APIRequestContext) {
   await page.getByLabel('Contraseña', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Entrar', exact: true }).click()
   await expect(
-    page.getByRole('heading', { name: 'Establecimientos', exact: true }),
+    page.getByRole('heading', { name: 'Administración', exact: true }),
   ).toBeVisible()
+  await expect(
+    page.getByRole('tab', { name: 'Establecimientos', exact: true }),
+  ).toHaveAttribute('aria-selected', 'true')
   return suffix
 }
 test('commercial signup autocomplete: mobile empty Escape, Tab without selection, keyboard explicit selection and no extra query', async ({

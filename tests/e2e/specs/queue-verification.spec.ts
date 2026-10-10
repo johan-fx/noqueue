@@ -15,6 +15,51 @@ type Step = {
   expected: unknown
   simulatedAt: number
 }
+type Projection = { etaMinutes: number; predictedAt: number }
+function observeProjection(page: Page) {
+  let latest: Projection | undefined
+  page.on('response', async (response) => {
+    if (
+      response.request().method() === 'GET' &&
+      /\/api\/v1\/public\/entries\/[a-f0-9]{64}$/.test(
+        new URL(response.url()).pathname,
+      ) &&
+      response.ok()
+    )
+      latest = (await response.json()) as Projection
+  })
+  return () => latest
+}
+async function expectProjectedCountdown(
+  page: Page,
+  projection: () => Projection | undefined,
+  expectedMinutes: number,
+) {
+  // The UI ticks once per second and floors seconds; allow only those two seconds.
+  await expect
+    .poll(async () => {
+      const entry = projection()
+      if (
+        entry?.etaMinutes !== expectedMinutes ||
+        !Number.isFinite(entry.predictedAt)
+      )
+        return Infinity
+      const sample = await page.getByRole('progressbar').evaluate((element) => ({
+        label: element.getAttribute('aria-label'),
+        now: Date.now(),
+      }))
+      const countdown =
+        /^Espera aproximada: (\d+):(\d{2}) \(minutos:segundos\)$/.exec(
+          sample.label ?? '',
+        )
+      if (!countdown || Number(countdown[2]) >= 60) return Infinity
+      const remainingMs =
+        (Number(countdown[1]) * 60 + Number(countdown[2])) * 1000
+      return Math.abs(remainingMs - Math.max(0, entry.predictedAt - sample.now))
+    })
+    .toBeLessThanOrEqual(2000)
+  return projection()!
+}
 const test = base.extend<{ evidence: Step[] }>({
   evidence: async ({}, use, info) => {
     const steps: Step[] = []
@@ -190,11 +235,10 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
     try {
       const first = await guest.newPage(),
         second = await guest.newPage()
+      const projection = observeProjection(second)
       await join(first, t.queue, 'First')
       await join(second, t.queue, 'Second')
-      await expect(
-        second.getByLabel('Espera aproximada: 50 min', { exact: true }),
-      ).toBeVisible()
+      const initialProjection = await expectProjectedCountdown(second, projection, 50)
       const expected = kind === 'MEAN' ? 35 : 54
       if (kind === 'MEAN') {
         const queues = (await (
@@ -258,11 +302,8 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
         )
         expect(loaded.ok(), await loaded.text()).toBeTruthy()
       }
-      await expect(
-        second.getByLabel(`Espera aproximada: ${expected} min`, {
-          exact: true,
-        }),
-      ).toBeVisible()
+      const updatedProjection = await expectProjectedCountdown(second, projection, expected)
+      expect(updatedProjection.predictedAt).not.toBe(initialProjection.predictedAt)
       const row = page
         .getByRole('dialog', { name: 'Gestionar lista', exact: true })
         .locator('li')
@@ -274,11 +315,9 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
         info,
         evidence,
         `Q-BROWSER-${kind}`,
-        'terrace/4 expected ETA rendered by both clients',
-        await second
-          .getByLabel(`Espera aproximada: ${expected} min`, { exact: true })
-          .getAttribute('aria-label'),
-        `Espera aproximada: ${expected} min`,
+        'terrace/4 expected ETA and timestamp countdown rendered by both clients',
+        updatedProjection.etaMinutes,
+        expected,
       )
       await second.screenshot({
         path: info.outputPath('customer-estimate.png'),

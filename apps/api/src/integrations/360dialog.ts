@@ -1,4 +1,5 @@
 import { lifecycleV3, renderLifecycleV3, v3TemplateReady } from './whatsapp-copy-v3'
+import { isOpenStagingV4 } from './whatsapp-policy'
 import {
   lifecycleV4,
   renderLifecycleV4,
@@ -308,7 +309,7 @@ export function createWhatsAppSender(
         !serviceWindowReply &&
         !sandbox &&
         (!name ||
-          env.STAGING_CONSENT_APPROVED !== 'true' ||
+          (!(version4 && isOpenStagingV4(env)) && env.STAGING_CONSENT_APPROVED !== 'true') ||
           (version2 && !version3 && !version4 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
       )
         return configurationFailure()

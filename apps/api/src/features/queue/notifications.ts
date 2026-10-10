@@ -4,6 +4,7 @@ import { queueCoordinator, openExperimentRecipientAllowed } from './experiment'
 import { recalculateQueue } from './projection'
 import { z } from 'zod'
 import { createWhatsAppSender } from '../../integrations/360dialog'
+import { isOpenStagingV4 } from '../../integrations/whatsapp-policy'
 import { decryptPhone, recoveryToken } from './crypto'
 import { evaluateEstimateNotice } from './estimate-notices'
 import type { QueueNoticeSnapshot } from './notices'
@@ -408,7 +409,12 @@ export async function dispatchNotificationSerialized(
     }
   }
   const phone = await decryptPhone(env.PII_ENCRYPTION_KEY, row.phone_cipher)
+  // Never expand historical recipients based only on the current environment profile.
+  const openV4Recipient =
+    isOpenStagingV4(env) &&
+    (snapshot?.copyVersion === 4 || actionResult !== null)
   if (
+    !openV4Recipient &&
     !openExperimentRecipientAllowed(env, row.queue_id, row.kind) &&
     !(env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
       .split(',')

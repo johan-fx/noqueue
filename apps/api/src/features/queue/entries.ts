@@ -3,6 +3,7 @@ import {
   whatsappV3Catalog,
   v3TemplateReady,
 } from '../../integrations/whatsapp-copy-v3'
+import { isOpenStagingV4 } from '../../integrations/whatsapp-policy'
 import {
   whatsappV4CatalogForEnvironment,
   v4EnvironmentForOrigin,
@@ -221,7 +222,7 @@ function whatsappAdmissionReady(
 }
 
 function recipientAllowed(env: CloudflareBindings, phone: string) {
-  return (env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
+  return isOpenStagingV4(env) || (env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
     .split(',')
     .map((value) => value.trim())
     .includes(phone)
@@ -310,6 +311,8 @@ export async function joinQueue(
     if (!input.whatsapp.consent)
       return { status: 400, body: { error: 'whatsapp_consent_required' } }
     if (env.WHATSAPP_ENABLED !== 'true')
+      return { status: 503, body: { error: 'whatsapp_unavailable' } }
+    if (isOpenStagingV4(env) && !whatsappAdmissionReady(env, input.locale))
       return { status: 503, body: { error: 'whatsapp_unavailable' } }
   }
   if (

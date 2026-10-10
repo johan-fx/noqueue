@@ -133,8 +133,12 @@ for (const width of [320, 390, 1280]) {
       fullPage: true,
     })
     await card.click()
+    await expect(page).toHaveURL(/\/staff\/establishments\/hotel$/)
     await expect(
       page.getByRole('heading', { name: 'Hotel Madrid', exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('button', { name: 'Opciones del servicio' }),
     ).toBeVisible()
     await page.reload()
     await expect(

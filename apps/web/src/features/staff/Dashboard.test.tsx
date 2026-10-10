@@ -1216,6 +1216,12 @@ it.each(['removed', 'disallowed'] as const)(
 )
 
 it('does not commit a late entry refresh for a queue that is no longer selected', async () => {
+  let poll: (() => void) | undefined
+  vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
+    if (delay === 5000) poll = callback as () => void
+    return 1
+  })
+  vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
   const first = { ...service, id: 'first', name: 'First service' }
   const second = { ...service, id: 'second', name: 'Second service' }
   const firstEntry = {
@@ -1263,9 +1269,8 @@ it('does not commit a late entry refresh for a queue that is no longer selected'
   const firstDrawer = await screen.findByRole('dialog', {
     name: 'Gestionar lista',
   })
-  fireEvent.click(
-    within(firstDrawer).getByRole('button', { name: 'Actualizar' }),
-  )
+  expect(poll).toBeTypeOf('function')
+  await act(async () => poll!())
   await waitFor(() => expect(firstReads).toBe(2))
 
   fireEvent.click(within(firstDrawer).getByRole('button', { name: 'Volver' }))

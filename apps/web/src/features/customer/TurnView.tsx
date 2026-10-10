@@ -9,7 +9,7 @@ import {
   StepperIndicator,
 } from '@/components/reui/stepper'
 import { CustomerFooter, type Locale } from './shared'
-import { turnProgress } from './turn-progress'
+import { remainingWaitMs, turnProgress } from './turn-progress'
 
 export function TurnView({
   entry,
@@ -79,8 +79,12 @@ export function TurnView({
       ? es ? 'El servicio ha cerrado y tu turno pendiente se ha cancelado. Puedes apuntarte de nuevo en la próxima apertura.' : 'The service has closed and your pending turn was cancelled. You can join again when service reopens.'
       : es ? 'Tu turno ya no está activo. Puedes volver a apuntarte cuando quieras.' : 'Your turn is no longer active. You can join again whenever you like.',
   }
-  const remaining =
-    c.arrivalDeadlineAt == null ? null : Math.max(0, c.arrivalDeadlineAt - now)
+  const waitMs = remainingWaitMs(entry, now)
+  const remaining = called
+    ? c.arrivalDeadlineAt == null
+      ? null
+      : Math.max(0, c.arrivalDeadlineAt - now)
+    : waitMs
   const countdown =
     remaining == null
       ? '—'
@@ -88,7 +92,26 @@ export function TurnView({
           Math.floor(remaining / 1000) % 60,
         ).padStart(2, '0')}`
   const known =
-    entry.estimateQuality !== 'unknown' && entry.estimateQuality !== undefined
+    ['estimated', 'provisional'].includes(entry.estimateQuality ?? '') &&
+    Number.isFinite(entry.etaMinutes) &&
+    entry.etaMinutes >= 0
+  const units = es ? 'minutos:segundos' : 'minutes:seconds'
+  const waitLabel = waitMs == null
+    ? `${entry.etaMinutes} min`
+    : `${countdown} (${units})`
+  const estimatedWaitLabel = es
+    ? `Espera aproximada: ${waitLabel}`
+    : `Estimated wait: ${waitLabel}`
+  const value = expired
+    ? '0'
+    : called
+    ? countdown
+    : known
+    ? waitMs == null ? String(entry.etaMinutes) : countdown
+    : '—'
+  const counterSize = value.length > 6
+    ? 'text-2xl'
+    : value.length > 5 ? 'text-3xl' : 'text-4xl'
   const color = arrived
     ? 'text-green-600'
     : expired || called
@@ -199,9 +222,7 @@ export function TurnView({
             role="progressbar"
             aria-label={
               active && !called && known
-                ? es
-                  ? `Espera aproximada: ${entry.etaMinutes} min`
-                  : `Estimated wait: ${entry.etaMinutes} min`
+                ? estimatedWaitLabel
                 : es
                 ? 'Progreso de la espera'
                 : 'Waiting progress'
@@ -210,7 +231,11 @@ export function TurnView({
             aria-valuemax={100}
             aria-valuenow={percentage}
             aria-valuetext={
-              percentage == null
+              active && !called && known
+                ? percentage == null
+                  ? estimatedWaitLabel
+                  : `${estimatedWaitLabel}. ${es ? 'Progreso de la espera' : 'Waiting progress'}: ${percentage}%`
+                : percentage == null
                 ? es
                   ? 'Sin estimación disponible'
                   : 'No estimate available'
@@ -258,17 +283,16 @@ export function TurnView({
             ) : (
               <div className="relative text-center">
                 <p
-                  className={`text-4xl leading-10 ${
+                  className={`tabular-nums whitespace-nowrap leading-10 ${counterSize} ${
                     active && !called ? 'text-black' : ''
                   }`}
+                  style={
+                    value.length > 8
+                      ? { fontSize: `${128 / (value.length * 0.65)}px` }
+                      : undefined
+                  }
                 >
-                  {expired
-                    ? '0'
-                    : called
-                    ? countdown
-                    : known
-                    ? entry.etaMinutes
-                    : '—'}
+                  {value}
                 </p>
                 <p
                   className={`mt-1 max-w-28 text-xs leading-4 ${
@@ -283,7 +307,7 @@ export function TurnView({
                     )
                   ) : known ? (
                     <>
-                      {es ? 'minutos' : 'minutes'}
+                      {waitMs == null ? es ? 'minutos' : 'minutes' : units}
                       <br />
                       {es ? 'aprox.' : 'approx.'}
                     </>

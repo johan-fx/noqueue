@@ -1,5 +1,6 @@
 import '@testing-library/jest-dom/vitest'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -14,17 +15,20 @@ import { CustomerTurn } from './CustomerTurn'
 
 const resource = vi.hoisted(() => ({
   data: null as Entry | null,
+  updatedAt: 1000,
   refresh: vi.fn(),
 }))
 vi.mock('./public-resource', async (original) => ({
   ...(await original<typeof import('./public-resource')>()),
-  usePublicResource: () => ({ ...resource, updatedAt: 1000, error: false }),
+  usePublicResource: () => ({ ...resource, error: false }),
 }))
 function fixture(size = 4): Entry {
   return {
     code: 'XP03',
     position: 6,
     etaMinutes: 30,
+    initialEtaMinutes: 30,
+    predictedAt: 1801000,
     estimateQuality: 'estimated',
     status: 'waiting',
     notification: 'disabled',
@@ -60,6 +64,7 @@ function fixture(size = 4): Entry {
 }
 function mount(size = 4, lang = 'es', notice?: string) {
   resource.data = fixture(size)
+  resource.updatedAt = Date.now()
   const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true }))
   vi.stubGlobal('fetch', fetcher)
   const search = new URLSearchParams({ lang })
@@ -78,6 +83,7 @@ function mount(size = 4, lang = 'es', notice?: string) {
   const view = render(tree)
   return {
     fetcher,
+    unmount: view.unmount,
     refresh: () =>
       view.rerender(
         <MemoryRouter initialEntries={[`/t/${token}?${search}`]}>
@@ -98,6 +104,7 @@ async function editGuests() {
 }
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
 })
@@ -496,3 +503,58 @@ it.each([
     ).toBeVisible()
   },
 )
+
+it('ticks the server-aligned wait and arc and resynchronizes revised snapshots without leaking timers', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(9000000)
+  const { refresh, unmount } = mount()
+  expect(screen.getByText('30:00')).toBeVisible()
+  expect(vi.getTimerCount()).toBe(1)
+  act(() => vi.advanceTimersByTime(1000))
+  expect(screen.getByText('29:59')).toBeVisible()
+  const progress = () => {
+    const arc = document.querySelector('circle[stroke="currentColor"]')!
+    const [length, circumference] = arc
+      .getAttribute('stroke-dasharray')!
+      .split(' ')
+      .map(Number)
+    return length! / circumference!
+  }
+  expect(progress()).toBeCloseTo(1 / 1800)
+  resource.updatedAt = Date.now()
+  resource.data = {
+    ...resource.data!,
+    predictedAt: 1505000,
+    customer: {
+      ...resource.data!.customer!,
+      serverNow: 5000,
+      phase: 'approaching',
+    },
+  }
+  refresh()
+  expect(screen.getByText('25:00')).toBeVisible()
+  expect(progress()).toBeCloseTo(1 / 6)
+  resource.data = { ...resource.data!, predictedAt: 2405000 }
+  refresh()
+  expect(screen.getByText('40:00')).toBeVisible()
+  expect(document.querySelector('circle[stroke="currentColor"]')).toBeNull()
+  act(() => vi.advanceTimersByTime(1000))
+  expect(screen.getByText('39:59')).toBeVisible()
+  resource.updatedAt = Date.now()
+  resource.data = {
+    ...resource.data!,
+    customer: {
+      ...resource.data!.customer!,
+      serverNow: 6000,
+      phase: 'called',
+      calledAt: 6000,
+      arrivalDeadlineAt: 306000,
+    },
+  }
+  refresh()
+  expect(screen.getByText('5:00')).toBeVisible()
+  act(() => vi.advanceTimersByTime(1000))
+  expect(screen.getByText('4:59')).toBeVisible()
+  unmount()
+  expect(vi.getTimerCount()).toBe(0)
+})

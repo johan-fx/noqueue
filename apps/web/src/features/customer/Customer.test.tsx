@@ -348,6 +348,7 @@ it('uses one temporal baseline through waiting, delay, call and arrival', () => 
     etaMinutes: 50,
     estimateQuality: 'estimated',
     initialEtaMinutes: 50,
+    predictedAt: 3001000,
   }
   const view = (now = 1000) => (
     <MemoryRouter>
@@ -363,7 +364,7 @@ it('uses one temporal baseline through waiting, delay, call and arrival', () => 
   const { rerender, container } = render(view())
   const ring = () => screen.getByRole('progressbar')
   const arc = () => container.querySelector('circle[stroke="currentColor"]')
-  expect(ring()).toHaveAccessibleName('Estimated wait: 50 min')
+  expect(ring()).toHaveAccessibleName('Estimated wait: 50:00 (minutes:seconds)')
   expect(ring()).toHaveAttribute('aria-valuenow', '0')
   expect(arc()).toBeNull()
   for (const [remaining, percentage] of [
@@ -372,6 +373,7 @@ it('uses one temporal baseline through waiting, delay, call and arrival', () => 
     [10, 80],
   ]) {
     current.etaMinutes = remaining!
+    current.predictedAt = 1000 + remaining! * 60000
     current.customer!.phase = remaining === 10 ? 'approaching' : 'waiting'
     rerender(view())
     expect(ring()).toHaveAttribute('aria-valuenow', String(percentage))
@@ -380,7 +382,7 @@ it('uses one temporal baseline through waiting, delay, call and arrival', () => 
       .split(' ')
       .map(Number)
     expect(length! / circumference!).toBeCloseTo(percentage! / 100)
-    expect(screen.getByText(String(remaining), { exact: true })).toBeVisible()
+    expect(screen.getByText(`${remaining}:00`, { exact: true })).toBeVisible()
   }
   expect(ring()).toHaveClass('text-orange-500')
   current.customer!.phase = 'called'
@@ -426,4 +428,164 @@ it('keeps unknown progress track-only with no numeric ARIA value', () => {
     'Sin estimación disponible',
   )
   expect(container.querySelectorAll('circle')).toHaveLength(1)
+})
+
+it.each(['waiting', 'approaching'] as const)(
+  'shows a continuous countdown during %s',
+  (phase) => {
+    const turn: Entry = {
+      ...entry(phase),
+      estimateQuality: 'estimated',
+      etaMinutes: 30,
+      initialEtaMinutes: 30,
+      predictedAt: 1801000,
+    }
+    const view = (now: number) => (
+      <MemoryRouter>
+        <TurnView
+          entry={turn}
+          locale="es"
+          now={now}
+          updatedAt={1000}
+          onAction={vi.fn()}
+        />
+      </MemoryRouter>
+    )
+    const { rerender, container } = render(view(1000))
+    expect(screen.getByText('30:00')).toBeVisible()
+    expect(screen.getByText(/minutos:segundos/)).toBeVisible()
+    expect(screen.getByText(/aprox\./)).toBeVisible()
+    rerender(view(2000))
+    expect(screen.getByText('29:59')).toHaveClass(
+      'tabular-nums',
+      'whitespace-nowrap',
+    )
+    const arc = container.querySelector('circle[stroke="currentColor"]')!
+    const [length, circumference] = arc
+      .getAttribute('stroke-dasharray')!
+      .split(' ')
+      .map(Number)
+    expect(length! / circumference!).toBeCloseTo(1 / 1800)
+    expect(screen.getByRole('progressbar')).toHaveAccessibleName(
+      'Espera aproximada: 29:59 (minutos:segundos)',
+    )
+    expect(screen.getByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext',
+      'Espera aproximada: 29:59 (minutos:segundos). Progreso de la espera: 0%',
+    )
+    expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-live')
+    turn.predictedAt = 1000
+    rerender(view(2000))
+    expect(screen.getByText('0:00')).toBeVisible()
+    expect(turn.customer!.phase).toBe(phase)
+  },
+)
+it.each([
+  [5406000, '90:05'],
+  [60061000, '1001:00'],
+] as const)(
+  'formats total minutes for long forecast %i',
+  (predictedAt, label) => {
+    const turn: Entry = {
+      ...entry('waiting'),
+      estimateQuality: 'provisional',
+      predictedAt,
+      etaMinutes: 90,
+    }
+    render(
+      <MemoryRouter>
+        <TurnView
+          entry={turn}
+          locale="en"
+          now={1000}
+          updatedAt={1000}
+          onAction={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(label)).toHaveClass(
+      'tabular-nums',
+      'whitespace-nowrap',
+    )
+    expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+    expect(screen.getByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext',
+      `Estimated wait: ${label} (minutes:seconds)`,
+    )
+  },
+)
+it.each([undefined, null, NaN, Infinity])(
+  'preserves honest legacy minutes for timestamp %s',
+  (predictedAt) => {
+    const turn: Entry = {
+      ...entry('waiting'),
+      estimateQuality: 'estimated',
+      predictedAt,
+      etaMinutes: 25,
+      initialEtaMinutes: 50,
+    }
+    render(
+      <MemoryRouter>
+        <TurnView
+          entry={turn}
+          locale="en"
+          now={181000}
+          updatedAt={1000}
+          onAction={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('25', { exact: true })).toBeVisible()
+    expect(screen.getByRole('progressbar')).toHaveAccessibleName(
+      'Estimated wait: 25 min',
+    )
+    expect(screen.getByRole('progressbar')).toHaveAttribute(
+      'aria-valuenow',
+      '50',
+    )
+    expect(screen.queryByText('25:00')).not.toBeInTheDocument()
+  },
+)
+it.each(['unknown', undefined] as const)(
+  'does not show false zero for %s forecasts',
+  (estimateQuality) => {
+    const turn = { ...entry('waiting'), estimateQuality, predictedAt: 0 }
+    render(
+      <MemoryRouter>
+        <TurnView
+          entry={turn}
+          locale="en"
+          now={1000}
+          updatedAt={1000}
+          onAction={vi.fn()}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('—')).toBeVisible()
+    expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+  },
+)
+
+it('keeps the zero countdown visible and arc indeterminate without a baseline', () => {
+  const turn: Entry = {
+    ...entry('waiting'),
+    estimateQuality: 'estimated',
+    etaMinutes: 0,
+    predictedAt: 1000,
+  }
+  const { container } = render(
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="en"
+        now={2000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByText('0:00')).toBeVisible()
+  expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+  expect(container.querySelector('circle[stroke="currentColor"]')).toBeNull()
 })

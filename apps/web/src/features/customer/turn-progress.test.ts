@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest'
 import type { Entry } from '@noqueue/contracts/queue'
-import { turnProgress } from './turn-progress'
+import { remainingWaitMs, turnProgress } from './turn-progress'
 
 function entry(overrides: Partial<Entry> = {}, phase = 'waiting'): Entry {
   return {
@@ -97,3 +97,71 @@ it('renders terminal arrival/expiry full and cancellation without progress', () 
   ).toBe(1)
   expect(turnProgress(entry({}, 'cancelled'), 1000)).toBeNull()
 })
+
+it.each(['waiting', 'approaching'])(
+  'ticks forecast progress each second in %s',
+  (phase) => {
+    const turn = entry(
+      { etaMinutes: 30, initialEtaMinutes: 30, predictedAt: 1801000 },
+      phase,
+    )
+    expect(remainingWaitMs(turn, 1000)).toBe(1800000)
+    expect(remainingWaitMs(turn, 2000)).toBe(1799000)
+    expect(turnProgress(turn, 1000)).toBe(0)
+    expect(turnProgress(turn, 2000)).toBeCloseTo(1 / 1800)
+    turn.predictedAt = 901000
+    expect(turnProgress(turn, 1000)).toBeCloseTo(0.5)
+    turn.predictedAt = 1441000
+    expect(turnProgress(turn, 1000)).toBeCloseTo(0.2)
+    turn.predictedAt = 3601000
+    expect(turnProgress(turn, 1000)).toBe(0)
+    turn.predictedAt = 0
+    expect(remainingWaitMs(turn, 1000)).toBe(0)
+    expect(turnProgress(turn, 1000)).toBe(1)
+  },
+)
+it.each(['estimated', 'provisional'] as const)(
+  'uses timestamps for %s forecasts without inventing a baseline',
+  (estimateQuality) => {
+    const turn = entry({
+      estimateQuality,
+      predictedAt: 61000,
+      initialEtaMinutes: null,
+    })
+    expect(remainingWaitMs(turn, 1000)).toBe(60000)
+    expect(turnProgress(turn, 1000)).toBeNull()
+    expect(turnProgress(turn, 61000)).toBeNull()
+  },
+)
+it.each(['unknown', undefined] as const)(
+  'ignores timestamps with %s quality',
+  (estimateQuality) => {
+    const turn = entry({ estimateQuality, predictedAt: 0 })
+    expect(remainingWaitMs(turn, 1000)).toBeNull()
+    expect(turnProgress(turn, 1000)).toBeNull()
+  },
+)
+it.each([undefined, null, NaN, Infinity])(
+  'does not invent a timestamp for %s',
+  (predictedAt) => {
+    const turn = entry({ predictedAt })
+    expect(remainingWaitMs(turn, 1000)).toBeNull()
+    expect(turnProgress(turn, 1000)).toBeCloseTo(0.5)
+    expect(turnProgress(turn, 181000)).toBeCloseTo(0.5)
+  },
+)
+it.each([NaN, Infinity])('rejects a nonfinite clock %s', (now) => {
+  expect(remainingWaitMs(entry({ predictedAt: 61000 }), now)).toBeNull()
+})
+
+it.each([null, undefined, 0, -1, 0.5, NaN, Infinity])(
+  'keeps zero timestamp forecasts indeterminate without a valid baseline %s',
+  (initialEtaMinutes) => {
+    for (const phase of ['waiting', 'approaching']) {
+      const turn = entry({ initialEtaMinutes, predictedAt: 1000 }, phase)
+      expect(remainingWaitMs(turn, 1000)).toBe(0)
+      expect(turnProgress(turn, 1000)).toBeNull()
+      expect(turnProgress(turn, 2000)).toBeNull()
+    }
+  },
+)

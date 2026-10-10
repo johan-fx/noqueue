@@ -227,3 +227,28 @@ it('snapshots finite admission and preserves it after hours are edited', async (
   await maintainServiceEntries(env, queueId)
   expect((await env.DB.prepare('SELECT status,service_ends_at FROM queue_entry WHERE queue_id=?').bind(queueId).first())).toEqual({ status: 'waiting', service_ends_at: Date.parse('2026-09-21T13:00:00Z') })
 })
+
+it('initializes grouped legacy tickets through consecutive full days and cancels only at their physical end', async () => {
+  const { twentyFourHours: _always, schedules: _slots, ...common } = config
+  const grouped: ServiceInput = { ...common, scheduleGroups: [{ days: [1,2,3], twentyFourHours: true, ranges: [] }] }
+  const queueId = await fixture(grouped), id = await ticket(queueId)
+  const open = Date.parse('2026-09-21T10:00:00Z'), end = Date.parse('2026-09-23T22:00:00Z')
+  await maintainServiceEntries(env, queueId, open)
+  expect(await env.DB.prepare('SELECT status,service_ends_at FROM queue_entry WHERE id=?').bind(id).first()).toEqual({ status: 'waiting', service_ends_at: end })
+  await maintainServiceEntries(env, queueId, Date.parse('2026-09-21T22:00:00Z'))
+  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
+  await maintainServiceEntries(env, queueId, end)
+  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('cancelled')
+})
+
+it('retains legacy restore policy for continuous full-week grouped calendars', async () => {
+  const { runQueueCommand } = await import('../staff/commands')
+  const { twentyFourHours: _always, schedules: _slots, ...common } = config
+  const queueId = await fixture({ ...common, scheduleGroups: [{ days: [0,1,2,3,4,5,6], twentyFourHours: true, ranges: [] }] })
+  const actor = (await env.DB.prepare("SELECT created_by FROM tenant_account WHERE organization_id='demo-org'").first<{ created_by: string }>())!.created_by
+  await env.DB.prepare("INSERT OR IGNORE INTO member(id,organizationId,userId,role,createdAt) VALUES (?,'demo-org',?,'owner',datetime('now'))").bind(crypto.randomUUID(), actor).run()
+  await env.DB.prepare("INSERT OR IGNORE INTO venue_membership(user_id,venue_id,role) VALUES (?,'demo-venue','owner')").bind(actor).run()
+  const id = await ticket(queueId, 'expired', null, null)
+  await runQueueCommand(env, actor, queueId, crypto.randomUUID(), { action: 'restore', entryId: id, version: 0, overrideReason: 'Customer returned' })
+  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
+})

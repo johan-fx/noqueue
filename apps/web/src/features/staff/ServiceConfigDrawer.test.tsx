@@ -67,10 +67,7 @@ describe('service configuration wizard', () => {
           name: 'Chez Paul',
           type: 'restaurant',
           averageMinutes: 45,
-          schedules: expect.arrayContaining([
-            { day: 1, from: '12:00', to: '23:00' },
-            { day: 2, from: '12:00', to: '23:00' },
-          ]),
+          scheduleGroups: [{ days: [1, 2], twentyFourHours: false, ranges: [{ from: '12:00', to: '23:00' }] }],
         }),
       ),
     )

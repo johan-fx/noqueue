@@ -14,6 +14,7 @@ import {
 import {
   queueCommandSchema,
   queueSettingsSchema,
+  weeklySchedule,
   type QueueCommand,
   type EntryCommand,
   type ServiceInput,
@@ -100,7 +101,9 @@ export async function runQueueCommand(
   if (
     input.action === 'restore' &&
     ((entry.service_ends_at !== null && now >= entry.service_ends_at) ||
-      (entry.service_window_id === null && !state.config?.twentyFourHours))
+      (entry.service_window_id === null &&
+        (!state.config ||
+          weeklySchedule(state.config).allDayDays.length !== 7)))
   )
     throw new HTTPException(409, { message: 'invalid_transition' })
   if (input.action === 'restore' && !input.overrideReason)
@@ -396,6 +399,8 @@ export async function configureQueue(
   if (!current || current.version !== version)
     throw new HTTPException(409, { message: 'version_conflict' })
   const old = await loadQueueState(env, queueId)
+  if (old.config?.scheduleGroups && !rawConfig.scheduleGroups)
+    throw new HTTPException(409, { message: 'schedule_format_conflict' })
   const config = normalizeConfig(rawConfig, old.config)
   if (
     config.graceMinutes !== old.config?.graceMinutes &&

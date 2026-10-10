@@ -3,34 +3,34 @@ import {
   defaultGraceMinutes,
   type ServiceInput,
 } from '@noqueue/contracts/staff'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
-import { Switch } from '@/components/ui/switch'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
-import { TimeInput } from '@/components/shadcn-studio/date-picker/date-picker-09'
 import { Choice } from '../ServiceForm'
-import { readHours, weekdays, writeHours } from './hours'
+import { ScheduleGroupsEditor } from './ScheduleGroupsEditor'
+import type {
+  ScheduleEditorState,
+  ScheduleEditorHandle,
+} from './schedule-editor-state'
+import type { Ref } from 'react'
 import { cutoffOptions } from './model'
-import { PlusIcon, Trash2Icon } from 'lucide-react'
 
 export function GeneralStep({
   form,
   lockType,
+  scheduleState,
+  onScheduleChange,
+  scheduleEditorRef,
 }: {
   form: UseFormReturn<ServiceInput>
   lockType: boolean
+  scheduleState: ScheduleEditorState
+  onScheduleChange: (next: ScheduleEditorState) => void
+  scheduleEditorRef: Ref<ScheduleEditorHandle>
 }) {
   const values = form.watch()
-  const hours = readHours(values.schedules)
   const cutoffs = cutoffOptions.includes(values.cutoffMinutes)
     ? cutoffOptions
     : [values.cutoffMinutes, ...cutoffOptions]
-
-  function applyHours(days: number[], ranges: typeof hours.ranges) {
-    // Overlap is checked when the footer "Siguiente" button runs the step.
-    form.setValue('schedules', writeHours(days, ranges))
-  }
 
   return (
     <div className="space-y-5">
@@ -80,117 +80,12 @@ export function GeneralStep({
         <Input id="service-name" {...form.register('name')} />
         <FieldError errors={[form.formState.errors.name]} />
       </Field>
-      <Field>
-        <FieldLabel>Días de apertura</FieldLabel>
-        <ToggleGroup
-          multiple
-          variant="outline"
-          spacing={2}
-          className="grid w-full grid-cols-7"
-          value={(values.twentyFourHours
-            ? weekdays.map((weekday) => weekday.day)
-            : hours.days
-          ).map(String)}
-          onValueChange={(next) => {
-            if (values.twentyFourHours) form.setValue('twentyFourHours', false)
-            applyHours(next.map(Number), hours.ranges)
-          }}
-        >
-          {weekdays.map((weekday) => (
-            <ToggleGroupItem
-              key={weekday.day}
-              value={String(weekday.day)}
-              aria-label={weekday.label}
-              className="h-10 w-full rounded-md border-input bg-background text-foreground aria-pressed:bg-background data-pressed:border-foreground data-pressed:bg-background"
-            >
-              {weekday.short}
-            </ToggleGroupItem>
-          ))}
-        </ToggleGroup>
-      </Field>
-      <Field orientation="horizontal">
-        <Switch
-          id="service-twenty-four-hours"
-          checked={values.twentyFourHours}
-          onCheckedChange={(checked) => {
-            form.setValue('twentyFourHours', checked)
-            form.setValue(
-              'schedules',
-              checked ? [] : writeHours(hours.days, hours.ranges),
-            )
-          }}
-        />
-        <FieldLabel htmlFor="service-twenty-four-hours">
-          24 horas, todos los días
-        </FieldLabel>
-      </Field>
-      {!values.twentyFourHours && (
-        <div className="space-y-3">
-          {/* Each added range stays editable and can be removed. */}
-          <ul className="space-y-3">
-            {hours.ranges.map((range, index) => (
-              <li key={index} className="flex items-end gap-2">
-                <div className="grid min-w-0 flex-1 grid-cols-2 gap-3">
-                  <TimeInput
-                    id={`from-${index}`}
-                    label="Desde"
-                    value={range.from}
-                    onChange={(from) => {
-                      const ranges = hours.ranges.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, from } : item,
-                      )
-                      applyHours(hours.days, ranges)
-                    }}
-                  />
-                  <TimeInput
-                    id={`to-${index}`}
-                    label="Hasta"
-                    value={range.to}
-                    onChange={(to) => {
-                      const ranges = hours.ranges.map((item, itemIndex) =>
-                        itemIndex === index ? { ...item, to } : item,
-                      )
-                      applyHours(hours.days, ranges)
-                    }}
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon"
-                  className="shrink-0 size-11"
-                  aria-label={`Eliminar franja ${index + 1}`}
-                  onClick={() =>
-                    applyHours(
-                      hours.days,
-                      hours.ranges.filter(
-                        (_, itemIndex) => itemIndex !== index,
-                      ),
-                    )
-                  }
-                >
-                  <Trash2Icon />
-                </Button>
-              </li>
-            ))}
-          </ul>
-          <FieldError errors={[form.formState.errors.schedules]} />
-          <Button
-            type="button"
-            size="lg"
-            variant="outline"
-            className="w-full"
-            onClick={() =>
-              applyHours(hours.days, [
-                ...hours.ranges,
-                { from: '12:00', to: '23:00' },
-              ])
-            }
-          >
-            <PlusIcon className="size-4" /> Añadir franja
-          </Button>
-        </div>
-      )}
+      <ScheduleGroupsEditor
+        state={scheduleState}
+        onChange={onScheduleChange}
+        editorRef={scheduleEditorRef}
+      />
+      <FieldError errors={[form.formState.errors.scheduleGroups]} />
       <Field>
         <FieldLabel>
           ¿Cuánto tiempo antes del cierre puede apuntarse un cliente?
@@ -213,6 +108,10 @@ export function GeneralStep({
           {values.cutoffMinutes === 0
             ? 'Se podrá apuntar a la lista hasta la hora de cierre.'
             : `No será posible apuntarse a la lista ${values.cutoffMinutes} minutos antes de la hora de cierre.`}
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Este límite solo se aplica a los horarios con franjas, no a los
+          abiertos 24 horas.
         </p>
         <FieldError errors={[form.formState.errors.cutoffMinutes]} />
       </Field>

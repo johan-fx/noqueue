@@ -1,7 +1,12 @@
 import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { useForm, useWatch, type FieldPath } from 'react-hook-form'
 import { ChevronLeft } from 'lucide-react'
-import { serviceSchema, type ServiceInput } from '@noqueue/contracts/staff'
+import {
+  serviceSchema,
+  toGroupedService,
+  pruneScheduleReminders,
+  type ServiceInput,
+} from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import {
   Drawer,
@@ -35,6 +40,12 @@ import {
   stepsFor,
 } from './service-config/model'
 import { issuesFor } from './service-config/validate'
+import {
+  createScheduleEditorState,
+  serializeScheduleGroups,
+  type ScheduleEditorState,
+  type ScheduleEditorHandle,
+} from './service-config/schedule-editor-state'
 
 export function ServiceConfigDrawer({
   open,
@@ -63,14 +74,24 @@ export function ServiceConfigDrawer({
 }) {
   const form = useForm<ServiceInput>({
     defaultValues: {
-      ...emptyService,
-      ...initial,
+      ...toGroupedService(initial ?? emptyService),
       spaces: (initial?.spaces ?? emptyService.spaces).map((space, index) => ({
         ...space,
         id: space.id ?? `legacy-${index}`,
       })),
     },
   })
+  const [scheduleState, setScheduleState] = useState(() =>
+    createScheduleEditorState(initial ?? emptyService, mode === 'edit'),
+  )
+  const scheduleEditorRef = useRef<ScheduleEditorHandle>(null)
+  function changeSchedule(next: ScheduleEditorState) {
+    setScheduleState(next)
+    form.setValue('scheduleGroups', serializeScheduleGroups(next), {
+      shouldDirty: true,
+    })
+    form.clearErrors('scheduleGroups')
+  }
   const type = useWatch({ control: form.control, name: 'type' })
   const steps = stepsFor(type)
   const [index, setIndex] = useState(0)
@@ -86,18 +107,20 @@ export function ServiceConfigDrawer({
     if (openedKey.current === resetKey) return
     openedKey.current = resetKey
     form.reset({
-      ...emptyService,
-      ...initial,
+      ...toGroupedService(initial ?? emptyService),
       spaces: (initial?.spaces ?? emptyService.spaces).map((space, index) => ({
         ...space,
         id: space.id ?? `legacy-${index}`,
       })),
     })
+    setScheduleState(
+      createScheduleEditorState(initial ?? emptyService, mode === 'edit'),
+    )
     setIndex(0)
     setAddingSpace(false)
     setConfiguringSpace(null)
     setConfiguringQueue(false)
-  }, [open, resetKey, initial, form])
+  }, [open, resetKey, initial, form, mode])
   const step = steps[index] ?? 'general'
   function back() {
     if (index === 0) onClose()
@@ -105,6 +128,8 @@ export function ServiceConfigDrawer({
   }
 
   function showIssues() {
+    if (step === 'general' && !scheduleEditorRef.current?.confirm())
+      return false
     form.clearErrors()
     const issues = issuesFor(form.getValues(), step)
     for (const issue of issues)
@@ -121,7 +146,9 @@ export function ServiceConfigDrawer({
       return
     }
     if (saveDisabled) return
-    const parsed = serviceSchema.safeParse(pruneQueueBySeat(form.getValues()))
+    const parsed = serviceSchema.safeParse(
+      pruneScheduleReminders(pruneQueueBySeat(form.getValues())),
+    )
     if (!parsed.success) {
       form.setError('root', {
         message: 'Revisa los datos antes de confirmar.',
@@ -194,7 +221,13 @@ export function ServiceConfigDrawer({
             </p>
           )}
           {step === 'general' ? (
-            <GeneralStep form={form} lockType={mode === 'edit'} />
+            <GeneralStep
+              form={form}
+              lockType={mode === 'edit'}
+              scheduleState={scheduleState}
+              onScheduleChange={changeSchedule}
+              scheduleEditorRef={scheduleEditorRef}
+            />
           ) : step === 'capacity' && type !== 'reception' ? (
             <>
               <AddSpaceDrawer
@@ -296,9 +329,13 @@ export function ServiceConfigDrawer({
                         shouldDirty: true,
                       })
                     if (options.approachMinutes !== undefined)
-                      form.setValue('approachMinutes', options.approachMinutes, {
-                        shouldDirty: true,
-                      })
+                      form.setValue(
+                        'approachMinutes',
+                        options.approachMinutes,
+                        {
+                          shouldDirty: true,
+                        },
+                      )
                     if (options.etaChangeThresholdMinutes !== undefined)
                       form.setValue(
                         'etaChangeThresholdMinutes',

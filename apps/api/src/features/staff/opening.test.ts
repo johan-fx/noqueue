@@ -2221,3 +2221,12 @@ it('recovers committed zero-occupancy legacy requests without activating a later
     ).results,
   ).toEqual([])
 })
+
+it('persists grouped calendars and refuses a legacy downgrade without changing stored groups', async () => {
+  const { twentyFourHours: _always, schedules: _slots, ...common } = config
+  const grouped: ServiceInput = { ...common, scheduleGroups: [{ days: [0,1,2,3,4,5,6], twentyFourHours: true, ranges: [] }] }
+  const t = await setup(grouped)
+  const context = await openingContext(env, t.queue)
+  await expect(configureQueue(env, t.actor, t.queue, { ...config, version: context.version, open: context.open })).rejects.toThrow('schedule_format_conflict')
+  expect((await loadQueueState(env, t.queue)).config?.scheduleGroups).toEqual(grouped.scheduleGroups)
+})

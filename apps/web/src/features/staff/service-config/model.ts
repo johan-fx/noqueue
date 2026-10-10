@@ -1,4 +1,7 @@
-import type { ServiceInput } from '@noqueue/contracts/staff'
+import type {
+  GroupedServiceInput,
+  ServiceInput,
+} from '@noqueue/contracts/staff'
 
 export type StepId = 'general' | 'capacity' | 'queue' | 'preference' | 'summary'
 
@@ -30,15 +33,20 @@ export const spacePresets: Record<'restaurant' | 'pool', string[]> = {
 
 export const cutoffOptions = [0, 15, 30, 45, 60, 90, 120]
 
-export const emptyService: ServiceInput = {
+export const emptyService: GroupedServiceInput = {
   name: '',
   type: 'restaurant',
   capacity: 20,
   averageMinutes: 60,
   graceMinutes: 5,
   cutoffMinutes: 30,
-  twentyFourHours: false,
-  schedules: [{ day: 1, from: '12:00', to: '23:00' }],
+  scheduleGroups: [
+    {
+      days: [1],
+      twentyFourHours: false,
+      ranges: [{ from: '12:00', to: '23:00' }],
+    },
+  ],
   spaces: [{ name: 'Interior', tables: 10 }],
   receptionServices: ['check_in'],
   assignmentPreference: 'fastest',

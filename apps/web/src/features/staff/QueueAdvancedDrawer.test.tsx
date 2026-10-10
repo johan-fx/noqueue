@@ -9,7 +9,7 @@ import {
 import { afterEach, expect, it, vi } from 'vitest'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { api } from './api'
-import type { QueueSummary, ServiceInput } from '@noqueue/contracts/staff'
+import { toGroupedService, type QueueSummary, type ServiceInput } from '@noqueue/contracts/staff'
 vi.mock('./ServiceConfigDrawer', () => ({
   ServiceConfigDrawer: ({
     open,
@@ -208,4 +208,18 @@ it('applies a confirmed notice policy update to current waiting entries', async 
       applyApproachToActive: true,
     }),
   )
+})
+
+it('offers daily and timed reminders together for a mixed grouped calendar and saves groups only', async () => {
+  const config: ServiceInput = { ...toGroupedService(queue.config), scheduleGroups: [{ days: [1], twentyFourHours: true, ranges: [] }, { days: [2], twentyFourHours: false, ranges: [{ from: '12:00', to: '15:00' }] }] }
+  vi.mocked(api).mockResolvedValue({ ok: true })
+  render(<QueueAdvancedDrawer queue={{ ...queue, config }} canOperate canConfigure returnFocus={null} onClose={vi.fn()} onSaved={vi.fn()} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Recordatorio de llenado habitual' }))
+  fireEvent.click(screen.getByRole('switch', { name: 'Activar recordatorio' }))
+  expect(screen.getByLabelText('Hora diaria')).toBeVisible()
+  expect(screen.getByLabelText('Martes · 12:00–15:00')).toBeVisible()
+  fireEvent.change(screen.getByLabelText('Hora diaria'), { target: { value: '11:00' } })
+  fireEvent.change(screen.getByLabelText('Martes · 12:00–15:00'), { target: { value: '13:00' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Guardar recordatorio' }))
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/queues/q', 'PATCH', expect.objectContaining({ scheduleGroups: config.scheduleGroups, reminder: { enabled: true, dailyAt: '11:00', intervals: [{ day: 2, from: '12:00', to: '15:00', at: '13:00' }] } })))
 })

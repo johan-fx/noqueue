@@ -5,6 +5,7 @@ import { expireArrivals } from './customer'
 import { activateIfReady, inventorySafety } from './opening-state'
 import {
   storedServiceSchema as serviceSchema,
+  pruneScheduleReminders,
   type ServiceInput,
 } from '@noqueue/contracts/staff'
 import { groupMinutes, projectQueue, type Resource } from './engine'
@@ -45,13 +46,13 @@ export function normalizeConfig(
       })),
     }
   })
-  return {
+  return pruneScheduleReminders({
     ...config,
     spaces,
     assignmentPreference:
       spaces.find((s) => s.name === config.assignmentPreference)?.id ??
       config.assignmentPreference,
-  }
+  })
 }
 export type Allocation = {
   entry_id: string
@@ -336,12 +337,7 @@ export async function recalculateQueue(
           arrivalDeadlineAt: null,
         }
       : null
-    if (
-      snapshot &&
-      approachingNow &&
-      !approachingBefore &&
-      prior
-    )
+    if (snapshot && approachingNow && !approachingBefore && prior)
       statements.push(
         noticeStatement(
           env,
@@ -375,7 +371,14 @@ export async function recalculateQueue(
     if (correction && snapshot)
       statements.push(
         noticeStatement(
-          env, p.id, correction, now, snapshot, revision, 0, !!state.config,
+          env,
+          p.id,
+          correction,
+          now,
+          snapshot,
+          revision,
+          0,
+          !!state.config,
         ),
       )
     statements.push(
@@ -404,13 +407,7 @@ export async function recalculateQueue(
       statements.push(
         env.DB.prepare(
           "UPDATE notification_outbox SET payload_snapshot=?,revision=?,updated_at=? WHERE entry_id=? AND kind='queue_joined' AND status='pending' AND payload_version=2 AND payload_snapshot=?",
-        ).bind(
-          JSON.stringify(frozen),
-          revision,
-          now,
-          p.id,
-          joinedSnapshot.raw,
-        ),
+        ).bind(JSON.stringify(frozen), revision, now, p.id, joinedSnapshot.raw),
       )
     }
     if (p.predictedAt !== null)

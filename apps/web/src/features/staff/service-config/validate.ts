@@ -3,6 +3,10 @@ import type { StepId } from './model'
 
 const copy: Record<string, string> = {
   'Add opening hours': 'Añade un horario de apertura',
+  'Maximum 28 opening intervals':
+    'No puedes superar 28 franjas al contar todos los días',
+  'Days belong to only one schedule':
+    'Un día solo puede pertenecer a un horario',
   'Overlapping hours': 'Las franjas se solapan',
   'Use separate ranges for overnight hours':
     'El horario no puede pasar de medianoche',
@@ -23,10 +27,16 @@ export function issuesFor(values: ServiceInput, step: StepId): FieldIssue[] {
   const parsed = serviceSchema.safeParse(values)
   const schemaIssues = parsed.success
     ? []
-    : parsed.error.issues.map((issue) => ({
-        path: String(issue.path[0] ?? 'form'),
-        message: translated(String(issue.path[0] ?? 'form'), issue.message),
-      }))
+    : parsed.error.issues
+        .flatMap((issue) =>
+          issue.code === 'invalid_union'
+            ? issue.errors[values.scheduleGroups ? 1 : 0] ?? []
+            : [issue],
+        )
+        .map((issue) => ({
+          path: String(issue.path[0] ?? 'form'),
+          message: translated(String(issue.path[0] ?? 'form'), issue.message),
+        }))
   const wanted = new Set(pathsFor(values, step))
   const current = schemaIssues.filter((issue) => wanted.has(issue.path))
   if (
@@ -50,7 +60,8 @@ export function issuesFor(values: ServiceInput, step: StepId): FieldIssue[] {
 }
 
 function pathsFor(values: ServiceInput, step: StepId) {
-  if (step === 'general') return ['name', 'schedules', 'cutoffMinutes']
+  if (step === 'general')
+    return ['name', 'schedules', 'scheduleGroups', 'cutoffMinutes']
   if (step === 'capacity')
     return values.type === 'reception' ? ['receptionServices'] : ['spaces']
   if (step === 'queue')

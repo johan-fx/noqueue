@@ -14,11 +14,13 @@ const dayNames = [
 ]
 
 /** Shared opening hours shown in step 1, stored as one schedule per day. */
-export function readHours(schedules: ServiceInput['schedules']): {
+export function readHours(schedules: NonNullable<ServiceInput['schedules']>): {
   days: number[]
   ranges: TimeRange[]
 } {
-  const days = dayOrder.filter((day) => schedules.some((slot) => slot.day === day))
+  const days = dayOrder.filter((day) =>
+    schedules.some((slot) => slot.day === day),
+  )
   // Every day stores the same ranges. Read one day so two equal ranges
   // stay as two rows. Deduping by from/to hid the second "Añadir franja" click.
   const sourceDay = days[0]
@@ -70,3 +72,18 @@ export const weekdays = [
   { day: 6, label: 'Sábado', short: 'S' },
   { day: 0, label: 'Domingo', short: 'D' },
 ]
+
+/** Compact day labels for a collapsed schedule card, in Monday-first display order. */
+export function formatCompactDays(days: number[]) {
+  const selected = weekdays.filter((weekday) => days.includes(weekday.day))
+  if (selected.length === 1) return selected[0]!.label
+  const indexes = selected.map((weekday) => dayOrder.indexOf(weekday.day))
+  if (
+    indexes.length > 1 &&
+    indexes.every(
+      (value, index) => index === 0 || value === indexes[index - 1]! + 1,
+    )
+  )
+    return `${selected[0]!.short}–${selected.at(-1)!.short}`
+  return selected.map((weekday) => weekday.short).join(', ') || 'Sin días'
+}

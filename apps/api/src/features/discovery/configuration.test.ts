@@ -261,3 +261,16 @@ it('location completion and directory backfill roll back together and version co
       .first(),
   ).toBeNull()
 })
+
+it('publishes grouped calendars without legacy fields and derives open public admission from full-day ownership', async () => {
+  const f = await fixture()
+  const { twentyFourHours: _always, schedules: _slots, ...common } = valid
+  const day = new Date().getUTCDay(), next = (day + 1) % 7
+  const grouped = { ...common, scheduleGroups: [{ days: [day], twentyFourHours: true, ranges: [] }, { days: [next], twentyFourHours: false, ranges: [{ from: '12:00', to: '15:00' }] }] }
+  const id = await f.insert(grouped)
+  await f.confirm()
+  const normalized = JSON.parse((await env.DB.prepare('SELECT normalized_config FROM service_directory_config WHERE queue_id=?').bind(id).first<{ normalized_config: string }>())!.normalized_config)
+  expect(normalized.scheduleGroups).toEqual(grouped.scheduleGroups)
+  expect(normalized).not.toHaveProperty('schedules')
+  expect((await search({ recentIds: [id] })).body.items[0]).toMatchObject({ id, serviceOpen: true, canJoin: true })
+})

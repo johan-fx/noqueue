@@ -2,6 +2,9 @@ import { useRef, useState } from 'react'
 import { ChevronLeft } from 'lucide-react'
 import {
   serviceSchema,
+  weeklySchedule,
+  toGroupedService,
+  pruneScheduleReminders,
   type QueueLifecycleCommand,
   type QueueSummary,
   type ServiceInput,
@@ -96,7 +99,8 @@ export function QueueAdvancedDrawer({
       )
     }
   }
-  async function save(config: ServiceInput) {
+  async function save(input: ServiceInput) {
+    const config = pruneScheduleReminders(toGroupedService(input))
     if (lock.current || needsReload) return
     lock.current = true
     setBusy(true)
@@ -259,7 +263,10 @@ export function QueueAdvancedDrawer({
                 <p>No hay eventos de entrega en este periodo.</p>
               )}
               {!!trace.summary.length && (
-                <ul aria-label="Resumen por tipo de aviso" className="space-y-2">
+                <ul
+                  aria-label="Resumen por tipo de aviso"
+                  className="space-y-2"
+                >
                   {trace.summary.map((item) => (
                     <li key={item.kind} className="border-b py-2">
                       <strong>
@@ -277,10 +284,10 @@ export function QueueAdvancedDrawer({
                         )[item.kind] ?? item.kind}
                       </strong>
                       <p>
-                        Aceptados: {item.accepted} · Entregados: {item.delivered} ·
-                        {' '}Leídos: {item.read} · Fallidos: {item.failed} ·
-                        {' '}Desconocidos: {item.unknown} · Aperturas del enlace:{' '}
-                        {item.openings}
+                        Aceptados: {item.accepted} · Entregados:{' '}
+                        {item.delivered} · Leídos: {item.read} · Fallidos:{' '}
+                        {item.failed} · Desconocidos: {item.unknown} · Aperturas
+                        del enlace: {item.openings}
                       </p>
                     </li>
                   ))}
@@ -396,10 +403,12 @@ function ReminderDrawer({
   onClose: () => void
   onSave: (config: ServiceInput) => Promise<void>
 }) {
+  const calendar = weeklySchedule(config)
+  const schedules = calendar.schedules
   const [enabled, setEnabled] = useState(config.reminder?.enabled ?? false)
   const [dailyAt, setDailyAt] = useState(config.reminder?.dailyAt ?? '')
   const [times, setTimes] = useState(
-    config.schedules.map(
+    schedules.map(
       (s) =>
         config.reminder?.intervals.find(
           (r) => r.day === s.day && r.from === s.from && r.to === s.to,
@@ -412,7 +421,7 @@ function ReminderDrawer({
     reminder: {
       enabled,
       ...(dailyAt ? { dailyAt } : {}),
-      intervals: config.schedules.flatMap((s, i) =>
+      intervals: schedules.flatMap((s, i) =>
         times[i] ? [{ ...s, at: times[i]! }] : [],
       ),
     },
@@ -455,20 +464,21 @@ function ReminderDrawer({
               Activar recordatorio
             </FieldLabel>
           </Field>
-          {enabled &&
-            (config.twentyFourHours ? (
-              <Field>
-                <FieldLabel htmlFor="reminder-daily">Hora diaria</FieldLabel>
-                <Input
-                  id="reminder-daily"
-                  type="time"
-                  disabled={busy}
-                  value={dailyAt}
-                  onChange={(e) => setDailyAt(e.target.value)}
-                />
-              </Field>
-            ) : (
-              config.schedules.map((s, i) => (
+          {enabled && (
+            <>
+              {calendar.allDayDays.length > 0 && (
+                <Field>
+                  <FieldLabel htmlFor="reminder-daily">Hora diaria</FieldLabel>
+                  <Input
+                    id="reminder-daily"
+                    type="time"
+                    disabled={busy}
+                    value={dailyAt}
+                    onChange={(e) => setDailyAt(e.target.value)}
+                  />
+                </Field>
+              )}
+              {schedules.map((s, i) => (
                 <Field key={`${s.day}:${s.from}:${s.to}`}>
                   <FieldLabel htmlFor={`reminder-${i}`}>
                     {
@@ -498,8 +508,9 @@ function ReminderDrawer({
                     }
                   />
                 </Field>
-              ))
-            ))}
+              ))}
+            </>
+          )}
           {(error || validation) && <p role="alert">{error || validation}</p>}
         </div>
         <DrawerFooter className="border-t p-4">

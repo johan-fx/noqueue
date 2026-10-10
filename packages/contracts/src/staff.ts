@@ -76,86 +76,252 @@ export const scheduleSchema = z
     message: 'Use separate ranges for overnight hours',
     path: ['to'],
   })
-export const serviceSchema = z
+export const timeRangeSchema = z
   .object({
-    name,
-    type: z.enum(['restaurant', 'reception', 'pool']),
-    capacity: z.number().int().min(1).max(10000),
-    averageMinutes: z.number().int().min(1).max(1440),
-    approachTurns: z.number().int().min(0).max(100).optional(),
-    approachMinutes: z.number().int().min(0).max(1440).optional(),
-    etaChangeThresholdMinutes: z.number().int().min(1).max(60).optional(),
-    notificationCooldownMinutes: z.number().int().min(1).max(120).optional(),
-    graceMinutes: z.number().int().min(1).max(120),
-    cutoffMinutes: z.number().int().min(0).max(240),
-    twentyFourHours: z.boolean(),
-    schedules: z.array(scheduleSchema).max(28),
-    reminder: z
-      .object({
-        enabled: z.boolean(),
-        dailyAt: z
-          .string()
-          .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
-          .optional(),
-        intervals: z
-          .array(
-            z.object({
-              day: z.number().int().min(0).max(6),
-              from: z.string(),
-              to: z.string(),
-              at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
-            }),
-          )
-          .max(28),
-      })
-      .optional(),
-    spaces: z.array(spaceSchema).max(30),
-    intelligencePolicy: z.enum(['automatic', 'disabled']).optional(),
-    estimationMode: z.enum(['shadow', 'active']).optional(),
-    resourceStateKnown: z.boolean().optional(),
-    stations: z.number().int().min(1).max(1000).optional(),
-    adjustments: z
-      .array(
-        z.union([
-          z.object({
-            kind: z.literal('duration').optional(),
-            spaceId: z.string().min(1),
-            seats: z.number().int().min(1).max(100),
-            minutes: z.number().int().min(1).max(1440),
-            reason: z.string().trim().min(3).max(300),
-            expiresAt: z.number().int().positive(),
-          }),
-          z.object({
-            kind: z.literal('availability'),
-            spaceId: z.string().min(1),
-            seats: z.number().int().min(1).max(100),
-            reason: z.string().trim().min(3).max(300),
-            expiresAt: z.number().int().positive(),
-          }),
-        ]),
-      )
-      .max(40)
-      .optional(),
-    receptionServices: z
-      .array(z.enum(['check_in', 'check_out', 'other']))
-      .max(3),
-    // Optional so queues saved before the wizard still parse.
-    // `fastest` means assign the space with the shortest wait.
-    assignmentPreference: z.string().trim().min(1).max(100).optional(),
-    // Per table size. Absent means the global average and capacity apply.
-    queueBySeat: z
-      .array(
-        z.object({
-          seats: z.number().int().min(1).max(100),
-          averageMinutes: z.number().int().min(1).max(1440),
-          capacity: z.number().int().min(1).max(10000),
-        }),
-      )
-      .max(40)
-      .optional(),
+    from: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+    to: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
   })
+  .refine((value) => value.from < value.to, {
+    message: 'Use separate ranges for overnight hours',
+    path: ['to'],
+  })
+export const scheduleGroupSchema = z
+  .object({
+    days: z.array(z.number().int().min(0).max(6)).min(1).max(7),
+    twentyFourHours: z.boolean(),
+    ranges: z.array(timeRangeSchema).max(28),
+  })
+  .superRefine((group, ctx) => {
+    if (new Set(group.days).size !== group.days.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['days'],
+        message: 'Duplicate days',
+      })
+    if (group.twentyFourHours ? group.ranges.length > 0 : !group.ranges.length)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['ranges'],
+        message: 'Add opening hours',
+      })
+    for (let i = 0; i < group.ranges.length; i++)
+      for (let j = 0; j < i; j++) {
+        const a = group.ranges[i]!,
+          b = group.ranges[j]!
+        if (a.from < b.to && b.from < a.to)
+          ctx.addIssue({
+            code: 'custom',
+            path: ['ranges', i],
+            message: 'Overlapping hours',
+          })
+      }
+  })
+export type ScheduleGroup = z.infer<typeof scheduleGroupSchema>
+export type WeeklySchedule = {
+  schedules: z.infer<typeof scheduleSchema>[]
+  allDayDays: number[]
+}
+type CalendarInput = {
+  scheduleGroups?: ScheduleGroup[] | undefined
+  schedules?: z.infer<typeof scheduleSchema>[] | undefined
+  twentyFourHours?: boolean | undefined
+}
+
+/** Lossless legacy conversion: group only days with identical complete patterns. */
+export function readScheduleGroups(config: CalendarInput): ScheduleGroup[] {
+  if (config.scheduleGroups)
+    return config.scheduleGroups.map((group) => ({
+      ...group,
+      days: [...group.days],
+      ranges: group.ranges.map((range) => ({ ...range })),
+    }))
+  if (config.twentyFourHours)
+    return [{ days: [1, 2, 3, 4, 5, 6, 0], twentyFourHours: true, ranges: [] }]
+  const groups = new Map<string, ScheduleGroup>()
+  for (const day of [1, 2, 3, 4, 5, 6, 0]) {
+    const ranges = (config.schedules ?? [])
+      .filter((slot) => slot.day === day)
+      .map(({ from, to }) => ({ from, to }))
+      .sort((a, b) => a.from.localeCompare(b.from) || a.to.localeCompare(b.to))
+    if (!ranges.length) continue
+    const key = JSON.stringify(ranges),
+      prior = groups.get(key)
+    if (prior) prior.days.push(day)
+    else groups.set(key, { days: [day], twentyFourHours: false, ranges })
+  }
+  return [...groups.values()]
+}
+
+/** Runtime consumers share a canonical calendar, independent of UI card ordering. */
+export function weeklySchedule(config: CalendarInput): WeeklySchedule {
+  const groups = readScheduleGroups(config)
+  return {
+    allDayDays: groups
+      .filter((group) => group.twentyFourHours)
+      .flatMap((group) => group.days)
+      .sort((a, b) => a - b),
+    schedules: groups
+      .filter((group) => !group.twentyFourHours)
+      .flatMap((group) =>
+        group.days.flatMap((day) =>
+          group.ranges.map((range) => ({ day, ...range })),
+        ),
+      )
+      .sort(
+        (a, b) =>
+          a.day - b.day ||
+          a.from.localeCompare(b.from) ||
+          a.to.localeCompare(b.to),
+      ),
+  }
+}
+
+export function pruneScheduleReminders<
+  T extends CalendarInput & {
+    reminder?:
+      | {
+          enabled: boolean
+          dailyAt?: string | undefined
+          intervals: { day: number; from: string; to: string; at: string }[]
+        }
+      | undefined
+  },
+>(config: T): T {
+  if (!config.reminder) return config
+  const calendar = weeklySchedule(config)
+  const { dailyAt, ...reminder } = config.reminder
+  return {
+    ...config,
+    reminder: {
+      ...reminder,
+      ...(calendar.allDayDays.length && dailyAt ? { dailyAt } : {}),
+      intervals: reminder.intervals.filter((item) =>
+        calendar.schedules.some(
+          (slot) =>
+            slot.day === item.day &&
+            slot.from === item.from &&
+            slot.to === item.to,
+        ),
+      ),
+    },
+  }
+}
+const serviceBaseSchema = z.object({
+  name,
+  type: z.enum(['restaurant', 'reception', 'pool']),
+  capacity: z.number().int().min(1).max(10000),
+  averageMinutes: z.number().int().min(1).max(1440),
+  approachTurns: z.number().int().min(0).max(100).optional(),
+  approachMinutes: z.number().int().min(0).max(1440).optional(),
+  etaChangeThresholdMinutes: z.number().int().min(1).max(60).optional(),
+  notificationCooldownMinutes: z.number().int().min(1).max(120).optional(),
+  graceMinutes: z.number().int().min(1).max(120),
+  cutoffMinutes: z.number().int().min(0).max(240),
+  reminder: z
+    .object({
+      enabled: z.boolean(),
+      dailyAt: z
+        .string()
+        .regex(/^([01]\d|2[0-3]):[0-5]\d$/)
+        .optional(),
+      intervals: z
+        .array(
+          z.object({
+            day: z.number().int().min(0).max(6),
+            from: z.string(),
+            to: z.string(),
+            at: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+          }),
+        )
+        .max(28),
+    })
+    .optional(),
+  spaces: z.array(spaceSchema).max(30),
+  intelligencePolicy: z.enum(['automatic', 'disabled']).optional(),
+  estimationMode: z.enum(['shadow', 'active']).optional(),
+  resourceStateKnown: z.boolean().optional(),
+  stations: z.number().int().min(1).max(1000).optional(),
+  adjustments: z
+    .array(
+      z.union([
+        z.object({
+          kind: z.literal('duration').optional(),
+          spaceId: z.string().min(1),
+          seats: z.number().int().min(1).max(100),
+          minutes: z.number().int().min(1).max(1440),
+          reason: z.string().trim().min(3).max(300),
+          expiresAt: z.number().int().positive(),
+        }),
+        z.object({
+          kind: z.literal('availability'),
+          spaceId: z.string().min(1),
+          seats: z.number().int().min(1).max(100),
+          reason: z.string().trim().min(3).max(300),
+          expiresAt: z.number().int().positive(),
+        }),
+      ]),
+    )
+    .max(40)
+    .optional(),
+  receptionServices: z.array(z.enum(['check_in', 'check_out', 'other'])).max(3),
+  // Optional so queues saved before the wizard still parse.
+  // `fastest` means assign the space with the shortest wait.
+  assignmentPreference: z.string().trim().min(1).max(100).optional(),
+  // Per table size. Absent means the global average and capacity apply.
+  queueBySeat: z
+    .array(
+      z.object({
+        seats: z.number().int().min(1).max(100),
+        averageMinutes: z.number().int().min(1).max(1440),
+        capacity: z.number().int().min(1).max(10000),
+      }),
+    )
+    .max(40)
+    .optional(),
+})
+export const serviceSchema = z
+  .union([
+    serviceBaseSchema.extend({
+      twentyFourHours: z.boolean(),
+      schedules: z.array(scheduleSchema).max(28),
+      scheduleGroups: z.never().optional(),
+    }),
+    serviceBaseSchema.extend({
+      scheduleGroups: z.array(scheduleGroupSchema).min(1).max(7),
+      twentyFourHours: z.never().optional(),
+      schedules: z.never().optional(),
+    }),
+  ])
   .superRefine((v, ctx) => {
-    if (!v.twentyFourHours && !v.schedules.length)
+    const grouped = v.scheduleGroups !== undefined
+    if (
+      grouped
+        ? v.twentyFourHours !== undefined || v.schedules !== undefined
+        : v.twentyFourHours === undefined || v.schedules === undefined
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['scheduleGroups'],
+        message: 'Use exactly one schedule format',
+      })
+    const calendar = weeklySchedule(v)
+    const schedules = grouped ? calendar.schedules : v.schedules ?? []
+    if (grouped) {
+      const days = v.scheduleGroups!.flatMap((group) => group.days)
+      if (new Set(days).size !== days.length)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['scheduleGroups'],
+          message: 'Days belong to only one schedule',
+        })
+      if (calendar.schedules.length > 28)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['scheduleGroups'],
+          message: 'Maximum 28 opening intervals',
+        })
+    }
+    if (!grouped && !v.twentyFourHours && !v.schedules?.length)
       ctx.addIssue({
         code: 'custom',
         path: ['schedules'],
@@ -164,7 +330,10 @@ export const serviceSchema = z
     if (v.reminder?.enabled) {
       const time = (value: string) =>
         Number(value.slice(0, 2)) * 60 + Number(value.slice(3))
-      if (v.type !== 'restaurant' || (v.twentyFourHours && !v.reminder.dailyAt))
+      if (
+        v.type !== 'restaurant' ||
+        (calendar.allDayDays.length > 0 && !v.reminder.dailyAt)
+      )
         ctx.addIssue({
           code: 'custom',
           path: ['reminder'],
@@ -172,7 +341,7 @@ export const serviceSchema = z
         })
       const keys = new Set<string>()
       for (const reminder of v.reminder.intervals) {
-        const interval = v.schedules.find(
+        const interval = schedules.find(
           (s) =>
             s.day === reminder.day &&
             s.from === reminder.from &&
@@ -194,10 +363,10 @@ export const serviceSchema = z
         keys.add(key)
       }
     }
-    for (let i = 0; i < v.schedules.length; i++)
+    for (let i = 0; i < schedules.length; i++)
       for (let j = 0; j < i; j++) {
-        const a = v.schedules[i]!,
-          b = v.schedules[j]!
+        const a = schedules[i]!,
+          b = schedules[j]!
         if (a.day === b.day && a.from < b.to && b.from < a.to)
           ctx.addIssue({
             code: 'custom',
@@ -238,6 +407,23 @@ export const serviceSchema = z
     }
   })
 export type ServiceInput = z.infer<typeof serviceSchema>
+/** New clients write groups only; legacy records are converted without rewriting storage on read. */
+export type GroupedServiceInput = Extract<
+  ServiceInput,
+  { scheduleGroups: ScheduleGroup[] }
+>
+export function toGroupedService(input: ServiceInput): GroupedServiceInput {
+  const { twentyFourHours, schedules, ...common } = input
+  return {
+    ...common,
+    scheduleGroups: readScheduleGroups({
+      twentyFourHours,
+      schedules,
+      scheduleGroups: input.scheduleGroups,
+    }),
+  }
+}
+
 /** Only missing legacy values receive defaults; explicit configured values are retained. */
 export const storedServiceSchema = z.preprocess((input) => {
   if (input && typeof input === 'object') {
@@ -339,11 +525,14 @@ export function allowedEntryActions(
   if (status === 'completed' && type === 'restaurant') return ['release']
   return []
 }
-export const queueSettingsSchema = serviceSchema.extend({
-  version: z.number().int().min(0),
-  open: z.boolean(),
-  applyApproachToActive: z.boolean().optional(),
-})
+export const queueSettingsSchema = z.intersection(
+  serviceSchema,
+  z.object({
+    version: z.number().int().min(0),
+    open: z.boolean(),
+    applyApproachToActive: z.boolean().optional(),
+  }),
+)
 export const membershipUpdateSchema = z.object({
   role: z.enum(['venue_manager', 'queue_staff', 'viewer']),
   active: z.boolean(),

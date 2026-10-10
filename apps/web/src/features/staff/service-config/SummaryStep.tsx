@@ -1,9 +1,9 @@
-import type { ServiceInput } from '@noqueue/contracts/staff'
-import { formatDays, formatRanges, readHours } from './hours'
+import { readScheduleGroups, type ServiceInput } from '@noqueue/contracts/staff'
+import { formatDays, formatRanges } from './hours'
 import { seatLabel } from './model'
 
 export function SummaryStep({ values }: { values: ServiceInput }) {
-  const hours = readHours(values.schedules)
+  const groups = readScheduleGroups(values)
   const seats = seatLabel(values.type)
   const preference =
     values.assignmentPreference === 'fastest' || !values.assignmentPreference
@@ -13,12 +13,16 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
   return (
     <section className="space-y-3 rounded-lg bg-muted p-4">
       <h3 className="font-semibold">{values.name || 'Sin nombre'}</h3>
-      <p>
-        {values.twentyFourHours
-          ? '24 horas, todos los días'
-          : formatDays(hours.days)}
-      </p>
-      {!values.twentyFourHours && <p>{formatRanges(hours.ranges)}</p>}
+      {groups.map((group, index) => (
+        <div key={index}>
+          <p>{formatDays(group.days)}</p>
+          <p>
+            {group.twentyFourHours
+              ? 'Abierto 24 horas'
+              : formatRanges(group.ranges)}
+          </p>
+        </div>
+      ))}
       <p>Tiempo medio: {values.averageMinutes} min</p>
       <p>
         Nº máximo de {values.type === 'reception' ? 'personas' : seats} en

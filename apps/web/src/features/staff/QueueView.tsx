@@ -41,7 +41,6 @@ export function QueueView({
   busy,
   lastSync,
   error,
-  onRefresh,
   onAction,
   onAdd,
 }: {
@@ -264,14 +263,11 @@ export function QueueView({
           {error}
         </p>
       )}
-      <div className="space-y-2 border-t pt-4 text-xs text-muted-foreground">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <p>Última lectura: {lastSync || 'cargando…'} · Cada 5 s</p>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={onRefresh}>
-            Actualizar
-          </Button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 pb-2 text-xs text-muted-foreground">
+        <p>Última lectura: {lastSync || 'cargando…'} · Cada 5 s</p>
+        <div className="ml-auto">
+          <QueuePublicLinks queueId={queue.id} />
         </div>
-        <QueuePublicLinks queueId={queue.id} />
       </div>
     </div>
   )

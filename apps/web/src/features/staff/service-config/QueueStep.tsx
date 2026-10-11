@@ -16,9 +16,7 @@ export function QueueStep({
   const fields = [
     [
       'averageMinutes',
-      type === 'restaurant'
-        ? 'Tiempo medio del cliente en mesa'
-        : 'Tiempo medio del cliente',
+      'Intervalo inicial estimado entre turnos',
     ],
     [
       'capacity',
@@ -41,6 +39,10 @@ export function QueueStep({
           <FieldError errors={[form.formState.errors[name]]} />
         </Field>
       ))}
+      <p className="text-sm text-muted-foreground">
+        El estimador aprende y ajusta este intervalo según el ritmo real de
+        asignación de turnos.
+      </p>
       <p className="text-sm text-muted-foreground">
         Los umbrales de acercamiento, los avisos de cambios de estimación y el
         plazo de llegada se ajustan en Configuración avanzada.

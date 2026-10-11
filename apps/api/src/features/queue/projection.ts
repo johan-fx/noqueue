@@ -1,3 +1,6 @@
+import { loadAdaptiveState, type AssignmentObservation } from './adaptive-state'
+import { learnedOccupancyMinutes, projectAdaptiveQueue, type AdaptiveResource } from './adaptive-model'
+import { adaptiveProjectionStatements } from './adaptive-projection'
 import { configuredCustomerWork, customerMinimum, customerEstimate, stableOperationalAt, type CustomerMinimum } from './customer-estimate'
 import { maintainServiceEntries } from './service-expiry'
 import { noticeStatement, type QueueNoticeSnapshot } from './notices'
@@ -49,6 +52,7 @@ export function normalizeConfig(
   })
   return pruneScheduleReminders({
     ...config,
+    estimatorVersion: config.estimatorVersion ?? 2,
     spaces,
     assignmentPreference:
       spaces.find((s) => s.name === config.assignmentPreference)?.id ??
@@ -74,6 +78,8 @@ export type QueueModelInput = {
   calls?: Array<{ created_at: number }>
   appendedCallAt?: number
   validityAt?: number
+  assignment?: AssignmentObservation
+  demandActive?: boolean
 }
 export async function loadQueueState(
   env: CloudflareBindings,
@@ -95,7 +101,7 @@ export async function loadQueueState(
       ? parsed.success
         ? normalizeConfig(parsed.data)
         : null
-      : model.config
+      : model.config ? normalizeConfig(model.config) : null
   const historyGroups =
     config?.type === 'restaurant'
       ? config.spaces.flatMap((space) =>
@@ -146,7 +152,7 @@ export async function loadQueueState(
         }>()
     ).results
   const quick = !!config && config.type !== 'restaurant'
-  const resources: Resource[] = []
+  const resources: AdaptiveResource[] = []
   const spaces =
     config && config.type !== 'restaurant'
       ? [
@@ -198,7 +204,8 @@ export async function loadQueueState(
             a.seats === type.seats &&
             a.expiresAt > (model.validityAt ?? now),
         )
-      const averageMinutes = groupMinutes(
+      const occupancyMinutes = learnedOccupancyMinutes(observations)
+      const averageMinutes = config?.estimatorVersion === 2 ? (occupancyMinutes ?? 0) : groupMinutes(
         type.averageMinutes ?? config!.averageMinutes,
         observations,
         adjustment,
@@ -224,7 +231,7 @@ export async function loadQueueState(
               (a) => a.resource_id === id && a.released_at === null,
             )
         const external = !quick && holds.some((h) => h.resource_id === id)
-        const expected = occupied?.arrived_at
+        const expected = occupied?.arrived_at && (config?.estimatorVersion !== 2 || occupancyMinutes !== null)
           ? occupied.arrived_at + averageMinutes * 60000
           : null
         const availableAt = external
@@ -241,6 +248,7 @@ export async function loadQueueState(
           spaceId: space.id!,
           seats: type.seats,
           averageMinutes,
+          ...(config?.estimatorVersion === 2 ? { occupancyMinutes } : {}),
           known:
             !external &&
             !!(quick || config?.resourceStateKnown) &&
@@ -293,7 +301,14 @@ export async function loadQueueState(
       ? { lastCallAt: calls[0]!.created_at, cadenceMinutes: progress }
       : undefined,
   )
+  const adaptive = config?.estimatorVersion === 2
+    ? await loadAdaptiveState(env, queueId, now, config, parties.length, queue.average_minutes, model.assignment, model.demandActive)
+    : null
+  const adaptiveProjections = adaptive
+    ? projectAdaptiveQueue(parties, resources, now, config, queue.average_minutes, adaptive.factor)
+    : []
   return {
+    adaptive, adaptiveProjections,
     config,
     calls,
     inventorySafety: await inventorySafety(env, queueId, config),
@@ -384,8 +399,9 @@ export async function refreshQueue(
 ) {
   await maintainQueue(env, queueId, now)
   const freshness = await env.DB.prepare(
-    `SELECT COUNT(*) AS waiting,COUNT(p.entry_id) AS projected,MIN(p.updated_at) AS oldest,COUNT(p.customer_minimum_at) AS initialized,
-     MAX(p.updated_at) AS newest FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id
+    `SELECT COUNT(*) AS waiting,COUNT(p.entry_id) AS projected,MIN(p.updated_at) AS oldest,SUM(CASE WHEN p.estimator_version=2 OR p.customer_minimum_at IS NOT NULL THEN 1 ELSE 0 END) AS initialized,
+     MIN(a.safety_review_at) AS safety_due,
+     MAX(p.updated_at) AS newest FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id LEFT JOIN queue_adaptive_projection a ON a.entry_id=e.id AND p.estimator_version=2
      WHERE e.queue_id=? AND e.status='waiting'`,
   )
     .bind(queueId)
@@ -393,12 +409,14 @@ export async function refreshQueue(
       waiting: number
       projected: number
       initialized: number
+      safety_due: number | null
       oldest: number | null
       newest: number | null
     }>()
   if (
     freshness &&
     freshness.waiting > 0 &&
+    (freshness.safety_due === null || freshness.safety_due > now) &&
     freshness.waiting === freshness.projected &&
     freshness.waiting === freshness.initialized &&
     freshness.oldest !== null &&
@@ -444,7 +462,13 @@ async function projectionStatements(
   now: number,
   before?: QueueState,
 ) {
-  const statements: D1PreparedStatement[] = []
+  if (state.adaptive) return adaptiveProjectionStatements(env, queueId, state, now, before)
+  const statements: D1PreparedStatement[] = [
+    env.DB.prepare('UPDATE queue_demand_episode SET ended_at=?,end_reason=? WHERE queue_id=? AND ended_at IS NULL').bind(now,'estimator_disabled',queueId),
+    env.DB.prepare('UPDATE queue_cadence_state SET estimator_version=1,episode_id=NULL,episode_started_at=NULL,last_assignment_at=NULL WHERE queue_id=? AND estimator_version=2').bind(queueId),
+    env.DB.prepare('UPDATE queue_adaptive_projection SET safety_review_at=NULL WHERE entry_id IN (SELECT id FROM queue_entry WHERE queue_id=?)').bind(queueId),
+    env.DB.prepare('UPDATE queue_projection SET estimator_version=1 WHERE entry_id IN (SELECT id FROM queue_entry WHERE queue_id=?)').bind(queueId),
+  ]
   const pendingJoinedSnapshots = new Map<
     string,
     { raw: string; snapshot: QueueNoticeSnapshot }
@@ -719,6 +743,19 @@ export async function readProjection(env: CloudflareBindings, entryId: string, c
     callable: !!row.callable,
   }
   const now = Date.now()
+  const adaptive = await env.DB.prepare(`SELECT a.*,p.revision FROM queue_adaptive_projection a
+    JOIN queue_projection p ON p.entry_id=a.entry_id WHERE a.entry_id=? AND p.estimator_version=2`)
+    .bind(entryId).first<{ quality: 'estimated'|'provisional'; predicted_at:number; safety_review_at:number|null; delay_reason:'safety'|'resources'|'cadence'|'configuration'|null; delay_since:number|null; delay_baseline_at:number|null; revision:number }>()
+  if (adaptive) return {
+    position: row.position, predictedAt: adaptive.predicted_at,
+    etaMinutes: Math.max(0, Math.ceil((adaptive.predicted_at-now)/60000)),
+    estimateQuality: adaptive.quality, initialEtaMinutes: row.customer_initial_eta_minutes,
+    callable: !!row.callable, resourceId: row.resourceId,
+    estimatorVersion: 2 as const, estimationRevision: adaptive.revision,
+    safetyReviewAt: adaptive.safety_review_at,
+    delay: adaptive.delay_reason && adaptive.delay_since !== null && adaptive.delay_baseline_at !== null
+      ? { reason:adaptive.delay_reason,since:adaptive.delay_since,previousPredictedAt:adaptive.delay_baseline_at } : null,
+  }
   const estimate = row.updated_at < now - 120000 || row.updated_at > now
     ? { etaMinutes: 0, predictedAt: null, estimateQuality: 'unknown' as const }
     : customerEstimate({

@@ -1,3 +1,4 @@
+// Explicit v1 fixtures retain rollback regressions; default v2 is covered by adaptive-estimator.test.ts.
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
 import { loadQueueState, recalculateQueue } from './projection'
@@ -10,6 +11,7 @@ it('persists shared projections and deduplicated intents without delivery', asyn
       id,
       JSON.stringify({
         name: 'Resources',
+        estimatorVersion: 1 as const,
         type: 'restaurant',
         capacity: 20,
         averageMinutes: 30,
@@ -85,7 +87,8 @@ it('keeps unknown legacy spaces provisional and inherits size defaults independe
   const { normalizeConfig } = await import('./projection')
   const config = normalizeConfig({
     name: 'Legacy',
-    type: 'restaurant',
+    estimatorVersion: 1 as const,
+        type: 'restaurant',
     capacity: 90,
     averageMinutes: 30,
     graceMinutes: 5,
@@ -119,7 +122,8 @@ it('recalculates an expired group adjustment without a queue event and never fre
     entryId = crypto.randomUUID()
   const config = {
     name: 'Expiry',
-    type: 'restaurant',
+    estimatorVersion: 1 as const,
+        type: 'restaurant',
     capacity: 99,
     averageMinutes: 30,
     graceMinutes: 5,
@@ -178,7 +182,8 @@ it('emits approaching on the time threshold even inside the legacy position cuto
   const waitingEntryIds = Array.from({ length: 3 }, () => crypto.randomUUID())
   const config = {
     name: 'Approach threshold',
-    type: 'restaurant',
+    estimatorVersion: 1 as const,
+        type: 'restaurant',
     capacity: 20,
     averageMinutes: 3,
     graceMinutes: 5,
@@ -266,7 +271,8 @@ it('preserves legacy group identities when an older client reorders spaces witho
   const { normalizeConfig } = await import('./projection')
   const original = {
     name: 'Old client',
-    type: 'restaurant' as const,
+    estimatorVersion: 1 as const,
+        type: 'restaurant' as const,
     capacity: 20,
     averageMinutes: 30,
     graceMinutes: 5,
@@ -292,6 +298,7 @@ it('records duration-adjustment expiry as an operational improvement at fixed cu
     queueId = crypto.randomUUID()
   const config = {
     name: 'Desk',
+    estimatorVersion: 1 as const,
     type: 'reception',
     capacity: 99,
     averageMinutes: 30,
@@ -342,6 +349,7 @@ it('accumulates signed fixed-time changes and never increments on clock refresh'
     queueId = crypto.randomUUID()
   const config = {
     name: 'Desk',
+    estimatorVersion: 1 as const,
     type: 'reception' as const,
     capacity: 99,
     averageMinutes: 60,
@@ -412,6 +420,7 @@ it('rolls back legacy quick-allocation retirement when canonical projection pers
     legacy = crypto.randomUUID()
   const config = {
     name: 'Legacy desk',
+    estimatorVersion: 1 as const,
     type: 'reception',
     capacity: 99,
     averageMinutes: 30,

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { evaluateEstimateNotice } from './estimate-notices'
+import {
+  evaluateAdaptiveNotice,
+  evaluateEstimateNotice,
+} from './estimate-notices'
 
 describe('evaluateEstimateNotice', () => {
   const base = {
@@ -108,4 +111,78 @@ it('requires both signed operational and absolute movement, including live posit
       previousAcceptedOperationalDeltaMs: null,
     }),
   ).toBeNull()
+})
+
+describe('evaluateAdaptiveNotice', () => {
+  const base = {
+    previousAcceptedAt: 60 * 60_000,
+    currentPredictedAt: 61 * 60_000,
+    lastCorrectionAcceptedAt: null,
+    thresholdMinutes: 5,
+    cooldownMinutes: 10,
+    now: 20 * 60_000,
+    reason: 'cadence' as const,
+    safetyRevision: 0,
+    lastAcceptedSafetyRevision: null,
+  }
+
+  it('compares absolute deadlines, not elapsed countdown time', () => {
+    expect(evaluateAdaptiveNotice(base)).toBeNull()
+    expect(
+      evaluateAdaptiveNotice({
+        ...base,
+        currentPredictedAt: 66 * 60_000,
+      }),
+    ).toBe('delayed')
+    expect(
+      evaluateAdaptiveNotice({
+        ...base,
+        currentPredictedAt: 54 * 60_000,
+      }),
+    ).toBe('improved')
+  })
+
+  it('forces a first positive safety extension below the ordinary threshold', () => {
+    expect(
+      evaluateAdaptiveNotice({
+        ...base,
+        currentPredictedAt: 62 * 60_000,
+        reason: 'safety',
+        safetyRevision: 1,
+      }),
+    ).toBe('delayed')
+  })
+
+  it('does not resend an accepted safety revision and still enforces cooldown', () => {
+    expect(
+      evaluateAdaptiveNotice({
+        ...base,
+        previousAcceptedAt: 60 * 60_000,
+        currentPredictedAt: 62 * 60_000,
+        reason: 'safety',
+        safetyRevision: 2,
+        lastAcceptedSafetyRevision: 2,
+      }),
+    ).toBeNull()
+    expect(
+      evaluateAdaptiveNotice({
+        ...base,
+        currentPredictedAt: 62 * 60_000,
+        reason: 'safety',
+        safetyRevision: 3,
+        lastCorrectionAcceptedAt: base.now - 1,
+      }),
+    ).toBeNull()
+  })
+
+  it('requires a future forecast for safety and ordinary corrections', () => {
+    expect(
+      evaluateAdaptiveNotice({
+        ...base,
+        currentPredictedAt: base.now,
+        reason: 'safety',
+        safetyRevision: 1,
+      }),
+    ).toBeNull()
+  })
 })

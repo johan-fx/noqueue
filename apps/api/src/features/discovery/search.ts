@@ -1,3 +1,4 @@
+import { cadenceFactor } from '../queue/adaptive-model'
 import { customerDeadlineSql, customerProvisionalSql, publicCustomerAverage } from '../queue/customer-estimate'
 import {
   publicAdmission,
@@ -94,6 +95,7 @@ export async function searchServices(
         (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, false)}) waitingCount,
         (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, true)} AND service_window_id IS NULL) legacyPeople,
         (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, true)} AND service_window_id IS NULL) legacyCount,
+        (SELECT json_group_array(ratio) FROM (SELECT ratio FROM queue_assignment_observation o WHERE o.queue_id=q.id AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30)) cadenceRatios,
         ${distanceSql} distanceMeters,
         (SELECT COALESCE(SUM(max(0,(${customerDeadlineSql(now)}-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
           WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND ${customerDeadlineSql(now)} IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedSum,
@@ -118,6 +120,7 @@ export async function searchServices(
         AdmissionRecord & {
           config: string
           timezone: string
+          cadenceRatios: string
           predictedSum: number
         provisional: number
           predictedCount: number
@@ -148,7 +151,7 @@ export async function searchServices(
       admission.serviceOpen &&
       admission.queueState === 'inactive' &&
       waitingPeople === 0
-    const average = publicCustomerAverage({ sum: row.predictedSum + (includeLegacy ? row.legacyPredictedSum : 0), count: estimateCount, provisional: !!row.provisional, waiting: waitingCount, active: admission.serviceOpen && admission.queueState === 'active', configuredMinutes: config.averageMinutes })
+    const average = publicCustomerAverage({ sum: row.predictedSum + (includeLegacy ? row.legacyPredictedSum : 0), count: estimateCount, provisional: !!row.provisional, waiting: waitingCount, active: admission.serviceOpen && admission.queueState === 'active', configuredMinutes: config.estimatorVersion !== 1 ? Math.max(0.25,config.averageMinutes*cadenceFactor((JSON.parse(row.cadenceRatios) as number[]).reverse())) : config.averageMinutes, adaptive:config.estimatorVersion !== 1 })
     return {
       averageWaitQuality: average.averageWaitQuality,
       id: row.id,

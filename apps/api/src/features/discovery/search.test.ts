@@ -113,7 +113,7 @@ describe('D1 service discovery', () => {
       a = await f.service('Recepción', 10, true, false, 'reception'),
       b = await f.service('Restaurante', 20)
     const result = await search({ text: f.prefix })
-    expect(result.items.map((i) => i.id)).toEqual([a, b].sort())
+    expect(result.items.map((i) => i.id)).toEqual([a, b]) // Adaptive means 10 < 20; no shared configured floor.
     expect(
       result.items.every(
         (i) => i.address === 'Calle Málaga 1' && i.distanceMeters === null,
@@ -155,14 +155,14 @@ describe('D1 service discovery', () => {
       .run()
     expect((await search({ recentIds: [id] })).items).toHaveLength(0)
   })
-  it('floors fresh public means at configured duration, uses an empty provisional minimum and keeps stale waits unknown', async () => {
+  it('uses adaptive public means without a configured floor, an empty provisional seed and unknown stale waits', async () => {
     const f = await fixture(),
       closed = await f.service('Closed', 1, false),
       stale = await f.service('Stale', 1, true, true),
       empty = await f.service('Empty'),
       known = await f.service('Known', 7)
     const result = await search({ text: f.prefix })
-    expect(result.items.find(i => i.id === known)).toMatchObject({ waitMinutes: 30, averageWaitQuality: 'provisional' })
+    expect(result.items.find(i => i.id === known)).toMatchObject({ waitMinutes: 7, averageWaitQuality: 'estimated' })
     expect(result.items.find(i => i.id === empty)).toMatchObject({ waitMinutes: 30, averageWaitQuality: 'provisional' })
     expect(result.items.find(i => i.id === stale)).toMatchObject({ waitMinutes: null, averageWaitQuality: 'unknown' })
     expect(result.items.find(i => i.id === closed)).toMatchObject({ open: false, waitMinutes: null })

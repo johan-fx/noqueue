@@ -120,11 +120,11 @@ function customerOperationalSql(alias: string) {
 /** Matching SQL for bounded public aggregation; no historical scan or recalc. */
 export function customerDeadlineSql(now: number, alias = 'p') {
   const raw = customerOperationalSql(alias)
-  return `CASE WHEN ${alias}.customer_minimum_at IS NOT NULL THEN MAX(${alias}.customer_minimum_at,CASE WHEN ${raw}>${Math.trunc(now)} THEN ${raw} ELSE ${alias}.customer_minimum_at END) WHEN ${alias}.quality!='unknown' THEN ${alias}.predicted_at END`
+  return `CASE WHEN ${alias}.estimator_version=2 THEN (SELECT ap.predicted_at FROM queue_adaptive_projection ap WHERE ap.entry_id=${alias}.entry_id) WHEN ${alias}.customer_minimum_at IS NOT NULL THEN MAX(${alias}.customer_minimum_at,CASE WHEN ${raw}>${Math.trunc(now)} THEN ${raw} ELSE ${alias}.customer_minimum_at END) WHEN ${alias}.quality!='unknown' THEN ${alias}.predicted_at END`
 }
 export function customerProvisionalSql(now: number, alias = 'p') {
   const raw = customerOperationalSql(alias)
-  return `(${alias}.quality!='estimated' OR (${alias}.customer_minimum_at IS NOT NULL AND (${raw} IS NULL OR ${raw}<=${alias}.customer_minimum_at OR ${raw}<=${Math.trunc(now)})))`
+  return `CASE WHEN ${alias}.estimator_version=2 THEN (SELECT ap.quality!='estimated' FROM queue_adaptive_projection ap WHERE ap.entry_id=${alias}.entry_id) ELSE (${alias}.quality!='estimated' OR ( (${alias}.customer_minimum_at IS NOT NULL AND (${raw} IS NULL OR ${raw}<=${alias}.customer_minimum_at OR ${raw}<=${Math.trunc(now)})))) END`
 }
 export function publicCustomerAverage(input: {
   sum: number
@@ -133,6 +133,7 @@ export function publicCustomerAverage(input: {
   waiting: number
   active: boolean
   configuredMinutes: number
+  adaptive?: boolean
 }) {
   if (!input.active || (!input.count && input.waiting))
     return {
@@ -141,9 +142,9 @@ export function publicCustomerAverage(input: {
     }
   const mean = input.count ? Math.round(input.sum / input.count) : 0
   return {
-    averageWaitMinutes: Math.max(input.configuredMinutes, mean),
+    averageWaitMinutes: input.adaptive && input.count ? Math.max(1, mean) : Math.max(input.configuredMinutes, mean),
     averageWaitQuality:
-      !input.count || input.provisional || mean < input.configuredMinutes
+      !input.count || input.provisional || (!input.adaptive && mean < input.configuredMinutes)
         ? ('provisional' as const)
         : ('estimated' as const),
   }

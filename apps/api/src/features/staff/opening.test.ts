@@ -347,7 +347,7 @@ it('supports all occupied resources without learning false durations and protect
   })
   state = await loadQueueState(env, t.queue)
   expect(state.config?.estimationMode).toBe('active')
-  expect(state.resources[0]?.averageMinutes).toBe(75)
+  expect(state.resources[0]?.occupancyMinutes).toBeNull() // Configured cadence is not meal duration.
   context = await openingContext(env, t.queue)
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'close',

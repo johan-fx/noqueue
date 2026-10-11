@@ -36,6 +36,7 @@ export const cutoffOptions = [0, 15, 30, 45, 60, 90, 120]
 export const emptyService: GroupedServiceInput = {
   name: '',
   type: 'restaurant',
+  estimatorVersion: 2,
   capacity: 20,
   averageMinutes: 60,
   graceMinutes: 5,

@@ -279,7 +279,9 @@ export function ServiceCard({
               <dd className="font-medium">{service.capacity}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Duración media</dt>
+              <dt className="text-muted-foreground">
+                Intervalo inicial entre turnos
+              </dt>
               <dd className="font-medium">{service.averageMinutes} min</dd>
             </div>
           </div>

@@ -22,6 +22,7 @@ export type QueueOptions = Partial<
     ServiceInput,
     | 'adjustments'
     | 'estimationMode'
+    | 'estimatorVersion'
     | 'resourceStateKnown'
     | 'stations'
     | 'graceMinutes'
@@ -60,6 +61,8 @@ export function QueueConfigForm({
       etaChangeThresholdMinutes: 5,
       notificationCooldownMinutes: 10,
       ...options,
+      // Missing versions are intelligent v2; explicit v1 remains a rollback.
+      estimatorVersion: options?.estimatorVersion ?? 2,
       type,
       averageMinutes,
       spaces: spaces.map((space) => ({
@@ -110,6 +113,7 @@ export function QueueConfigForm({
             'notificationCooldownMinutes',
             'estimationMode',
             'resourceStateKnown',
+            'estimatorVersion',
           ].includes(item.path),
         )
         if (issue) {
@@ -127,6 +131,7 @@ export function QueueConfigForm({
           approachMinutes: values.approachMinutes,
           etaChangeThresholdMinutes: values.etaChangeThresholdMinutes,
           notificationCooldownMinutes: values.notificationCooldownMinutes,
+          estimatorVersion: values.estimatorVersion,
           estimationMode: values.estimationMode,
           resourceStateKnown: values.resourceStateKnown,
         })
@@ -154,6 +159,10 @@ export function QueueConfigForm({
           asignaciones.
         </p>
       </Field>
+      <p className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
+        El sistema ajusta automáticamente estas estimaciones según el ritmo
+        real de asignación de turnos.
+      </p>
       <fieldset className="space-y-4 rounded-lg border p-4">
         <legend className="px-1 font-medium">Avisos de turno</legend>
         <p className="text-sm text-muted-foreground">
@@ -234,11 +243,7 @@ export function QueueConfigForm({
                         <FieldLabel
                           htmlFor={`group-time-${index}-${group.seats}`}
                         >
-                          Tiempo medio{' '}
-                          {type === 'restaurant'
-                            ? 'del cliente en mesa'
-                            : 'de ocupación'}{' '}
-                          (min)
+                          Intervalo inicial estimado entre turnos (min)
                         </FieldLabel>
                         <Input
                           id={`group-time-${index}-${group.seats}`}
@@ -257,8 +262,9 @@ export function QueueConfigForm({
                         />
                       </Field>
                       <p className="text-xs text-muted-foreground">
-                        Duración desde la llegada hasta liberar el recurso. Se
-                        ajusta con las ocupaciones registradas.
+                        Se usa como referencia inicial para este tamaño de grupo y
+                        espacio; el estimador aprende del tiempo real entre
+                        asignaciones.
                       </p>
                     </AccordionContent>
                   </AccordionItem>

@@ -379,6 +379,11 @@ export async function runQueueCommand(
       ).bind(now, input.entryId),
     )
   }
+  if (input.action === 'call') {
+    const assigned = after.allocations?.find(a => a.entry_id === input.entryId && a.released_at === null)
+    after.assignment = { entryId: input.entryId, callCycle: entry.call_cycle+1,
+      resourceId: assigned?.resource_id, spaceId: assigned?.space_id ?? 'reception', seats: assigned?.seats ?? 100 }
+  }
   await commitQueueTransition(
     env,
     queueId,

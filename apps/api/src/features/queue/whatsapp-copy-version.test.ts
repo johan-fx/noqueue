@@ -4,9 +4,12 @@ import { setupNetwork } from '../../../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { joinQueue } from './entries'
 import { dispatchNotificationSerialized } from './notifications'
+import { runQueueCommand } from '../staff/commands'
+import { recalculateQueue } from './projection'
 import { noticeStatement, type QueueNoticeSnapshot } from './notices'
 import type { ServiceInput } from '@noqueue/contracts/staff'
 import { serviceWindow } from '../staff/availability'
+import { topology } from './opening-state'
 
 const network = setupNetwork()
 beforeAll(() => network.enable())
@@ -78,6 +81,7 @@ async function joined(
     resourceStateKnown?: boolean
     waitingBefore?: number
     blockedMinutes?: number
+    estimatorVersion?: 1 | 2
   } = {},
 ) {
   const queueId = crypto.randomUUID(),
@@ -99,6 +103,14 @@ async function joined(
       'INSERT INTO venue(id,organization_id,name) VALUES (?,?,?)',
     ).bind(venue, org, 'Example venue'),
   ])
+  await env.DB.batch([
+    env.DB.prepare(
+      "INSERT INTO member(id,organizationId,userId,role,createdAt) VALUES (?,?,?,'owner',?)",
+    ).bind(crypto.randomUUID(), org, actor, 'now'),
+    env.DB.prepare(
+      "INSERT INTO venue_membership(user_id,venue_id,role) VALUES (?,?,'owner')",
+    ).bind(actor, venue),
+  ])
   const type = options.type ?? 'reception'
   const config: ServiceInput = {
     name: 'Example service',
@@ -111,6 +123,7 @@ async function joined(
     schedules: [],
     receptionServices: ['check_in'],
     estimationMode: 'active',
+    estimatorVersion: options.estimatorVersion ?? 1,
     resourceStateKnown: options.resourceStateKnown ?? true,
     approachTurns: 0,
     approachMinutes: 0,
@@ -145,19 +158,23 @@ async function joined(
   )
     .bind(queueId, venue, JSON.stringify(config))
     .run()
-  if (type === 'restaurant') {
-    const venueRow = await env.DB.prepare(
-      'SELECT timezone FROM venue WHERE id=?',
-    )
-      .bind(venue)
-      .first<{ timezone: string }>()
-    const window = serviceWindow(config, venueRow?.timezone ?? 'UTC')
+  if (type === 'restaurant')
     await env.DB.prepare(
-      "INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,?,'active',?)",
+      'INSERT INTO queue_opening(queue_id,topology,complete,opened_at,actor_id) VALUES (?,?,1,?,?)',
     )
-      .bind(queueId, window.windowId, Date.now())
+      .bind(queueId, topology(config), Date.now(), actor)
       .run()
-  }
+  const venueRow = await env.DB.prepare(
+    'SELECT timezone FROM venue WHERE id=?',
+  )
+    .bind(venue)
+    .first<{ timezone: string }>()
+  const window = serviceWindow(config, venueRow?.timezone ?? 'UTC')
+  await env.DB.prepare(
+    "INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,?,'active',?)",
+  )
+    .bind(queueId, window.windowId, Date.now())
+    .run()
   for (let index = 0; index < (options.waitingBefore ?? 0); index++) {
     const existing = await joinQueue(
       { ...env, WHATSAPP_COPY_VERSION: profile },
@@ -196,7 +213,7 @@ async function joined(
       status: string
     }>()
   if (!row) throw new Error('Missing joined snapshot')
-  return { ...row, queueId }
+  return { ...row, queueId, actor }
 }
 it('does not send a v4 action notice after its frozen button context expires', async () => {
   const row = await joined('4')
@@ -237,6 +254,191 @@ it('does not send a v4 action notice after its frozen button context expires', a
       .bind(row.id)
       .first(),
   ).toEqual({ status: 'cancelled' })
+})
+it('accepts a current adaptive safety delay once and records the accepted safety revision', async () => {
+  const row = await joined('2', { estimatorVersion: 2 })
+  const now = Date.now()
+  const initial = await env.DB.prepare(
+    'SELECT a.predicted_at,a.cadence_ms,p.revision FROM queue_adaptive_projection a JOIN queue_projection p USING(entry_id) WHERE entry_id=?',
+  )
+    .bind(row.entry_id)
+    .first<{ predicted_at: number; cadence_ms: number; revision: number }>()
+  expect(initial).not.toBeNull()
+
+  // Emulate an active safety-delay episode. Recalculation below creates the
+  // durable notice intent at the canonical projection revision.
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE queue_adaptive_projection SET predicted_at=?,cadence_ms=240000,
+       safety_review_at=?,delay_reason='safety',delay_since=?,delay_baseline_at=?,
+       correction_reason='safety',safety_revision=8,notice_baseline_at=? WHERE entry_id=?`,
+    ).bind(now + 30_000, now, now, now + 10_000, now + 60_000, row.entry_id),
+    env.DB.prepare(
+      "UPDATE queue_projection SET predicted_at=?,quality='provisional',updated_at=?,estimator_version=2 WHERE entry_id=?",
+    ).bind(now + 30_000, now, row.entry_id),
+  ])
+  await recalculateQueue(env, row.queueId, now)
+  const delayed = await env.DB.prepare(
+    "SELECT id,revision,payload_snapshot FROM notification_outbox WHERE entry_id=? AND kind='delayed' AND status='pending' ORDER BY rowid DESC LIMIT 1",
+  )
+    .bind(row.entry_id)
+    .first<{ id: string; revision: number; payload_snapshot: string }>()
+  expect(delayed).not.toBeNull()
+  const frozen = JSON.parse(delayed!.payload_snapshot) as QueueNoticeSnapshot
+  expect(frozen).toMatchObject({
+    estimatorVersion: 2,
+    estimationRevision: delayed!.revision,
+    correctionReason: 'safety',
+    safetyRevision: 8,
+    predictedAt: expect.any(Number),
+  })
+
+  const dispatchEnv = {
+    ...env,
+    WHATSAPP_ENABLED: 'true',
+    WHATSAPP_MODE: 'sandbox',
+    D360DIALOG_API_KEY: 'mock-key',
+    WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+    WHATSAPP_COPY_VERSION: '2',
+  }
+  let sends = 0
+  network.use(
+    http.post(endpoint, () => {
+      sends++
+      return HttpResponse.json({ messages: [{ id: 'wamid.adaptive-safety' }] })
+    }),
+  )
+  await dispatchNotificationSerialized(dispatchEnv, delayed!.id)
+
+  expect(sends).toBe(1)
+  expect(
+    await env.DB.prepare(
+      'SELECT last_accepted_safety_revision FROM queue_notification_state WHERE entry_id=?',
+    )
+      .bind(row.entry_id)
+      .first(),
+  ).toEqual({ last_accepted_safety_revision: 8 })
+
+  await dispatchNotificationSerialized(dispatchEnv, delayed!.id)
+  expect(sends).toBe(1)
+})
+it('rejects an adaptive delay whose frozen projection revision is obsolete', async () => {
+  const row = await joined('2', { estimatorVersion: 2 })
+  const now = Date.now()
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE queue_adaptive_projection SET predicted_at=?,cadence_ms=240000,
+       safety_review_at=?,delay_reason='safety',delay_since=?,delay_baseline_at=?,
+       correction_reason='safety',safety_revision=3,notice_baseline_at=? WHERE entry_id=?`,
+    ).bind(now + 30_000, now, now, now + 10_000, now + 60_000, row.entry_id),
+    env.DB.prepare(
+      "UPDATE queue_projection SET predicted_at=?,quality='provisional',updated_at=?,estimator_version=2 WHERE entry_id=?",
+    ).bind(now + 30_000, now, row.entry_id),
+  ])
+  await recalculateQueue(env, row.queueId, now)
+  const delayed = await env.DB.prepare(
+    "SELECT id,revision,payload_snapshot FROM notification_outbox WHERE entry_id=? AND kind='delayed' AND status='pending' ORDER BY rowid DESC LIMIT 1",
+  )
+    .bind(row.entry_id)
+    .first<{ id: string; revision: number; payload_snapshot: string }>()
+  expect(delayed).not.toBeNull()
+  const obsolete = JSON.parse(delayed!.payload_snapshot) as QueueNoticeSnapshot
+  obsolete.estimationRevision = Math.max(0, delayed!.revision - 1)
+  await env.DB.prepare(
+    'UPDATE notification_outbox SET revision=?,payload_snapshot=? WHERE id=?',
+  )
+    .bind(obsolete.estimationRevision, JSON.stringify(obsolete), delayed!.id)
+    .run()
+
+  let sends = 0
+  network.use(
+    http.post(endpoint, () => {
+      sends++
+      return HttpResponse.json({ messages: [{ id: 'wamid.obsolete-adaptive' }] })
+    }),
+  )
+  await dispatchNotificationSerialized(
+    {
+      ...env,
+      WHATSAPP_ENABLED: 'true',
+      WHATSAPP_MODE: 'sandbox',
+      D360DIALOG_API_KEY: 'mock-key',
+      WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+      WHATSAPP_COPY_VERSION: '2',
+    },
+    delayed!.id,
+  )
+
+  expect(sends).toBe(0)
+  expect(
+    await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+      .bind(delayed!.id)
+      .first(),
+  ).toEqual({ status: 'cancelled' })
+})
+it('cancels a pending adaptive delay when ready supersedes it and sends the ready notice', async () => {
+  const row = await joined('2', { estimatorVersion: 2, type: 'restaurant' })
+  const now = Date.now()
+  await env.DB.batch([
+    env.DB.prepare(
+      `UPDATE queue_adaptive_projection SET predicted_at=?,cadence_ms=240000,
+       safety_review_at=?,delay_reason='safety',delay_since=?,delay_baseline_at=?,
+       correction_reason='safety',safety_revision=4,notice_baseline_at=? WHERE entry_id=?`,
+    ).bind(now + 30_000, now, now, now + 10_000, now + 60_000, row.entry_id),
+    env.DB.prepare(
+      "UPDATE queue_projection SET predicted_at=?,quality='provisional',updated_at=?,estimator_version=2 WHERE entry_id=?",
+    ).bind(now + 30_000, now, row.entry_id),
+  ])
+  await recalculateQueue(env, row.queueId, now)
+  const delayed = await env.DB.prepare(
+    "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='delayed' AND status='pending' ORDER BY rowid DESC LIMIT 1",
+  )
+    .bind(row.entry_id)
+    .first<{ id: string }>()
+  expect(delayed).not.toBeNull()
+
+  await runQueueCommand(
+    { ...env, WHATSAPP_COPY_VERSION: '2' },
+    row.actor,
+    row.queueId,
+    crypto.randomUUID(),
+    { action: 'call', entryId: row.entry_id, version: 0 },
+  )
+  expect(
+    await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+      .bind(delayed!.id)
+      .first(),
+  ).toEqual({ status: 'cancelled' })
+  const ready = await env.DB.prepare(
+    "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='ready' AND status='pending' ORDER BY rowid DESC LIMIT 1",
+  )
+    .bind(row.entry_id)
+    .first<{ id: string }>()
+  expect(ready).not.toBeNull()
+
+  let sends = 0
+  network.use(
+    http.post(endpoint, () => {
+      sends++
+      return HttpResponse.json({ messages: [{ id: 'wamid.ready-supersedes' }] })
+    }),
+  )
+  const dispatchEnv = {
+    ...env,
+    WHATSAPP_ENABLED: 'true',
+    WHATSAPP_MODE: 'sandbox',
+    D360DIALOG_API_KEY: 'mock-key',
+    WHATSAPP_RECIPIENT_ALLOWLIST: '+34600000000',
+    WHATSAPP_COPY_VERSION: '2',
+  }
+  await dispatchNotificationSerialized(dispatchEnv, delayed!.id)
+  await dispatchNotificationSerialized(dispatchEnv, ready!.id)
+  expect(sends).toBe(1)
+  expect(
+    await env.DB.prepare('SELECT status FROM notification_outbox WHERE id=?')
+      .bind(ready!.id)
+      .first(),
+  ).toEqual({ status: 'accepted' })
 })
 it('cancels an approaching notice when only position is close and the known ETA is outside the cutoff', async () => {
   const row = await joined('4')

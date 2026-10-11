@@ -558,3 +558,23 @@ it('ticks the server-aligned wait and arc and resynchronizes revised snapshots w
   unmount()
   expect(vi.getTimerCount()).toBe(0)
 })
+
+it('replaces an exhausted v2 forecast offline and immediately refreshes on reconnection', () => {
+  const { refresh } = mount()
+  resource.data = {
+    ...resource.data!,
+    estimatorVersion: 2,
+    etaMinutes: 0,
+    predictedAt: 0,
+  }
+  resource.updatedAt = Date.now()
+  refresh()
+  expect(screen.getByText('Actualizando estimación')).toBeVisible()
+  fireEvent.offline(window)
+  expect(screen.getByText('Sin conexión')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+  const callsBeforeReconnect = resource.refresh.mock.calls.length
+  fireEvent.online(window)
+  expect(screen.getByText('Actualizando estimación')).toBeVisible()
+  expect(resource.refresh).toHaveBeenCalledTimes(callsBeforeReconnect + 1)
+})

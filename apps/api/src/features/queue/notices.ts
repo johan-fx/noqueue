@@ -1,6 +1,7 @@
 import { copyVersion } from '../../integrations/whatsapp-copy-v3'
 import type { LifecycleV4Variant } from '../../integrations/whatsapp-copy-v4'
 import type { WhatsAppActionPhase } from './whatsapp-actions'
+import { z } from 'zod'
 export type QueueNoticeKind =
   | 'ready'
   | 'approaching'
@@ -27,11 +28,85 @@ export type QueueNoticeSnapshot = {
   /** Separate configured-minimum evidence for effective customer corrections. */
   customerMinimumAt?: number
   operationalForecastDeltaMs?: number
+  /** Present only for opt-in adaptive-estimator notices. */
+  estimatorVersion?: 2
+  estimationRevision?: number
+  correctionReason?: 'safety' | 'resources' | 'cadence' | 'configuration'
+  safetyRevision?: number
+  approachEpisode?: number
   predictedAt: number | null
   estimateQuality: 'estimated' | 'provisional' | 'unknown'
   resourceName: string | null
   arrivalDeadlineAt: number | null
   reason?: 'customer_cancel' | 'staff_cancel' | 'service_ended'
+}
+
+const queueNoticeSnapshotSchema = z.object({
+  schemaVersion: z.literal(2),
+  copyVersion: z.union([z.literal(2), z.literal(3), z.literal(4)]).optional(),
+  copyVariant: z.enum([
+    'queue_joined',
+    'approaching',
+    'delayed',
+    'ready',
+    'improved_wait_recommended',
+    'improved_wait_neutral',
+    'improved_ready',
+    'expired',
+    'cancelled_customer',
+    'cancelled_staff',
+    'cancelled_unknown',
+    'service_ended',
+  ]).optional(),
+  actionContext: z.object({
+    phase: z.enum(['waiting', 'called']),
+    callCycle: z.number().int().nonnegative(),
+    expiresAt: z.number().finite(),
+  }).optional(),
+  approachRecommended: z.boolean().optional(),
+  projectionPending: z.boolean().optional(),
+  serviceName: z.string(),
+  ahead: z.number().finite().nullable(),
+  etaMinutes: z.number().finite().nullable(),
+  customerMinimumAt: z.number().finite().optional(),
+  operationalForecastDeltaMs: z.number().finite().optional(),
+  estimatorVersion: z.literal(2).optional(),
+  estimationRevision: z.number().int().nonnegative().optional(),
+  correctionReason: z.enum(['safety', 'resources', 'cadence', 'configuration']).optional(),
+  safetyRevision: z.number().int().nonnegative().optional(),
+  approachEpisode: z.number().int().nonnegative().optional(),
+  predictedAt: z.number().finite().nullable(),
+  estimateQuality: z.enum(['estimated', 'provisional', 'unknown']),
+  resourceName: z.string().nullable(),
+  arrivalDeadlineAt: z.number().finite().nullable(),
+  reason: z.enum(['customer_cancel', 'staff_cancel', 'service_ended']).optional(),
+}).passthrough().superRefine((snapshot, context) => {
+  if (
+    snapshot.estimatorVersion === 2 &&
+    snapshot.estimationRevision === undefined
+  )
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['estimationRevision'],
+      message: 'Adaptive snapshots require their projection revision',
+    })
+  if (
+    snapshot.correctionReason === 'safety' &&
+    snapshot.safetyRevision === undefined
+  )
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['safetyRevision'],
+      message: 'Safety corrections require a safety revision',
+    })
+})
+
+/** Validate immutable notice payloads without stripping forward-compatible fields. */
+export function parseQueueNoticeSnapshot(
+  raw: unknown,
+): QueueNoticeSnapshot | null {
+  const parsed = queueNoticeSnapshotSchema.safeParse(raw)
+  return parsed.success ? parsed.data as QueueNoticeSnapshot : null
 }
 
 function v4Variant(kind: QueueNoticeKind, snapshot: QueueNoticeSnapshot) {

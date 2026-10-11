@@ -1,3 +1,4 @@
+// Explicit v1 fixtures retain rollback regressions; default v2 is covered by adaptive-estimator.test.ts.
 import { env } from 'cloudflare:workers'
 import { expect, it, vi } from 'vitest'
 import {
@@ -17,6 +18,7 @@ async function fixture() {
       queueId,
       JSON.stringify({
         name: 'Restaurant',
+        estimatorVersion: 1 as const,
         type: 'restaurant',
         capacity: 99,
         averageMinutes: 30,
@@ -443,7 +445,8 @@ it('projects waiting actions and keeps yield/cancel available while called', asy
     venueName: 'Hotel',
     timezone: 'Europe/Madrid',
     open: 1,
-    type: 'restaurant' as 'restaurant' | 'pool',
+    estimatorVersion: 1 as const,
+        type: 'restaurant' as 'restaurant' | 'pool',
     receptionServices: [],
     spaces: [],
     averageWaitMinutes: null,

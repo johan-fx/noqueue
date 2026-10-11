@@ -23,7 +23,10 @@ const allDay = { days: [0, 6], twentyFourHours: true, ranges: [] }
 describe('schedule groups contract', () => {
   it('accepts mixed groups in service, stored and settings contracts without legacy fields', () => {
     const input = { ...base, scheduleGroups: [timed, allDay] }
-    expect(serviceSchema.parse(input)).toEqual(input)
+    expect(serviceSchema.parse(input)).toEqual({
+      ...input,
+      estimatorVersion: 2,
+    })
     expect(storedServiceSchema.parse(input).scheduleGroups).toEqual(
       input.scheduleGroups,
     )

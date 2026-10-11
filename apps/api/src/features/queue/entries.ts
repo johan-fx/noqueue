@@ -470,7 +470,10 @@ export async function joinQueue(
     projectionState.config,
     projectionState.baseline,
   ).get(id)!
-  const joinedEstimate = rawJoinedProjection
+  const adaptiveJoined = projectionState.adaptiveProjections.find(p => p.id === id)
+  const joinedEstimate = adaptiveJoined
+    ? { predictedAt:adaptiveJoined.predictedAt,etaMinutes:Math.ceil((adaptiveJoined.predictedAt-now)/60000),estimateQuality:adaptiveJoined.quality }
+    : rawJoinedProjection
     ? customerEstimate(rawJoinedProjection, now + work, now)
     : undefined
   const joinedProjection = rawJoinedProjection && joinedEstimate
@@ -494,6 +497,7 @@ export async function joinQueue(
           predictedAt: joinedProjection?.predictedAt ?? null,
           estimateQuality: joinedProjection?.quality ?? 'unknown',
           operationalForecastDeltaMs: 0,
+        ...(adaptiveJoined ? {projectionPending:true} : {}),
         customerMinimumAt: now + work,
           resourceName: null,
           arrivalDeadlineAt: null,
@@ -601,6 +605,7 @@ export async function joinQueue(
       const snapshot: QueueNoticeSnapshot = {
         schemaVersion: 2,
         operationalForecastDeltaMs: 0,
+        ...(adaptiveJoined ? {projectionPending:true} : {}),
         customerMinimumAt: now + work,
         approachRecommended:
           customerPhase(

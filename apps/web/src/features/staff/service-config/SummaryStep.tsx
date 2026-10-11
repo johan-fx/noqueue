@@ -23,7 +23,9 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
           </p>
         </div>
       ))}
-      <p>Tiempo medio: {values.averageMinutes} min</p>
+      <p>
+        Intervalo inicial estimado entre turnos: {values.averageMinutes} min
+      </p>
       <p>
         Nº máximo de {values.type === 'reception' ? 'personas' : seats} en
         lista: {values.capacity}
@@ -31,7 +33,7 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
       {values.spaces.flatMap((space) =>
         (space.tableTypes ?? []).map((group) => (
           <p key={`${space.id ?? space.name}-${group.seats}`}>
-            {space.name} · {group.seats} plazas:{' '}
+            {space.name} · {group.seats} plazas · intervalo inicial entre turnos:{' '}
             {group.averageMinutes ??
               values.queueBySeat?.find((row) => row.seats === group.seats)
                 ?.averageMinutes ??
@@ -42,7 +44,8 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
       )}
       {values.queueBySeat?.map((item) => (
         <p key={item.seats}>
-          {values.type === 'pool' ? 'Plazas' : 'Mesas'} de {item.seats}:{' '}
+          {values.type === 'pool' ? 'Plazas' : 'Mesas'} de {item.seats} ·
+          intervalo inicial entre turnos:{' '}
           {item.averageMinutes} min, máx. {item.capacity}
         </p>
       ))}

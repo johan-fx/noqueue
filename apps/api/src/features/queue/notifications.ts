@@ -7,8 +7,12 @@ import { z } from 'zod'
 import { createWhatsAppSender } from '../../integrations/360dialog'
 import { isOpenStagingV4 } from '../../integrations/whatsapp-policy'
 import { decryptPhone, recoveryToken } from './crypto'
-import { evaluateEstimateNotice } from './estimate-notices'
-import type { QueueNoticeSnapshot } from './notices'
+import {
+  evaluateAdaptiveNotice,
+  evaluateEstimateNotice,
+} from './estimate-notices'
+import { parseQueueNoticeSnapshot, type QueueNoticeSnapshot } from './notices'
+import { admissionState } from '../staff/availability'
 import {
   renderWhatsAppActionSelectorLabel,
   signWhatsAppAction,
@@ -45,23 +49,29 @@ function acceptedNoticeStateStatement(
     callCycle: number
     notificationId: string
     kind: string
+    safetyRevision: number | null
+    preserveLegacyEstimateEvidence: boolean
   },
 ) {
   return env.DB.prepare(
     `INSERT INTO queue_notification_state(
        entry_id,last_accepted_predicted_at,last_correction_accepted_at,updated_at,
-       last_accepted_at,last_accepted_call_cycle,last_accepted_revision,last_accepted_notification_id,last_accepted_operational_delta_ms,last_accepted_customer_minimum_at
-     ) VALUES (?,?,?,?,?,?,?,?,?,?)
+       last_accepted_at,last_accepted_call_cycle,last_accepted_revision,last_accepted_notification_id,last_accepted_operational_delta_ms,last_accepted_customer_minimum_at,last_accepted_safety_revision
+     ) VALUES (?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(entry_id) DO UPDATE SET
        last_accepted_predicted_at=excluded.last_accepted_predicted_at,
-       last_accepted_operational_delta_ms=excluded.last_accepted_operational_delta_ms,
-       last_accepted_customer_minimum_at=excluded.last_accepted_customer_minimum_at,
+       last_accepted_operational_delta_ms=CASE WHEN ? THEN COALESCE(excluded.last_accepted_operational_delta_ms,queue_notification_state.last_accepted_operational_delta_ms) ELSE excluded.last_accepted_operational_delta_ms END,
+       last_accepted_customer_minimum_at=CASE WHEN ? THEN COALESCE(excluded.last_accepted_customer_minimum_at,queue_notification_state.last_accepted_customer_minimum_at) ELSE excluded.last_accepted_customer_minimum_at END,
        last_correction_accepted_at=CASE WHEN ? IN ('delayed','improved') THEN excluded.last_correction_accepted_at ELSE queue_notification_state.last_correction_accepted_at END,
        updated_at=excluded.updated_at,
        last_accepted_at=excluded.last_accepted_at,
        last_accepted_call_cycle=excluded.last_accepted_call_cycle,
        last_accepted_revision=excluded.last_accepted_revision,
-       last_accepted_notification_id=excluded.last_accepted_notification_id
+       last_accepted_notification_id=excluded.last_accepted_notification_id,
+       last_accepted_safety_revision=CASE
+         WHEN ?='delayed' AND ? IS NOT NULL THEN MAX(COALESCE(queue_notification_state.last_accepted_safety_revision,0),excluded.last_accepted_safety_revision)
+         ELSE queue_notification_state.last_accepted_safety_revision
+       END
      WHERE excluded.last_accepted_at>COALESCE(queue_notification_state.last_accepted_at,-1)
        OR (excluded.last_accepted_at=queue_notification_state.last_accepted_at AND (
          excluded.last_accepted_call_cycle>queue_notification_state.last_accepted_call_cycle
@@ -84,7 +94,12 @@ function acceptedNoticeStateStatement(
     input.notificationId,
     input.operationalDeltaMs,
     input.customerMinimumAt,
+    input.safetyRevision,
+    Number(input.preserveLegacyEstimateEvidence),
+    Number(input.preserveLegacyEstimateEvidence),
     input.kind,
+    input.kind,
+    input.safetyRevision,
   )
 }
 
@@ -125,9 +140,9 @@ export async function dispatchNotificationSerialized(
   ) {
     let snapshot: QueueNoticeSnapshot | null = null
     try {
-      snapshot = JSON.parse(
-        pendingJoin.payload_snapshot,
-      ) as QueueNoticeSnapshot
+      snapshot = parseQueueNoticeSnapshot(
+        JSON.parse(pendingJoin.payload_snapshot),
+      )
     } catch {
       // Malformed frozen input is rejected by the existing dispatch guard.
     }
@@ -146,10 +161,12 @@ export async function dispatchNotificationSerialized(
   const row = await env.DB.prepare(
     `SELECT n.status,n.attempts,n.kind,n.position,n.payload_version,n.payload_snapshot,n.revision,n.call_cycle,n.accepted_at,
     e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,v.id AS venue_id,
-    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta,p.operational_forecast_delta_ms AS current_operational_delta,p.customer_minimum_at,p.updated_at AS projection_updated_at,p.customer_operational_at
+    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.estimator_version,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta,p.operational_forecast_delta_ms AS current_operational_delta,p.customer_minimum_at,p.updated_at AS projection_updated_at,p.customer_operational_at,
+    ap.predicted_at AS adaptive_predicted_at,ap.quality AS adaptive_quality,ap.approach_episode AS adaptive_approach_episode,ap.correction_reason AS adaptive_correction_reason,ap.safety_revision AS adaptive_safety_revision,ap.notice_baseline_at AS adaptive_notice_baseline_at
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
     LEFT JOIN queue_confirmation f ON f.entry_id=e.id
     JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id
+    LEFT JOIN queue_adaptive_projection ap ON ap.entry_id=e.id
     LEFT JOIN queue_projection p ON p.entry_id=e.id WHERE n.id=?`,
   )
     .bind(id)
@@ -178,6 +195,7 @@ export async function dispatchNotificationSerialized(
       venue: string
       queue_config: string | null
       projection_revision: number | null
+      estimator_version: number | null
       current_predicted_at: number | null
       current_quality: 'estimated' | 'provisional' | 'unknown' | null
       current_eta: number | null
@@ -185,6 +203,12 @@ export async function dispatchNotificationSerialized(
       customer_minimum_at: number | null
       projection_updated_at: number | null
       customer_operational_at: number | null
+      adaptive_predicted_at: number | null
+      adaptive_quality: 'estimated' | 'provisional' | 'unknown' | null
+      adaptive_approach_episode: number | null
+      adaptive_correction_reason: string | null
+      adaptive_safety_revision: number | null
+      adaptive_notice_baseline_at: number | null
       entry_call_cycle: number
     }>()
   if (!row || row.status !== 'pending') return
@@ -256,8 +280,9 @@ export async function dispatchNotificationSerialized(
   let snapshot: QueueNoticeSnapshot | null = null
   if (row.payload_version === 2 && row.payload_snapshot) {
     try {
-      const parsed = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot
+      const parsed = parseQueueNoticeSnapshot(JSON.parse(row.payload_snapshot))
       if (
+        parsed &&
         parsed.schemaVersion === 2 &&
         typeof parsed.serviceName === 'string' &&
         (parsed.copyVersion === undefined ||
@@ -275,31 +300,52 @@ export async function dispatchNotificationSerialized(
     }
   }
   const dispatchNow = Date.now()
-  const customerOperationalAt = stableOperationalAt(
-    row.current_predicted_at, row.customer_operational_at,
-  )
+  const adaptiveProjection = row.estimator_version === 2
+  const customerOperationalAt = adaptiveProjection
+    ? row.adaptive_predicted_at
+    : stableOperationalAt(row.current_predicted_at, row.customer_operational_at)
   const effective = customerEstimate({
     predictedAt: customerOperationalAt,
-    quality: row.current_quality ?? 'unknown',
-  }, row.customer_minimum_at, dispatchNow)
+    quality: (adaptiveProjection ? row.adaptive_quality : row.current_quality) ?? 'unknown',
+  }, adaptiveProjection ? null : row.customer_minimum_at, dispatchNow)
   const projectionFresh = row.projection_updated_at != null &&
     row.projection_updated_at >= dispatchNow - 120000 &&
     row.projection_updated_at <= dispatchNow
+  const adaptiveRevisionMatches = !!snapshot &&
+    snapshot.estimatorVersion === 2 &&
+    snapshot.estimationRevision === row.projection_revision &&
+    row.revision === row.projection_revision
+  const adaptiveApproachEpisodeMatches = adaptiveRevisionMatches &&
+    snapshot?.approachEpisode !== undefined &&
+    snapshot.approachEpisode === row.adaptive_approach_episode
   let approaching = true
   if (row.kind === 'approaching') {
-    let config: { approachMinutes?: number } | null = null
+    let config: { approachMinutes?: number; estimatorVersion?: number } | null = null
     try {
       config = JSON.parse(row.queue_config ?? 'null')
     } catch { /* Fail closed. */ }
-    approaching = projectionFresh && !!config &&
+    const adaptiveAdmission = adaptiveProjection
+      ? await admissionState(env, row.queue_id, new Date(dispatchNow))
+      : null
+    const adaptiveNoticeActive = !adaptiveProjection || (
+      snapshot?.estimatorVersion === 2 &&
+      config?.estimatorVersion !== 1 &&
+      adaptiveApproachEpisodeMatches &&
+      adaptiveAdmission?.serviceOpen === true &&
+      adaptiveAdmission.queueState === 'active'
+    )
+    approaching = projectionFresh && !!config && adaptiveNoticeActive &&
       effective.estimateQuality !== 'unknown' &&
       effective.predictedAt !== null &&
-      effective.predictedAt - dispatchNow <= (config.approachMinutes ?? 10) * 60000
+      effective.predictedAt - dispatchNow <= (config.approachMinutes ?? 10) * 60000 &&
+      (adaptiveProjection
+        ? true
+        : snapshot?.estimatorVersion !== 2)
   }
   let correctionIsCurrent = true
   if (row.kind === 'delayed' || row.kind === 'improved') {
     const baseline = await env.DB.prepare(
-      'SELECT last_accepted_predicted_at,last_correction_accepted_at,last_accepted_operational_delta_ms,last_accepted_customer_minimum_at FROM queue_notification_state WHERE entry_id=?',
+      'SELECT last_accepted_predicted_at,last_correction_accepted_at,last_accepted_operational_delta_ms,last_accepted_customer_minimum_at,last_accepted_safety_revision FROM queue_notification_state WHERE entry_id=?',
     )
       .bind(row.id)
       .first<{
@@ -307,14 +353,60 @@ export async function dispatchNotificationSerialized(
         last_correction_accepted_at: number | null
         last_accepted_operational_delta_ms: number | null
         last_accepted_customer_minimum_at: number | null
+        last_accepted_safety_revision: number | null
       }>()
-    correctionIsCurrent =
-      projectionFresh &&
-      snapshot?.customerMinimumAt !== undefined &&
-      snapshot.customerMinimumAt === row.customer_minimum_at &&
-      snapshot.operationalForecastDeltaMs !== undefined &&
-      snapshot.operationalForecastDeltaMs === row.current_operational_delta &&
-      evaluateEstimateNotice({
+    if (adaptiveProjection) {
+      const reason = snapshot?.correctionReason
+      correctionIsCurrent =
+        projectionFresh &&
+        adaptiveRevisionMatches &&
+        reason !== undefined &&
+        reason === row.adaptive_correction_reason &&
+        snapshot?.safetyRevision === row.adaptive_safety_revision &&
+        evaluateAdaptiveNotice({
+          previousAcceptedAt:
+            baseline?.last_accepted_predicted_at ??
+            row.adaptive_notice_baseline_at,
+          currentPredictedAt: effective.predictedAt,
+          lastCorrectionAcceptedAt:
+            baseline?.last_correction_accepted_at ?? null,
+          thresholdMinutes: (() => {
+            try {
+              return (
+                JSON.parse(row.queue_config ?? '{}') as {
+                  etaChangeThresholdMinutes?: number
+                }
+              ).etaChangeThresholdMinutes ?? 5
+            } catch {
+              return 5
+            }
+          })(),
+          cooldownMinutes: (() => {
+            try {
+              return (
+                JSON.parse(row.queue_config ?? '{}') as {
+                  notificationCooldownMinutes?: number
+                }
+              ).notificationCooldownMinutes ?? 10
+            } catch {
+              return 10
+            }
+          })(),
+          now: dispatchNow,
+          reason: reason ?? 'cadence',
+          safetyRevision: snapshot?.safetyRevision ?? 0,
+          lastAcceptedSafetyRevision:
+            baseline?.last_accepted_safety_revision ?? 0,
+        }) === row.kind
+    } else
+      correctionIsCurrent =
+        projectionFresh &&
+        snapshot?.estimatorVersion !== 2 &&
+        snapshot?.customerMinimumAt !== undefined &&
+        snapshot.customerMinimumAt === row.customer_minimum_at &&
+        snapshot.operationalForecastDeltaMs !== undefined &&
+        snapshot.operationalForecastDeltaMs === row.current_operational_delta &&
+        evaluateEstimateNotice({
         previousAcceptedOperationalDeltaMs:
           baseline?.last_accepted_operational_delta_ms ?? null,
         currentOperationalDeltaMs: row.current_operational_delta ?? 0,
@@ -348,7 +440,7 @@ export async function dispatchNotificationSerialized(
             return 10
           }
         })(),
-        now: Date.now(),
+        now: dispatchNow,
       }) === row.kind
   }
   if (
@@ -602,6 +694,13 @@ export async function dispatchNotificationSerialized(
           predictedAt: snapshot.predictedAt,
           operationalDeltaMs: snapshot.operationalForecastDeltaMs ?? null,
           customerMinimumAt: snapshot.customerMinimumAt ?? null,
+          safetyRevision:
+            row.kind === 'delayed' &&
+            snapshot.estimatorVersion === 2 &&
+            snapshot.correctionReason === 'safety'
+              ? snapshot.safetyRevision ?? null
+              : null,
+          preserveLegacyEstimateEvidence: snapshot.estimatorVersion === 2,
           acceptedAt,
           revision: row.revision,
           callCycle: row.call_cycle,
@@ -761,16 +860,23 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
     notification.payload_snapshot
   ) {
     try {
-      const snapshot = JSON.parse(
-        notification.payload_snapshot,
-      ) as QueueNoticeSnapshot
-      if (snapshot.schemaVersion === 2 && snapshot.predictedAt !== null) {
+      const snapshot = parseQueueNoticeSnapshot(
+        JSON.parse(notification.payload_snapshot),
+      )
+      if (snapshot?.schemaVersion === 2 && snapshot.predictedAt !== null) {
         webhookStatements.push(
           acceptedNoticeStateStatement(env, {
             entryId: notification.entry_id,
             predictedAt: snapshot.predictedAt,
             operationalDeltaMs: snapshot.operationalForecastDeltaMs ?? null,
             customerMinimumAt: snapshot.customerMinimumAt ?? null,
+            safetyRevision:
+              notification.kind === 'delayed' &&
+              snapshot.estimatorVersion === 2 &&
+              snapshot.correctionReason === 'safety'
+                ? snapshot.safetyRevision ?? null
+                : null,
+            preserveLegacyEstimateEvidence: snapshot.estimatorVersion === 2,
             acceptedAt: notification.accepted_at,
             revision: notification.revision,
             callCycle: notification.call_cycle,

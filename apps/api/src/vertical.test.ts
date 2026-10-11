@@ -380,6 +380,7 @@ describe('queue vertical in workerd', () => {
       if (!first) throw new Error('Missing initial queue notice')
       const config = {
         name: 'Demo',
+        estimatorVersion:1 as const, // Legacy accepted-forecast provenance regression.
         type: 'restaurant' as const,
         capacity: 100,
         averageMinutes: 120,
@@ -1017,6 +1018,7 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
     ).first<{ entry_id: string }>()
     const config = {
       name: 'Operational',
+      estimatorVersion:1 as const, // Legacy compensated-correction regression.
       type: 'restaurant' as const,
       capacity: 100,
       averageMinutes: 60,

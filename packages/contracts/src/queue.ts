@@ -138,6 +138,18 @@ export const publicVenueSchema = z.object({
 export type PublicVenue = z.infer<typeof publicVenueSchema>
 export const entrySchema = z.object({
   initialEtaMinutes: z.number().int().positive().nullable().optional(),
+  // Version 1 is the legacy estimator; absent values retain legacy behavior.
+  estimatorVersion: z.union([z.literal(1), z.literal(2)]).optional(),
+  estimationRevision: z.number().int().nonnegative().optional(),
+  safetyReviewAt: z.number().nullable().optional(),
+  delay: z
+    .object({
+      reason: z.enum(['safety', 'resources', 'cadence', 'configuration']),
+      since: z.number(),
+      previousPredictedAt: z.number(),
+    })
+    .nullable()
+    .optional(),
   customer: z
     .object({
       service: publicServiceSchema,

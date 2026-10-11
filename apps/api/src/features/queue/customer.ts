@@ -320,6 +320,8 @@ export async function runCustomerCommand(
         .bind(successor.id)
         .first<{ call_cycle: number }>()
       const nextCycle = (priorCycle?.call_cycle ?? 0) + 1
+      after.assignment = { entryId:successor.id,callCycle:nextCycle,resourceId:allocation?.resource_id,
+        spaceId:allocation?.space_id ?? 'reception',seats:allocation?.seats ?? 100 }
       const resource = allocation
         ? state.resources.find((item) => item.id === allocation.resource_id)
         : null

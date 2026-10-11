@@ -22,7 +22,8 @@
     "demo:queue:restaurant": "node scripts/queue-demo/run.mjs restaurant",
     "demo:queue:reception": "node scripts/queue-demo/run.mjs reception",
     "demo:queue:pool": "node scripts/queue-demo/run.mjs pool",
-    "demo:queue:all": "node scripts/queue-demo/run.mjs all"
+    "demo:queue:all": "node scripts/queue-demo/run.mjs all",
+    "demo:queue:adaptive": "node scripts/queue-demo/adaptive-video.mjs record"
   },
   "devDependencies": {
     "turbo": "2.10.12",

@@ -10,12 +10,14 @@ import {
 } from '@/components/reui/stepper'
 import { CustomerFooter, type Locale } from './shared'
 import { remainingWaitMs, turnProgress } from './turn-progress'
+import { formatCountdown } from '@/lib/countdown'
 
 export function TurnView({
   entry,
   locale,
   now,
   updatedAt,
+  online = true,
   joined = false,
   yielded = false,
   onAction,
@@ -24,6 +26,7 @@ export function TurnView({
   locale: Locale
   now: number
   updatedAt: number
+  online?: boolean
   joined?: boolean
   yielded?: boolean
   onAction: (action: 'update' | 'cancel' | 'yield') => void
@@ -39,6 +42,7 @@ export function TurnView({
     approaching = phase === 'approaching',
     called = phase === 'called'
   const active = !arrived && !expired && !cancelled
+  const adaptive = entry.estimatorVersion === 2
   const step = arrived || called ? 3 : approaching ? 2 : 1
   const primaryAction = approaching || called || !restaurant ? 'yield' : 'update'
   const titles = {
@@ -80,25 +84,34 @@ export function TurnView({
       : es ? 'Tu turno ya no está activo. Puedes volver a apuntarte cuando quieras.' : 'Your turn is no longer active. You can join again whenever you like.',
   }
   const waitMs = remainingWaitMs(entry, now)
+  const forecastExhausted =
+    adaptive &&
+    active &&
+    !called &&
+    knownEstimate(entry) &&
+    entry.predictedAt != null &&
+    Number.isFinite(entry.predictedAt) &&
+    entry.predictedAt <= now
+  const refreshStatus = forecastExhausted
+    ? online
+      ? es
+        ? 'Actualizando estimación'
+        : 'Updating estimate'
+      : es
+        ? 'Sin conexión'
+        : 'Offline'
+    : null
   const remaining = called
     ? c.arrivalDeadlineAt == null
       ? null
       : Math.max(0, c.arrivalDeadlineAt - now)
     : waitMs
-  const countdown =
-    remaining == null
-      ? '—'
-      : `${Math.floor(remaining / 60000)}:${String(
-          Math.floor(remaining / 1000) % 60,
-        ).padStart(2, '0')}`
-  const known =
-    ['estimated', 'provisional'].includes(entry.estimateQuality ?? '') &&
-    Number.isFinite(entry.etaMinutes) &&
-    entry.etaMinutes >= 0
+  const countdown = formatCountdown(remaining)
+  const known = knownEstimate(entry)
   const units = es ? 'minutos:segundos' : 'minutes:seconds'
-  const waitLabel = waitMs == null
+  const waitLabel = refreshStatus ?? (waitMs == null
     ? `${entry.etaMinutes} min`
-    : `${countdown} (${units})`
+    : `${countdown} (${units})`)
   const estimatedWaitLabel = es
     ? `Espera aproximada: ${waitLabel}`
     : `Estimated wait: ${waitLabel}`
@@ -107,9 +120,11 @@ export function TurnView({
     : called
     ? countdown
     : known
-    ? waitMs == null ? String(entry.etaMinutes) : countdown
+    ? refreshStatus ?? (waitMs == null ? String(entry.etaMinutes) : countdown)
     : '—'
-  const counterSize = value.length > 6
+  const counterSize = refreshStatus
+    ? 'text-sm leading-5 whitespace-normal'
+    : value.length > 6
     ? 'text-2xl'
     : value.length > 5 ? 'text-3xl' : 'text-4xl'
   const color = arrived
@@ -169,9 +184,18 @@ export function TurnView({
             {titles[phase]}
           </h1>
           <p className="text-base leading-6 text-gray-500">
-            {active && !called && waitMs === 0 ? es ? 'Estimación alcanzada; pendiente de llamada' : 'Estimate reached; waiting for staff to call' : descriptions[phase]}
+            {active && !called && waitMs === 0
+              ? adaptive
+                ? es
+                  ? 'Seguimos buscando tu turno; aún no te lo hemos asignado.'
+                  : 'We are still finding your turn; it has not been assigned yet.'
+                : es
+                  ? 'Estimación alcanzada; pendiente de llamada'
+                  : 'Estimate reached; waiting for staff to call'
+              : descriptions[phase]}
           </p>
         </div>
+
         {!expired && !cancelled && (
           <Stepper
             value={step}
@@ -283,11 +307,11 @@ export function TurnView({
             ) : (
               <div className="relative text-center">
                 <p
-                  className={`tabular-nums whitespace-nowrap leading-10 ${counterSize} ${
+                  className={`${refreshStatus ? 'max-w-28' : 'tabular-nums whitespace-nowrap leading-10'} ${counterSize} ${
                     active && !called ? 'text-black' : ''
                   }`}
                   style={
-                    value.length > 8
+                    !refreshStatus && value.length > 8
                       ? { fontSize: `${128 / (value.length * 0.65)}px` }
                       : undefined
                   }
@@ -305,6 +329,8 @@ export function TurnView({
                     ) : (
                       'minutes to arrive'
                     )
+                  ) : forecastExhausted ? (
+                    es ? 'esperando actualización' : 'waiting for update'
                   ) : known ? (
                     <>
                       {waitMs == null ? es ? 'minutos' : 'minutes' : units}
@@ -391,31 +417,46 @@ export function TurnView({
               : 'Checking your turn status…'}
           </p>
         )}
-        {yielded && (phase === 'waiting' || approaching) && (
-          <Alert role="status" className="mt-auto gap-y-1 border-green-600 px-4 py-3 font-sans leading-5 has-[>svg]:gap-x-3">
-            <CircleCheck aria-hidden="true" className="size-4 text-green-600!" />
-            <AlertTitle>{es ? 'Has pasado turno' : 'You have yielded your turn'}</AlertTitle>
-            <AlertDescription className="leading-5">{es ? 'Consulta tu posición y tiempo de espera actualizados.' : 'Check your updated position and waiting time.'}</AlertDescription>
-          </Alert>
+        {(active && !called && adaptive && entry.delay ||
+          yielded && (phase === 'waiting' || approaching) ||
+          joined && !yielded && phase === 'waiting') && (
+          <div className="mt-auto flex flex-col gap-4">
+            {active && !called && adaptive && entry.delay && (
+              <Alert role="status" className="gap-y-1 border-amber-500 px-4 py-3 font-sans leading-5 has-[>svg]:gap-x-3">
+                <Timer aria-hidden="true" className="size-4 text-amber-600!" />
+                <AlertTitle>{es ? 'La espera se ha prolongado' : 'The wait is taking longer'}</AlertTitle>
+                <AlertDescription className="leading-5">
+                  {delayDescription(entry.delay.reason, es)}
+                </AlertDescription>
+              </Alert>
+            )}
+            {yielded && (phase === 'waiting' || approaching) && (
+              <Alert role="status" className="gap-y-1 border-green-600 px-4 py-3 font-sans leading-5 has-[>svg]:gap-x-3">
+                <CircleCheck aria-hidden="true" className="size-4 text-green-600!" />
+                <AlertTitle>{es ? 'Has pasado turno' : 'You have yielded your turn'}</AlertTitle>
+                <AlertDescription className="leading-5">{es ? 'Consulta tu posición y tiempo de espera actualizados.' : 'Check your updated position and waiting time.'}</AlertDescription>
+              </Alert>
+            )}
+            {joined && !yielded && phase === 'waiting' && (
+              <div
+                role="status"
+                className="flex gap-3 rounded-lg border border-green-600 p-4 text-sm"
+              >
+                <CircleCheck className="size-4 shrink-0 text-green-600" />
+                <div>
+                  <p className="font-medium text-foreground">
+                    {es
+                      ? '¡Ya estás en lista de espera!'
+                      : 'You are on the waiting list!'}
+                  </p>
+                  <p className="mt-1 text-muted-foreground">
+                    {es
+                      ? 'Guarda este enlace privado para consultar tu turno.'
+                      : 'Save this private link to check your turn.'}
+                  </p>
+                </div>
+          </div>
         )}
-        {joined && !yielded && phase === 'waiting' && (
-          <div
-            role="status"
-            className="mt-auto flex gap-3 rounded-lg border border-green-600 p-4 text-sm"
-          >
-            <CircleCheck className="size-4 shrink-0 text-green-600" />
-            <div>
-              <p className="font-medium text-foreground">
-                {es
-                  ? '¡Ya estás en lista de espera!'
-                  : 'You are on the waiting list!'}
-              </p>
-              <p className="mt-1 text-muted-foreground">
-                {es
-                  ? 'Guarda este enlace privado para consultar tu turno.'
-                  : 'Save this private link to check your turn.'}
-              </p>
-            </div>
           </div>
         )}
       </div>
@@ -458,4 +499,37 @@ export function TurnView({
       )}
     </>
   )
+}
+
+function knownEstimate(entry: Entry) {
+  return (
+    ['estimated', 'provisional'].includes(entry.estimateQuality ?? '') &&
+    Number.isFinite(entry.etaMinutes) &&
+    entry.etaMinutes >= 0
+  )
+}
+
+function delayDescription(
+  reason: NonNullable<Entry['delay']>['reason'],
+  spanish: boolean,
+) {
+  const copy = {
+    safety: {
+      es: 'Seguimos esperando a que te asignen un turno. Hemos actualizado el tiempo estimado y puede volver a ajustarse.',
+      en: 'We are still waiting for your turn to be assigned. We updated the estimated wait, and it may change again.',
+    },
+    resources: {
+      es: 'La disponibilidad de mesas o recursos está cambiando; actualizaremos tu estimación con esa información.',
+      en: 'Table or resource availability is changing; we will update your estimate with that information.',
+    },
+    cadence: {
+      es: 'Estamos ajustando la estimación al ritmo actual de asignación de turnos.',
+      en: 'We are adjusting the estimate to the current pace of turn assignments.',
+    },
+    configuration: {
+      es: 'La configuración del servicio ha cambiado; hemos recalculado tu estimación.',
+      en: 'The service configuration changed; we recalculated your estimate.',
+    },
+  } as const
+  return spanish ? copy[reason].es : copy[reason].en
 }

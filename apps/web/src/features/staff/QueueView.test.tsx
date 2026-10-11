@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 import { useState } from 'react'
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -11,6 +12,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import type { QueueSummary, StaffEntry } from '@noqueue/contracts/staff'
 import { QueueView } from './QueueView'
 afterEach(cleanup)
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 const queue: QueueSummary = {
   id: 'q',
   name: 'Recepción',
@@ -67,6 +69,40 @@ function Harness({ canOperate = true, action = vi.fn() }) {
     />
   )
 }
+
+it('ticks all rows every second and resyncs absolute deadlines on visibility and connection changes', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(0)
+  const intervals = vi.spyOn(globalThis, 'setInterval')
+  const clear = vi.spyOn(globalThis, 'clearInterval')
+  const onRefresh = vi.fn()
+  const { unmount } = render(<QueueView queue={queue} entries={[
+    { ...entries[0]!, waitEstimate: { predictedAt: 60000, estimateQuality: 'estimated' } },
+    { ...entries[1]!, arrivalDeadlineAt: 45000 },
+  ]} tab="active" onTabChange={vi.fn()} canOperate={false} busy={false}
+    lastSync="" error="" onRefresh={onRefresh} onAction={vi.fn()} />)
+  expect(screen.getByText('1:00')).toBeVisible()
+  expect(screen.getByText('0:45')).toBeVisible()
+  act(() => { vi.advanceTimersByTime(1000) })
+  expect(screen.getByText('0:59')).toBeVisible()
+  expect(screen.getByText('0:44')).toBeVisible()
+  vi.setSystemTime(59999)
+  fireEvent(document, new Event('visibilitychange'))
+  expect(screen.getByText('0:01')).toBeVisible()
+  vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+  vi.setSystemTime(60000)
+  fireEvent(window, new Event('offline'))
+  expect(screen.getByText('Sin conexión')).toBeVisible()
+  vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+  fireEvent(window, new Event('online'))
+  expect(screen.getByText('Actualizando…')).toBeVisible()
+  expect(onRefresh).not.toHaveBeenCalled()
+  const tickIndex = intervals.mock.calls.findIndex((args) => args[1] === 1000)
+  expect(tickIndex).toBeGreaterThanOrEqual(0)
+  const tick = intervals.mock.results[tickIndex]!.value
+  unmount()
+  expect(clear).toHaveBeenCalledWith(tick)
+})
 it('separates active, completed and cancelled histories using accessible tabs', () => {
   render(<Harness />)
   // The drawer header already shows the service name; the queue body starts at tabs.
@@ -86,7 +122,7 @@ it('separates active, completed and cancelled histories using accessible tabs', 
     }),
   ).toBeVisible()
   expect(within(activePanel).getAllByRole('listitem')).toHaveLength(2)
-  expect(screen.getByText('2 min')).toHaveAttribute(
+  expect(screen.getByTitle('Tiempo restante para llegar')).toHaveAttribute(
     'title',
     'Tiempo restante para llegar',
   )

@@ -1,3 +1,4 @@
+// Explicit v1 fixtures retain rollback regressions; default v2 is covered by adaptive-estimator.test.ts.
 import { env } from 'cloudflare:workers'
 import { afterEach, expect, it, vi } from 'vitest'
 import { loadQueueState, recalculateQueue, commitQueueTransition } from './projection'
@@ -12,7 +13,7 @@ async function fixture(type: 'reception' | 'restaurant' = 'reception', count = 3
   await env.DB.prepare("INSERT INTO user(id,name,email,createdAt,updatedAt,role) VALUES (?,'Test',?,datetime('now'),datetime('now'),'user')").bind(actor, `${actor}@test.invalid`).run()
   await env.DB.prepare("INSERT OR IGNORE INTO tenant_account(organization_id,created_by,status) VALUES ('demo-org',?,'active')").bind(actor).run()
   const config = {
-    name: 'Minimum estimate', type, capacity: 99, averageMinutes: 4,
+    name: 'Minimum estimate', estimatorVersion: 1 as const, type, capacity: 99, averageMinutes: 4,
     graceMinutes: 5, cutoffMinutes: 0, twentyFourHours: true, schedules: [],
     receptionServices: ['other' as const], stations: 3,
     estimationMode: 'active' as const, resourceStateKnown: true,

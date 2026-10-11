@@ -40,6 +40,22 @@ function CustomerTurnContent({
     phase: NonNullable<ReturnType<typeof parse>['customer']>['phase'] | null
   } | null>(null)
   const [now, setNow] = useState(() => Date.now())
+  const [online, setOnline] = useState(() =>
+    typeof navigator === 'undefined' ? true : navigator.onLine,
+  )
+  useEffect(() => {
+    const becameOffline = () => setOnline(false)
+    const becameOnline = () => {
+      setOnline(true)
+      void refresh()
+    }
+    window.addEventListener('offline', becameOffline)
+    window.addEventListener('online', becameOnline)
+    return () => {
+      window.removeEventListener('offline', becameOffline)
+      window.removeEventListener('online', becameOnline)
+    }
+  }, [refresh])
   useEffect(() => {
     if (!recoveryToken || !/^[a-f0-9]{64}$/.test(recoveryToken)) return
     const params = new URLSearchParams(location.search)
@@ -149,6 +165,7 @@ function CustomerTurnContent({
           locale={locale}
           updatedAt={updatedAt!}
           now={c.serverNow + Math.max(0, now - updatedAt!)}
+          online={online}
           joined={!!location.state?.joined}
           yielded={
             yieldConfirmation?.version === c.version &&

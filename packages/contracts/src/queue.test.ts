@@ -171,3 +171,42 @@ it('preserves an optional nullable positive integer initial ETA baseline', async
       false,
     )
 })
+
+it('parses optional adaptive-estimation and delay metadata without changing legacy entries', async () => {
+  const { entrySchema } = await import('./queue')
+  const base = {
+    code: 'ABC',
+    position: 1,
+    etaMinutes: 4,
+    status: 'waiting',
+    notification: 'disabled',
+  }
+  expect(entrySchema.parse(base)).not.toHaveProperty('estimatorVersion')
+  expect(
+    entrySchema.parse({
+      ...base,
+      estimatorVersion: 2,
+      estimationRevision: 3,
+      safetyReviewAt: 12_000,
+      delay: {
+        reason: 'safety',
+        since: 10_000,
+        previousPredictedAt: 11_000,
+      },
+    }),
+  ).toMatchObject({
+    estimatorVersion: 2,
+    estimationRevision: 3,
+    safetyReviewAt: 12_000,
+    delay: { reason: 'safety', since: 10_000, previousPredictedAt: 11_000 },
+  })
+  expect(
+    entrySchema.parse({ ...base, estimatorVersion: 1, delay: null }),
+  ).toMatchObject({ estimatorVersion: 1, delay: null })
+  for (const input of [
+    { estimatorVersion: 3 },
+    { estimationRevision: -1 },
+    { delay: { reason: 'unknown', since: 1, previousPredictedAt: 2 } },
+  ])
+    expect(entrySchema.safeParse({ ...base, ...input }).success).toBe(false)
+})

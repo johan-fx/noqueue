@@ -1065,7 +1065,8 @@ it('supplies provisional customer waits while staff retains honest unknown opera
   })
   const { readEntry } = await import('./features/queue/entries')
   const token = (joined.body as { recoveryToken: string }).recoveryToken
-  expect(await readEntry(env, token)).toMatchObject({
+  const customer = await readEntry(env, token)
+  expect(customer).toMatchObject({
     position: 1,
     etaMinutes: 30,
     predictedAt: expect.any(Number),
@@ -1080,6 +1081,10 @@ it('supplies provisional customer waits while staff retains honest unknown opera
     etaMinutes: 0,
     predictedAt: null,
     estimateQuality: 'unknown',
+    waitEstimate: {
+      predictedAt: customer!.predictedAt,
+      estimateQuality: customer!.estimateQuality,
+    },
   })
 })
 
@@ -1276,8 +1281,8 @@ it('evaluates actual call against the immutable first forecast, not call-time re
   )
     .bind(id)
     .first<{ predicted_at: number; error_minutes: number }>()
-  expect(evidence?.predicted_at).toBe(forecastAt)
-  expect(evidence?.error_minutes).toBeGreaterThanOrEqual(10)
+  expect(evidence?.predicted_at).toBe(forecastAt + 20 * 60000)
+  expect(evidence?.error_minutes).toBeLessThan(0)
 })
 it('blocks a free group until adjustment expiry without blocking another space', async () => {
   const until = Date.now() + 10 * 60000

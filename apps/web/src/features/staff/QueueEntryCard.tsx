@@ -23,6 +23,7 @@ import type {
 } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { formatCountdown } from '@/lib/countdown'
 import assignmentCheck from '@/assets/queue-actions/queue-assignment-check.svg'
 import {
   queueActionLabels,
@@ -42,6 +43,7 @@ export function QueueEntryCard({
   entry,
   queue,
   now,
+  online = true,
   position,
   canOperate,
   busy,
@@ -52,6 +54,7 @@ export function QueueEntryCard({
   entry: StaffEntry
   queue: QueueSummary
   now: number
+  online?: boolean
   position: number
   canOperate: boolean
   busy: boolean
@@ -59,6 +62,20 @@ export function QueueEntryCard({
   onReveal: (direction: 'left' | 'right' | 'all' | null) => void
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
+  const wait = entry.waitEstimate
+  const waitRemaining = wait?.predictedAt != null &&
+    Number.isFinite(wait.predictedAt) &&
+    ['estimated', 'provisional'].includes(wait.estimateQuality)
+      ? wait.predictedAt - now
+      : null
+  const waitLabel = waitRemaining == null
+    ? null
+    : waitRemaining <= 0
+      ? online ? 'Actualizando…' : 'Sin conexión'
+      : formatCountdown(waitRemaining)
+  const waitTitle = wait?.estimateQuality === 'provisional'
+    ? 'Espera provisional'
+    : 'Espera estimada'
   const actions =
     entry.allowedActions ?? entryActions(entry.status, queue.config.type)
   const operable = canOperate && !busy && actions.length > 0
@@ -335,21 +352,16 @@ export function QueueEntryCard({
               </span>
             )}
             {entry.status === 'waiting' &&
-              entry.estimateQuality &&
-              (entry.estimateQuality === 'unknown' ? (
+              (waitLabel == null ? (
                 <span>Espera pendiente de datos</span>
               ) : (
                 <Badge
-                  className="ml-auto border-0 bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-300"
-                  title={
-                    entry.estimateQuality === 'provisional'
-                      ? 'Espera provisional'
-                      : 'Espera estimada'
-                  }
+                  className="ml-auto border-0 bg-orange-100 text-orange-700 tabular-nums dark:bg-orange-950 dark:text-orange-300"
+                  title={waitTitle}
+                  aria-label={`${waitTitle}: ${waitLabel}`}
                 >
                   <Clock className="size-3" aria-hidden="true" />
-                  {entry.estimateQuality === 'provisional' ? '~' : ''}
-                  {entry.etaMinutes} min
+                  {waitLabel}
                 </Badge>
               ))}
             {entry.status !== 'waiting' && (
@@ -369,13 +381,10 @@ export function QueueEntryCard({
               </span>
             )}
             {entry.status === 'called' && entry.arrivalDeadlineAt != null && (
-              <Badge variant="secondary" title="Tiempo restante para llegar">
+              <Badge variant="secondary" className="tabular-nums" title="Tiempo restante para llegar"
+                aria-label={`Tiempo restante para llegar: ${formatCountdown(entry.arrivalDeadlineAt - now)}`}>
                 <Clock className="size-3" aria-hidden="true" />
-                {Math.max(
-                  0,
-                  Math.ceil((entry.arrivalDeadlineAt! - now) / 60000),
-                )}{' '}
-                min
+                {formatCountdown(entry.arrivalDeadlineAt - now)}
               </Badge>
             )}
           </div>

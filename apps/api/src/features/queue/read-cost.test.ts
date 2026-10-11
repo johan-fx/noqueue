@@ -1,3 +1,4 @@
+import { learnedOccupancyMinutes } from './adaptive-model'
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
 import { loadQueueState, refreshQueue } from './projection'
@@ -88,8 +89,8 @@ it('bounds allocation history rows_read to 30 valid samples per configured group
     })
   }
   expect(measurements).toEqual([
-    { history: 100, statements: 5, allocationRowsRead: 121 },
-    { history: 1000, statements: 5, allocationRowsRead: 121 },
+    { history: 100, statements: 8, allocationRowsRead: 121 },
+    { history: 1000, statements: 8, allocationRowsRead: 121 },
   ])
 })
 it('coalesces projection writes within 5 seconds but repairs missing projections and expires before the gate', async () => {
@@ -193,7 +194,7 @@ it('includes a just-released valid duration in the last-30 weighted samples inst
   const { id } = await fixture(100),
     now = 1_900_000_000_000
   const before = await loadQueueState(env, id, now)
-  expect(before.resources[0]?.averageMinutes).toBe(4)
+  expect(before.resources[0]?.occupancyMinutes).toBe(2)
   const after = await loadQueueState(env, id, now, {
     allocations: [
       {
@@ -209,7 +210,7 @@ it('includes a just-released valid duration in the last-30 weighted samples inst
       ...before.allocations,
     ],
   })
-  expect(after.resources[0]?.averageMinutes).toBe(7)
+  expect(after.resources[0]?.occupancyMinutes).toBe(learnedOccupancyMinutes([...Array(29).fill(2),60]))
 })
 it('plans a new provisional call with the same 11-call bound as the persisted query without mutating before-state cadence', async () => {
   const { id } = await fixture(1),

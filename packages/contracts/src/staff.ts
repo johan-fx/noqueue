@@ -209,6 +209,8 @@ export function pruneScheduleReminders<
 const serviceBaseSchema = z.object({
   name,
   type: z.enum(['restaurant', 'reception', 'pool']),
+  // V2 is the intelligent default; explicit v1 remains available for rollback.
+  estimatorVersion: z.union([z.literal(1), z.literal(2)]).default(2),
   capacity: z.number().int().min(1).max(10000),
   averageMinutes: z.number().int().min(1).max(1440),
   approachTurns: z.number().int().min(0).max(100).optional(),
@@ -406,7 +408,9 @@ export const serviceSchema = z
       seenSeats.add(item.seats)
     }
   })
-export type ServiceInput = z.infer<typeof serviceSchema>
+// Keep input callers source-compatible with older saved/request records that
+// omit estimatorVersion; parsing supplies the intelligent v2 default.
+export type ServiceInput = z.input<typeof serviceSchema>
 /** New clients write groups only; legacy records are converted without rewriting storage on read. */
 export type GroupedServiceInput = Extract<
   ServiceInput,
@@ -471,7 +475,7 @@ export const provisionSchema = z.object({
   ownerPassword: passwordSchema,
   services: z.array(serviceSchema).min(1).max(10),
 })
-export type ProvisionInput = z.infer<typeof provisionSchema>
+export type ProvisionInput = z.input<typeof provisionSchema>
 export const inviteSchema = z.object({
   name,
   username: usernameSchema,
@@ -591,6 +595,11 @@ export type StaffEntry = {
   etaMinutes?: number
   predictedAt?: number | null
   estimateQuality?: 'estimated' | 'provisional' | 'unknown'
+  /** Customer-visible wait, independent of operational availability above. */
+  waitEstimate?: {
+    predictedAt: number | null
+    estimateQuality: 'estimated' | 'provisional' | 'unknown'
+  }
   resourceId?: string | null
   callable?: boolean
 }

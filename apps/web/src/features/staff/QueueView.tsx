@@ -57,9 +57,24 @@ export function QueueView({
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
   const [now, setNow] = useState(Date.now)
+  const [online, setOnline] = useState(() => navigator.onLine)
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 30000)
-    return () => clearInterval(timer)
+    const sync = () => {
+      setNow(Date.now())
+      setOnline(navigator.onLine)
+    }
+    const timer = setInterval(sync, 1000)
+    document.addEventListener('visibilitychange', sync)
+    window.addEventListener('focus', sync)
+    window.addEventListener('online', sync)
+    window.addEventListener('offline', sync)
+    return () => {
+      clearInterval(timer)
+      document.removeEventListener('visibilitychange', sync)
+      window.removeEventListener('focus', sync)
+      window.removeEventListener('online', sync)
+      window.removeEventListener('offline', sync)
+    }
   }, [])
   const [reveal, setReveal] = useState<{
     queueId: string
@@ -223,6 +238,7 @@ export function QueueView({
                 {rows.map((entry) => (
                   <QueueEntryCard
                     now={now}
+                    online={online}
                     key={`${scope}:${entry.id}`}
                     queue={queue}
                     entry={entry}

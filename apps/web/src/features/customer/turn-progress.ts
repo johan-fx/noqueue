@@ -19,6 +19,17 @@ export function turnProgress(entry: Entry, now: number): number | null {
   const customer = entry.customer
   if (!customer || customer.phase === 'cancelled') return null
   if (customer.phase === 'arrived' || customer.phase === 'expired') return 1
+  // V2's exhausted prediction means “refreshing the estimate,” not “the
+  // customer has completed the wait.” Never turn the safety gap into 100%.
+  if (
+    entry.estimatorVersion === 2 &&
+    ['waiting', 'approaching'].includes(customer.phase) &&
+    entry.predictedAt != null &&
+    Number.isFinite(entry.predictedAt) &&
+    Number.isFinite(now) &&
+    entry.predictedAt <= now
+  )
+    return null
   let remaining: number
   if (customer.phase === 'called') {
     if (

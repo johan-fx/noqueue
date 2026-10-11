@@ -174,3 +174,58 @@ it('hides the legacy turn threshold while preserving it in the saved options', (
     expect.objectContaining({ approachTurns: 8, approachMinutes: 12 }),
   )
 })
+
+it('uses learned cadence defaults without an estimator opt-in and preserves explicit rollback v1', () => {
+  const confirm = vi.fn()
+  render(
+    <QueueConfigForm
+      spaces={[
+        {
+          id: 'terrace',
+          name: 'Terraza',
+          tables: 1,
+          tableTypes: [{ seats: 4, count: 1, averageMinutes: 25 }],
+        },
+      ]}
+      averageMinutes={12}
+      saved={undefined}
+      onConfirm={confirm}
+    />,
+  )
+  expect(
+    screen.queryByRole('combobox', { name: 'Versión del estimador' }),
+  ).not.toBeInTheDocument()
+  expect(screen.getByText(/ajusta automáticamente estas estimaciones/)).toBeVisible()
+  fireEvent.click(screen.getByRole('tab', { name: 'Terraza' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Mesas de 4' }))
+  expect(
+    screen.getByLabelText('Intervalo inicial estimado entre turnos (min)'),
+  ).toHaveValue(25)
+  fireEvent.submit(document.getElementById('queue-config')!)
+  expect(confirm).toHaveBeenCalledWith(
+    expect.arrayContaining([
+      expect.objectContaining({
+        tableTypes: [expect.objectContaining({ averageMinutes: 25 })],
+      }),
+    ]),
+    expect.objectContaining({ estimatorVersion: 2 }),
+  )
+
+  cleanup()
+  const rollbackConfirm = vi.fn()
+  render(
+    <QueueConfigForm
+      spaces={[]}
+      averageMinutes={12}
+      saved={undefined}
+      options={{ estimatorVersion: 1 }}
+      onConfirm={rollbackConfirm}
+      type="pool"
+    />,
+  )
+  fireEvent.submit(document.getElementById('queue-config')!)
+  expect(rollbackConfirm).toHaveBeenCalledWith(
+    [],
+    expect.objectContaining({ estimatorVersion: 1 }),
+  )
+})

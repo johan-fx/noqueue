@@ -37,13 +37,63 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     try {
       return await work()
     } finally {
+      const now = Date.now()
       const next = await this.env.DB.prepare(
-        "WITH checkpoint AS (SELECT MIN(p.updated_at) AS updated_at FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND e.status='waiting') SELECT MIN(deadline) AS deadline FROM (SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called' UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting' UNION ALL SELECT CAST(json_extract(a.value,'$.expiresAt') AS INTEGER) AS deadline FROM queue q,json_each(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.adjustments') a WHERE q.id=? AND CAST(json_extract(a.value,'$.expiresAt') AS INTEGER)>COALESCE((SELECT updated_at FROM checkpoint),?))",
+        `WITH checkpoint AS (
+          SELECT MIN(p.updated_at) AS updated_at FROM queue_entry e
+          JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=? AND e.status='waiting'
+        ), adaptive AS (
+          SELECT MIN(deadline) AS deadline FROM (
+            SELECT a.safety_review_at AS deadline
+              FROM queue_entry e
+              JOIN queue_projection p ON p.entry_id=e.id AND p.estimator_version=2
+              JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.safety_review_at IS NOT NULL
+              JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
+              WHERE e.queue_id=? AND e.status='waiting'
+            UNION ALL SELECT a.predicted_at - CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.approachMinutes'),10)*60000 AS INTEGER) AS deadline
+              FROM queue_entry e
+              JOIN queue q ON q.id=e.queue_id
+              JOIN queue_projection p ON p.entry_id=e.id AND p.estimator_version=2
+              JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.approach_armed=1
+              JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
+              WHERE e.queue_id=? AND e.status='waiting'
+                AND a.predicted_at - CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.approachMinutes'),10)*60000 AS INTEGER)>?
+            UNION ALL SELECT n.last_correction_accepted_at + CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.notificationCooldownMinutes'),10)*60000 AS INTEGER) AS deadline
+              FROM queue_entry e
+              JOIN queue q ON q.id=e.queue_id
+              JOIN queue_projection p ON p.entry_id=e.id AND p.estimator_version=2
+              JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.correction_reason IS NOT NULL
+              JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
+              JOIN queue_notification_state n ON n.entry_id=e.id AND n.last_correction_accepted_at IS NOT NULL
+              WHERE e.queue_id=? AND e.status='waiting'
+                AND n.last_correction_accepted_at + CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.notificationCooldownMinutes'),10)*60000 AS INTEGER)>?
+          )
+        )
+        SELECT MIN(deadline) AS deadline FROM (
+          SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called'
+          UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting'
+          UNION ALL SELECT CAST(json_extract(a.value,'$.expiresAt') AS INTEGER) AS deadline
+            FROM queue q,json_each(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.adjustments') a
+            WHERE q.id=? AND CAST(json_extract(a.value,'$.expiresAt') AS INTEGER)>COALESCE((SELECT updated_at FROM checkpoint),?)
+          UNION ALL SELECT deadline FROM adaptive
+        )`,
       )
-        .bind(queueId, queueId, queueId, queueId, Date.now())
+        .bind(
+          queueId,
+          queueId,
+          queueId,
+          now,
+          queueId,
+          now,
+          queueId,
+          queueId,
+          queueId,
+          now,
+        )
         .first<{ deadline: number | null }>()
       if (next?.deadline != null)
-        await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, next.deadline))
+        await this.ctx.storage.setAlarm(Math.max(now + 1, next.deadline))
       else await this.ctx.storage.deleteAlarm()
     }
   }

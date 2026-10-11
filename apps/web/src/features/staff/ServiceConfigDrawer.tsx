@@ -75,6 +75,7 @@ export function ServiceConfigDrawer({
   const form = useForm<ServiceInput>({
     defaultValues: {
       ...toGroupedService(initial ?? emptyService),
+      estimatorVersion: initial?.estimatorVersion ?? 2,
       spaces: (initial?.spaces ?? emptyService.spaces).map((space, index) => ({
         ...space,
         id: space.id ?? `legacy-${index}`,
@@ -108,6 +109,7 @@ export function ServiceConfigDrawer({
     openedKey.current = resetKey
     form.reset({
       ...toGroupedService(initial ?? emptyService),
+      estimatorVersion: initial?.estimatorVersion ?? 2,
       spaces: (initial?.spaces ?? emptyService.spaces).map((space, index) => ({
         ...space,
         id: space.id ?? `legacy-${index}`,
@@ -291,6 +293,7 @@ export function ServiceConfigDrawer({
                 options={{
                   adjustments: form.getValues('adjustments'),
                   estimationMode: form.getValues('estimationMode'),
+                  estimatorVersion: form.getValues('estimatorVersion'),
                   resourceStateKnown: form.getValues('resourceStateKnown'),
                   stations: form.getValues('stations'),
                   graceMinutes: form.getValues('graceMinutes'),
@@ -315,6 +318,11 @@ export function ServiceConfigDrawer({
                   if (options) {
                     form.setValue('adjustments', options.adjustments)
                     form.setValue('estimationMode', options.estimationMode)
+                    form.setValue(
+                      'estimatorVersion',
+                      options.estimatorVersion ?? 2,
+                      { shouldDirty: true },
+                    )
                     form.setValue(
                       'resourceStateKnown',
                       options.resourceStateKnown,

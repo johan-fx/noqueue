@@ -5,7 +5,8 @@ if (!process.env.QUEUE_DEMO_DIR) throw new Error('Use pnpm demo:queue:all; demo 
 export default defineConfig({
   ...base,
   testDir: './demo',
-  timeout: 600_000,
+  testMatch: process.env.QUEUE_DEMO_ADAPTIVE ? '**/adaptive.spec.ts' : '**/queue-order.spec.ts',
+  timeout: process.env.QUEUE_DEMO_ADAPTIVE ? 1_200_000 : 600_000,
   retries: 0,
   workers: 1,
   fullyParallel: false,

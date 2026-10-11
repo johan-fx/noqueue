@@ -563,6 +563,10 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
           row.status === 'waiting'
             ? await readProjection(c.env, String(row.id))
             : null
+        const waitProjection =
+          row.status === 'waiting'
+            ? await readProjection(c.env, String(row.id), true)
+            : null
         const preferred =
           row.preferredSpaceId && row.preferredSpaceId !== 'fastest'
             ? String(row.preferredSpaceId)
@@ -577,6 +581,12 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
           ...entry,
           ...(cancellationReason ? { cancellationReason } : {}),
           ...projection,
+          ...(row.status === 'waiting' ? {
+            waitEstimate: {
+              predictedAt: waitProjection?.predictedAt ?? null,
+              estimateQuality: waitProjection?.estimateQuality ?? 'unknown',
+            },
+          } : {}),
           allowedActions: allowedEntryActions(
             config?.type ?? 'reception',
             String(row.status),

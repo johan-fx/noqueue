@@ -19,6 +19,7 @@ import {
 const defaultService: ServiceInput = {
   name: '',
   type: 'restaurant',
+  estimatorVersion: 2,
   capacity: 20,
   averageMinutes: 30,
   graceMinutes: 5,
@@ -144,7 +145,10 @@ export function ServiceForm({
           {(
             [
               ['capacity', 'Máximo de grupos/personas en espera'],
-              ['averageMinutes', 'Duración media (minutos)'],
+              [
+                'averageMinutes',
+                'Intervalo inicial estimado entre turnos (minutos)',
+              ],
               [
                 'cutoffMinutes',
                 'Cierre de inscripciones antes del cierre (minutos)',
@@ -162,6 +166,10 @@ export function ServiceForm({
             </Field>
           ))}
         </div>
+        <p className="text-sm text-muted-foreground">
+          El estimador aprende y ajusta este intervalo según el ritmo real de
+          asignación de turnos.
+        </p>
         <Field>
           <FieldLabel>Horario</FieldLabel>
           <Controller

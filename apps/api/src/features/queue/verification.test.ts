@@ -1,3 +1,4 @@
+// Explicit v1 fixtures retain rollback regressions; default v2 is covered by adaptive-estimator.test.ts.
 import { fixtureLocation } from '../../../test/location-fixture'
 declare const process: { env: Record<string, string | undefined> }
 import { record as check } from '../../../test/queue-evidence'
@@ -30,6 +31,7 @@ async function setup() {
     services: [
       {
         name: 'Restaurant',
+        estimatorVersion: 1 as const,
         type: 'restaurant',
         capacity: 99,
         averageMinutes: 30,

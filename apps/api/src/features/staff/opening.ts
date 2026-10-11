@@ -189,6 +189,8 @@ export async function runLifecycleCommand(
   // A verified legacy request is an alias, not a client-controlled inventory path.
   const statements: D1PreparedStatement[] = []
   const activates = ['declare_full', 'resume', 'open'].includes(input.action)
+  if (activates) after.demandActive = true
+  if (input.action === 'pause' || input.action === 'close') after.demandActive = false
   if (activates && (!context.serviceOpen || context.blockReason === 'cutoff'))
     throw new HTTPException(409, { message: 'outside_admission_hours' })
   if (

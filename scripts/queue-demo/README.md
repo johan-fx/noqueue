@@ -39,3 +39,40 @@ The existing isolated E2E worker uses ephemeral local storage and simulated Geoa
 Run `node --test scripts/queue-demo/*.test.mjs`, `pnpm --filter @noqueue/e2e check-types`, demo/normal collection checks, and the affected Chromium queue/customer/services/discovery regressions. Inspect representative full-resolution final frames for **every** chapter/action; do not describe that as continuous full-video review.
 
 Two cohesive uncommitted work units are possible: (1) service/chapter evidence plus pipeline and unit tests, (2) opt-in real browser journeys plus fixture/config/commands/docs. Rollback removes `scripts/queue-demo`, `tests/e2e/demo`, `tests/e2e/demo.config.ts`, and the `demo:queue:*` root scripts, or restores their prior versions. No production source, public API, normal-test behavior, credential, deployment, or remote operation belongs to this change.
+
+
+## Adaptive countdown: real wall-clock verification
+
+`pnpm demo:queue:adaptive` first records the three public countdowns (4/8/12),
+then runs four independent opt-in restaurant chapters:
+protection/re-approach/arrival, fast then slow assignments, offline recovery, and
+arrival expiration. Allow approximately 20 minutes plus encoding. The public baseline is recorded
+with `tests/e2e/baseline-demo.config.ts`; the remaining chapters use the adaptive
+selection in `tests/e2e/demo.config.ts`. The recording
+uses four-minute initial cadence, two-minute approach margin, and actual waits.
+Neither browser nor server time is mocked. Only FFmpeg accelerates wait interiors
+20× afterward; two seconds at the start and three at the end of each idle wait
+remain at 1×, as do the five-second confirmed moments and all staff actions.
+
+Use the existing FFmpeg binaries described above. Output includes `resumen.mp4`,
+`flujo-completo.mp4`, individual real-time/edited chapters, timestamped screenshots,
+per-second UI/API telemetry and read-only SQLite evidence from the isolated worker.
+No production files, APIs or real providers are changed. Setup/authentication is
+trimmed using per-camera calibration. Test failures retain recordings and are
+labelled as incidents, not falsely reported as passing. Review the final frames
+and the assertions in `delivery.json` before sharing.
+
+For composition without re-running the real wait:
+`node scripts/queue-demo/adaptive-video.mjs compose /absolute/run/directory`.
+Production/contract/migration fingerprints must still match the recording.
+The exact recording-test sources are archived and hash-verified separately, so
+a later selector repair cannot rewrite the evidence from an earlier attempt.
+Raw metadata contains local recovery tokens: share only reviewed MP4s and a
+sanitized report. The standard three-service demos and default E2E suite exclude
+these long-running tests.
+
+The October 11 recording found a brief offline `0:00` caused by flooring positive
+subsecond remaining time. The product is intentionally unchanged in this video
+verification task. The harness now checks waiting-clock zero samples and preserves
+any discovered discrepancy at normal playback speed; see the browser video report.
+A failed acceptance check must not be relabelled as a successful product test.

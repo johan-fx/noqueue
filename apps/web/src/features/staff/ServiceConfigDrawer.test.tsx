@@ -50,7 +50,7 @@ describe('service configuration wizard', () => {
     expect(screen.getByText('Espacio 1')).toBeVisible()
     await next()
     fireEvent.change(
-      screen.getByLabelText('Tiempo medio del cliente en mesa'),
+      screen.getByLabelText('Intervalo inicial estimado entre turnos'),
       {
         target: { value: '45' },
       },
@@ -157,7 +157,9 @@ describe('service configuration wizard', () => {
     fireEvent.click(within(advanced).getByRole('button', { name: 'Confirmar' }))
     await next()
     await next()
-    expect(screen.getByText('Interior · 2 plazas: 50 min')).toBeVisible()
+    expect(
+      screen.getByText('Interior · 2 plazas · intervalo inicial entre turnos: 50 min'),
+    ).toBeVisible()
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
     await waitFor(() =>
       expect(onSave).toHaveBeenCalledWith(
@@ -286,6 +288,88 @@ it('labels pool queue capacity in people rather than turns', async () => {
   expect(
     screen.queryByLabelText('Nº máximo de turnos en lista'),
   ).not.toBeInTheDocument()
+})
+
+it('preserves the saved estimator version through the wizard save path', async () => {
+  const onSave = vi.fn()
+  render(
+    <ServiceConfigDrawer
+      open
+      mode="edit"
+      initial={{ ...emptyService, name: 'Adaptive', estimatorVersion: 2 }}
+      onClose={vi.fn()}
+      onSave={onSave}
+    />,
+  )
+  await next()
+  await next()
+  await next()
+  await next()
+  expect(screen.getByText(/Intervalo inicial estimado entre turnos/)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() =>
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatorVersion: 2 }),
+    ),
+  )
+})
+
+it('defaults an absent estimator version to adaptive v2 through the service form', async () => {
+  const onSave = vi.fn()
+  const legacyLikeService = { ...emptyService }
+  delete legacyLikeService.estimatorVersion
+  render(
+    <ServiceConfigDrawer
+      open
+      mode="edit"
+      initial={{ ...legacyLikeService, name: 'Table service' }}
+      onClose={vi.fn()}
+      onSave={onSave}
+    />,
+  )
+  await next()
+  await next()
+  fireEvent.click(screen.getByRole('button', { name: 'Configuración avanzada' }))
+  expect(screen.queryByLabelText('Versión del estimador')).not.toBeInTheDocument()
+  expect(screen.getByText(/ajusta automáticamente estas estimaciones/)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+  expect(
+    screen.getByLabelText('Intervalo inicial estimado entre turnos'),
+  ).toBeVisible()
+  await next()
+  await next()
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() =>
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatorVersion: 2 }),
+    ),
+  )
+})
+
+it('preserves explicit technical rollback v1 when saving advanced service configuration', async () => {
+  const onSave = vi.fn()
+  render(
+    <ServiceConfigDrawer
+      open
+      mode="edit"
+      initial={{ ...emptyService, name: 'Legacy rollback', estimatorVersion: 1 }}
+      onClose={vi.fn()}
+      onSave={onSave}
+    />,
+  )
+  await next()
+  await next()
+  fireEvent.click(screen.getByRole('button', { name: 'Configuración avanzada' }))
+  expect(screen.queryByLabelText('Versión del estimador')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+  await next()
+  await next()
+  fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() =>
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ estimatorVersion: 1 }),
+    ),
+  )
 })
 it('a lost or expired location confirmation disables only final save without losing wizard data', async () => {
   const onSave = vi.fn(),

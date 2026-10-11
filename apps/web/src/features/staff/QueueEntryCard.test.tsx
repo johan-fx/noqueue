@@ -45,6 +45,49 @@ const props: ComponentProps<typeof QueueEntryCard> = {
   onReveal: vi.fn(),
   onAction: vi.fn(),
 }
+
+it('counts down the public wait, not zero operational availability, and accepts revisions', () => {
+  const entry = { ...props.entry, etaMinutes: 0, predictedAt: 0,
+    waitEstimate: { predictedAt: 60000, estimateQuality: 'provisional' as const } }
+  const { rerender } = render(<QueueEntryCard {...props} entry={entry} />)
+  expect(screen.getByLabelText('Espera provisional: 1:00')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={entry} now={1000} />)
+  expect(screen.getByText('0:59')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={entry} now={59999} />)
+  expect(screen.getByText('0:01')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={entry} now={60000} />)
+  expect(screen.getByText('Actualizando…')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={entry} now={60000} online={false} />)
+  expect(screen.getByText('Sin conexión')).toBeVisible()
+  entry.waitEstimate.predictedAt = 180000
+  rerender(<QueueEntryCard {...props} entry={entry} now={60000} />)
+  expect(screen.getByText('2:00')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+})
+
+it('does not manufacture seconds from legacy minutes or unknown estimates', () => {
+  const entry = { ...props.entry, etaMinutes: 4, predictedAt: 240000,
+    estimateQuality: 'estimated' as const }
+  const { rerender } = render(<QueueEntryCard {...props} entry={entry} />)
+  expect(screen.getByText('Espera pendiente de datos')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={{ ...entry,
+    waitEstimate: { predictedAt: 240000, estimateQuality: 'unknown' } }} />)
+  expect(screen.getByText('Espera pendiente de datos')).toBeVisible()
+})
+
+it('uses the arrival deadline once assigned and leaves expiration to the server', () => {
+  const entry = { ...props.entry, status: 'called', arrivalDeadlineAt: 45000,
+    waitEstimate: { predictedAt: 240000, estimateQuality: 'provisional' as const } }
+  const { rerender } = render(<QueueEntryCard {...props} entry={entry} />)
+  expect(screen.getByLabelText('Tiempo restante para llegar: 0:45')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={entry} now={1000} />)
+  expect(screen.getByText('0:44')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={entry} now={46000} />)
+  expect(screen.getByText('0:00')).toBeVisible()
+  expect(screen.getByText('Pendiente de llegada')).toBeVisible()
+  rerender(<QueueEntryCard {...props} entry={{ ...entry, status: 'expired' }} />)
+  expect(screen.queryByTitle('Tiempo restante para llegar')).not.toBeInTheDocument()
+})
 it('keeps both trays mounted but inaccessible while closed', () => {
   const { container } = render(<QueueEntryCard {...props} />)
   expect(screen.getByText('Asignar turno').closest('[inert]')).not.toBeNull()

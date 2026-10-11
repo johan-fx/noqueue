@@ -644,6 +644,146 @@ it('keeps the zero countdown visible and arc indeterminate without a baseline', 
   expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
   expect(container.querySelector('circle[stroke="currentColor"]')).toBeNull()
 })
+it('shows an updating state instead of zero when a v2 forecast expires', () => {
+  const turn: Entry = {
+    ...entry('waiting'),
+    estimatorVersion: 2,
+    estimateQuality: 'provisional',
+    etaMinutes: 1,
+    initialEtaMinutes: 1,
+    predictedAt: 1000,
+  }
+  render(
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={2000}
+        updatedAt={1000}
+        online
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>,
+  )
+  expect(screen.getByText('Actualizando estimación')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+  expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+  expect(screen.getByText(/aún no te lo hemos asignado/)).toBeVisible()
+})
+
+it('uses the offline state for an exhausted v2 forecast and restores it online', () => {
+  const turn: Entry = {
+    ...entry('waiting'),
+    estimatorVersion: 2,
+    estimateQuality: 'estimated',
+    etaMinutes: 0,
+    predictedAt: 1000,
+  }
+  const view = (online: boolean) => (
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={2000}
+        updatedAt={1000}
+        online={online}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>
+  )
+  const { rerender } = render(view(false))
+  expect(screen.getByText('Sin conexión')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+  rerender(view(true))
+  expect(screen.getByText('Actualizando estimación')).toBeVisible()
+})
+
+it('keeps a v2 delay explanation until the server clears delay metadata', () => {
+  const turn: Entry = {
+    ...entry('waiting'),
+    estimatorVersion: 2,
+    delay: {
+      reason: 'safety',
+      since: 1000,
+      previousPredictedAt: 5000,
+    },
+  }
+  const view = () => (
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={2000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>
+  )
+  const { rerender } = render(view())
+  expect(screen.getByRole('status')).toHaveTextContent('La espera se ha prolongado')
+  expect(screen.getByRole('status')).toHaveTextContent('Hemos actualizado el tiempo estimado')
+  turn.delay = null
+  rerender(view())
+  expect(screen.queryByText('La espera se ha prolongado')).not.toBeInTheDocument()
+})
+
+it.each([false, true])('places delay after the clock and immediately before turn status (yielded=%s)', (yielded) => {
+  const turn: Entry = { ...entry('waiting'), estimatorVersion: 2,
+    delay: { reason: 'safety', since: 1000, previousPredictedAt: 5000 } }
+  const view = (joined: boolean) => <MemoryRouter><TurnView entry={turn}
+    locale="es" now={2000} updatedAt={1000} joined={joined} yielded={yielded}
+    onAction={vi.fn()} /></MemoryRouter>
+  const { rerender } = render(view(true))
+  const delay = screen.getByText('La espera se ha prolongado').closest('[role="status"]')!
+  const status = screen.getByText(yielded ? 'Has pasado turno' : '¡Ya estás en lista de espera!').closest('[role="status"]')!
+  expect(delay.nextElementSibling).toBe(status)
+  expect(screen.getByText(/Última actualización:/).compareDocumentPosition(delay) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  expect(delay.parentElement).toHaveClass('mt-auto')
+  rerender(view(false))
+  expect(screen.getByText('La espera se ha prolongado')).toBeVisible()
+})
+
+it.each([true, false])('does not show a premature waiting zero in the final millisecond (online=%s)', (online) => {
+  const turn: Entry = { ...entry('waiting'), estimatorVersion: 2,
+    estimateQuality: 'provisional', etaMinutes: 1, predictedAt: 1000 }
+  const view = (now: number) => <MemoryRouter><TurnView entry={turn}
+    locale="es" now={now} updatedAt={0} online={online} onAction={vi.fn()} /></MemoryRouter>
+  const { rerender } = render(view(999))
+  expect(screen.getByText('0:01')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+  rerender(view(1000))
+  expect(screen.getByText(online ? 'Actualizando estimación' : 'Sin conexión')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+})
+
+it('accepts revised v2 forecasts and keeps countdown timestamps authoritative', () => {
+  const turn: Entry = {
+    ...entry('waiting'),
+    estimatorVersion: 2,
+    estimateQuality: 'estimated',
+    etaMinutes: 1,
+    predictedAt: 61000,
+  }
+  const view = () => (
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="en"
+        now={1000}
+        updatedAt={1000}
+        onAction={vi.fn()}
+      />
+    </MemoryRouter>
+  )
+  const { rerender } = render(view())
+  expect(screen.getByText('1:00')).toBeVisible()
+  turn.predictedAt = 121000
+  turn.etaMinutes = 2
+  rerender(view())
+  expect(screen.getByText('2:00')).toBeVisible()
+  expect(screen.queryByText('0:00')).not.toBeInTheDocument()
+})
+
 it('explains elapsed provisional waiting without claiming a staff call', () => {
   const waiting = { ...entry('waiting'), etaMinutes: 0, predictedAt: Date.now() - 1000, estimateQuality: 'provisional' as const, initialEtaMinutes: 4 }
   render(<MemoryRouter><TurnView entry={waiting} locale="es" now={Date.now()} updatedAt={Date.now()} onAction={vi.fn()} /></MemoryRouter>)

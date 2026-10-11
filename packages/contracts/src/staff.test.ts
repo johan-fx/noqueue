@@ -53,6 +53,26 @@ describe('staff contracts', () => {
       serviceSchema.safeParse({ ...service, type: 'pool', spaces: [] }).success,
     ).toBe(true)
   })
+  it('defaults new and stored services to estimator v2 while preserving explicit rollback v1', () => {
+    expect(serviceSchema.parse(service)).toHaveProperty('estimatorVersion', 2)
+    expect(
+      serviceSchema.parse({ ...service, estimatorVersion: 1 }),
+    ).toHaveProperty('estimatorVersion', 1)
+    expect(
+      serviceSchema.parse({ ...service, estimatorVersion: 2 }),
+    ).toHaveProperty('estimatorVersion', 2)
+    expect(
+      serviceSchema.safeParse({ ...service, estimatorVersion: 3 }).success,
+    ).toBe(false)
+    expect(storedServiceSchema.parse(service)).toHaveProperty(
+      'estimatorVersion',
+      2,
+    )
+    expect(storedServiceSchema.parse({ ...service, estimatorVersion: 1 })).toHaveProperty(
+      'estimatorVersion',
+      1,
+    )
+  })
   it('defaults material ETA notice thresholds for stored services and validates overrides', () => {
     expect(storedServiceSchema.parse(service)).toMatchObject({
       graceMinutes: 5,

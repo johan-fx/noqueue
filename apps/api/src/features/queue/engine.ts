@@ -4,6 +4,8 @@ export type Resource = {
   spaceId: string
   seats: number
   averageMinutes: number
+  /** V2 separates observed occupancy from configured assignment cadence. */
+  occupancyMinutes?: number | null
   availableAt: number | null
   known: boolean
   callable?: boolean
@@ -115,7 +117,9 @@ export function projectQueue(
       const predictedAt = Math.max(now, slot.availableAt!)
       const callable = !!slot.callable && predictedAt <= now
       slot.callable = false
-      slot.availableAt = predictedAt + slot.averageMinutes * 60000
+      slot.availableAt = slot.occupancyMinutes === null
+        ? null
+        : predictedAt + (slot.occupancyMinutes ?? slot.averageMinutes) * 60000
       return {
         id: party.id,
         position: index + 1,

@@ -644,3 +644,9 @@ it('keeps the zero countdown visible and arc indeterminate without a baseline', 
   expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
   expect(container.querySelector('circle[stroke="currentColor"]')).toBeNull()
 })
+it('explains elapsed provisional waiting without claiming a staff call', () => {
+  const waiting = { ...entry('waiting'), etaMinutes: 0, predictedAt: Date.now() - 1000, estimateQuality: 'provisional' as const, initialEtaMinutes: 4 }
+  render(<MemoryRouter><TurnView entry={waiting} locale="es" now={Date.now()} updatedAt={Date.now()} onAction={vi.fn()} /></MemoryRouter>)
+  expect(screen.getByText('Estimación alcanzada; pendiente de llamada')).toBeVisible()
+  expect(screen.getByRole('heading')).not.toHaveTextContent('¡Es tu turno!')
+})

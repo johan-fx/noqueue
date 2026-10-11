@@ -546,7 +546,7 @@ it.each(['reception', 'pool'])(
   },
 )
 
-it('captures unknown-to-positive once and shares immutable progress across edits, yield and separate reads', async () => {
+it('captures the provisional initial customer ETA once across inventory changes, edits, yield and reads', async () => {
   const { recalculateQueue } = await import('./projection')
   const { readEntrySnapshot } = await import('./entries')
   const { queueId, entries } = await fixture()
@@ -554,7 +554,7 @@ it('captures unknown-to-positive once and shares immutable progress across edits
   const id = entries[2]!.id,
     token = entries[2]!.token
   await recalculateQueue(env, queueId, now)
-  expect((await readEntrySnapshot(env, token))?.initialEtaMinutes).toBeNull()
+  expect((await readEntrySnapshot(env, token))?.initialEtaMinutes).toBe(90)
   await env.DB.prepare(
     "UPDATE queue SET config=json_set(config,'$.resourceStateKnown',json('true')) WHERE id=?",
   )

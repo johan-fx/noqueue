@@ -99,6 +99,7 @@ export const publicSearchResultSchema = z.object({
   address: z.string(),
   open: z.boolean(),
   waitMinutes: z.number().int().nonnegative().nullable(),
+  averageWaitQuality: z.enum(['estimated', 'provisional', 'unknown']).optional(),
   distanceMeters: z.number().nonnegative().nullable(),
   attribution: z.array(attributionSchema),
 })

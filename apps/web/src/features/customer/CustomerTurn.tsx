@@ -8,6 +8,7 @@ import { CustomerCommandError } from './customer-command-error'
 import { TurnView } from './TurnView'
 import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => entrySchema.parse(value)
+const acceptEstimate = (next: ReturnType<typeof parse>, previous: ReturnType<typeof parse> | null) => !(next.status === 'waiting' && next.estimateQuality === 'unknown' && previous?.status === 'waiting' && previous.estimateQuality !== 'unknown')
 export function CustomerTurn() {
   const { recoveryToken } = useParams()
   return (
@@ -28,7 +29,7 @@ function CustomerTurnContent({
     updatedAt,
     error,
     refresh,
-  } = usePublicResource(`/api/v1/public/entries/${recoveryToken}`, parse, true)
+  } = usePublicResource(`/api/v1/public/entries/${recoveryToken}`, parse, true, 'same-origin', acceptEstimate)
   const [sheet, setSheet] = useState<{
     action: 'update' | 'cancel' | 'yield'
     returnFocus: HTMLElement | null
@@ -136,6 +137,7 @@ function CustomerTurnContent({
       setLocale={setLocale}
     >
       {error && <LoadError locale={locale} retry={() => void refresh()} />}
+      {error && entry && <p role="status" className="px-4 text-sm">{es ? 'Datos desactualizados. Se conserva la última estimación disponible.' : 'Information is outdated. Showing the last available estimate.'}</p>}
       {!entry && !error && (
         <p className="p-4" role="status">
           {es ? 'Cargando…' : 'Loading…'}

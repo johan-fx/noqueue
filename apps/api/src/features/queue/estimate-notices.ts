@@ -4,6 +4,9 @@ export type EstimateNoticeKind = 'delayed' | 'improved'
 export function evaluateEstimateNotice(input: {
   previousAcceptedOperationalDeltaMs: number | null
   currentOperationalDeltaMs: number
+  previousAcceptedMinimumAt?: number | null
+  currentMinimumAt?: number
+  currentOperationalPredictedAt?: number | null
   previousAcceptedAt: number | null
   currentPredictedAt: number | null
   quality: EstimateQuality
@@ -23,10 +26,26 @@ export function evaluateEstimateNotice(input: {
     cooldownMinutes,
     now,
   } = input
-  const operationalDelta =
+  const rawOperationalDelta =
     previousAcceptedOperationalDeltaMs === null
       ? NaN
       : currentOperationalDeltaMs - previousAcceptedOperationalDeltaMs
+  // Counterfactual uses the SAME current instant: clock drift is not causal work.
+  // Keep raw operational provenance and configured minimum evidence separate.
+  const operationalDelta =
+    input.currentMinimumAt === undefined
+      ? rawOperationalDelta
+      : input.previousAcceptedMinimumAt == null
+        ? NaN
+        : Math.max(
+          input.currentOperationalPredictedAt ?? -Infinity,
+          input.currentMinimumAt,
+        ) - Math.max(
+          input.currentOperationalPredictedAt == null
+            ? -Infinity
+            : input.currentOperationalPredictedAt - rawOperationalDelta,
+          input.previousAcceptedMinimumAt,
+        )
   const forecastDelta =
     currentPredictedAt === null || previousAcceptedAt === null
       ? NaN

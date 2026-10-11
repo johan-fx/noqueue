@@ -169,7 +169,7 @@ export function TurnView({
             {titles[phase]}
           </h1>
           <p className="text-base leading-6 text-gray-500">
-            {descriptions[phase]}
+            {active && !called && waitMs === 0 ? es ? 'Estimación alcanzada; pendiente de llamada' : 'Estimate reached; waiting for staff to call' : descriptions[phase]}
           </p>
         </div>
         {!expired && !cancelled && (
@@ -309,7 +309,7 @@ export function TurnView({
                     <>
                       {waitMs == null ? es ? 'minutos' : 'minutes' : units}
                       <br />
-                      {es ? 'aprox.' : 'approx.'}
+                          {entry.estimateQuality === 'provisional' ? es ? 'provisional' : 'provisional' : es ? 'aprox.' : 'approx.'}
                     </>
                   ) : es ? (
                     'Sin estimación'

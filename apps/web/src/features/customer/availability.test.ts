@@ -47,3 +47,6 @@ it('separates public service closure, direct access, pause, cutoff, capacity and
     'Servicio cerrado',
   )
 })
+it('labels configured fallback as provisional on public surfaces', () => {
+  expect(availabilityText({ serviceOpen: true, queueState: 'active', averageWaitQuality: 'provisional' }, 'es', 4)).toBe('Lista activa · 4 min · Estimación provisional')
+})

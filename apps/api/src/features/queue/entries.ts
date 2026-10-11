@@ -1,3 +1,4 @@
+import { configuredCustomerWork, customerEstimate } from './customer-estimate'
 import {
   copyVersion,
   whatsappV3Catalog,
@@ -93,7 +94,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
       notification: string
     }>()
   if (!row) throw new Error('Entry queue missing')
-  const projection = await readProjection(env, entry.id)
+  const projection = await readProjection(env, entry.id, true)
   const service = await publicService(env, entry.queue_id)
   let customer
   if (service) {
@@ -154,7 +155,7 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   }
   return entrySchema.parse({
     customer,
-    initialEtaMinutes: row.progress_initial_eta_minutes,
+    initialEtaMinutes: projection?.initialEtaMinutes ?? row.progress_initial_eta_minutes,
     code: entry.code,
     position: entry.status === 'waiting' ? row.position : 0,
     etaMinutes: 0,
@@ -462,7 +463,19 @@ export async function joinQueue(
     ],
   }
   const projectionState = await loadQueueState(env, queueId, now, afterModel)
-  const joinedProjection = projectionState.projections.find((p) => p.id === id)
+  const rawJoinedProjection = projectionState.projections.find((p) => p.id === id)
+  const work = configuredCustomerWork(
+    projectionState.parties,
+    projectionState.resources,
+    projectionState.config,
+    projectionState.baseline,
+  ).get(id)!
+  const joinedEstimate = rawJoinedProjection
+    ? customerEstimate(rawJoinedProjection, now + work, now)
+    : undefined
+  const joinedProjection = rawJoinedProjection && joinedEstimate
+    ? { ...rawJoinedProjection, ...joinedEstimate, quality: joinedEstimate.estimateQuality }
+    : undefined
   const joinedV4Snapshot: QueueNoticeSnapshot | null =
     selectedCopyVersion === 4 && queue.config
       ? {
@@ -481,6 +494,7 @@ export async function joinQueue(
           predictedAt: joinedProjection?.predictedAt ?? null,
           estimateQuality: joinedProjection?.quality ?? 'unknown',
           operationalForecastDeltaMs: 0,
+        customerMinimumAt: now + work,
           resourceName: null,
           arrivalDeadlineAt: null,
         }
@@ -582,11 +596,12 @@ export async function joinQueue(
     projectionState.config &&
     selectedCopyVersion !== 4
   ) {
-    const projection = projectionState.projections.find((item) => item.id === id)
+    const projection = joinedProjection
     if (projection) {
       const snapshot: QueueNoticeSnapshot = {
         schemaVersion: 2,
         operationalForecastDeltaMs: 0,
+        customerMinimumAt: now + work,
         approachRecommended:
           customerPhase(
             'waiting',

@@ -189,7 +189,7 @@ it('emits approaching on the time threshold even inside the legacy position cuto
     estimationMode: 'active',
     resourceStateKnown: true,
     approachTurns: 2,
-    approachMinutes: 7,
+    approachMinutes: 8,
     spaces: [
       {
         id: 'desk',

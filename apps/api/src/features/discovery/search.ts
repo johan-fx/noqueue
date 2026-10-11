@@ -1,3 +1,4 @@
+import { customerDeadlineSql, customerProvisionalSql, publicCustomerAverage } from '../queue/customer-estimate'
 import {
   publicAdmission,
   validWaitingSql,
@@ -94,14 +95,15 @@ export async function searchServices(
         (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, true)} AND service_window_id IS NULL) legacyPeople,
         (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND ${validWaitingSql(now, true)} AND service_window_id IS NULL) legacyCount,
         ${distanceSql} distanceMeters,
-        (SELECT COALESCE(SUM(max(0,(p.predicted_at-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
-          WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedSum,
+        (SELECT COALESCE(SUM(max(0,(${customerDeadlineSql(now)}-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND ${customerDeadlineSql(now)} IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedSum,
         (SELECT COUNT(*) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
-          WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedCount,
-        (SELECT COALESCE(SUM(max(0,(p.predicted_at-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
-          WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND e.service_window_id IS NULL AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) legacyPredictedSum,
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, false, 'e')} AND ${customerDeadlineSql(now)} IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) predictedCount,
+        (SELECT COALESCE(SUM(max(0,(${customerDeadlineSql(now)}-${Math.trunc(now)})/60000.0)),0) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND e.service_window_id IS NULL AND ${customerDeadlineSql(now)} IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) legacyPredictedSum,
         (SELECT COUNT(*) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id
-          WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND e.service_window_id IS NULL AND p.quality IN ('estimated','provisional') AND p.predicted_at IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) legacyPredictedCount
+          WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND e.service_window_id IS NULL AND ${customerDeadlineSql(now)} IS NOT NULL AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) legacyPredictedCount,
+        (SELECT MAX(${customerProvisionalSql(now)}) FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=q.id AND ${validWaitingSql(now, true, 'e')} AND p.updated_at>=${Math.trunc(now - 120000)} AND p.updated_at<=${Math.trunc(now)}) provisional
       FROM venue v JOIN queue q ON q.venue_id=v.id
         JOIN service_directory_config d ON d.queue_id=q.id AND d.source_config=q.config AND d.normalized_config IS NOT NULL
         JOIN tenant_account t ON t.organization_id=v.organization_id
@@ -117,6 +119,7 @@ export async function searchServices(
           config: string
           timezone: string
           predictedSum: number
+        provisional: number
           predictedCount: number
           legacyPeople: number
           legacyCount: number
@@ -133,7 +136,6 @@ export async function searchServices(
     const waitingPeople = row.waitingPeople + (includeLegacy ? row.legacyPeople : 0)
     const waitingCount = row.waitingCount + (includeLegacy ? row.legacyCount : 0)
     const estimateCount = row.predictedCount + (includeLegacy ? row.legacyPredictedCount : 0)
-    const predictedWait = estimateCount ? Math.round((row.predictedSum + (includeLegacy ? row.legacyPredictedSum : 0)) / estimateCount) : null
     const admission = resolveAdmission(
       config,
       row.timezone,
@@ -146,7 +148,9 @@ export async function searchServices(
       admission.serviceOpen &&
       admission.queueState === 'inactive' &&
       waitingPeople === 0
+    const average = publicCustomerAverage({ sum: row.predictedSum + (includeLegacy ? row.legacyPredictedSum : 0), count: estimateCount, provisional: !!row.provisional, waiting: waitingCount, active: admission.serviceOpen && admission.queueState === 'active', configuredMinutes: config.averageMinutes })
     return {
+      averageWaitQuality: average.averageWaitQuality,
       id: row.id,
       venueId: row.venueId,
       name: row.name,
@@ -162,7 +166,7 @@ export async function searchServices(
       waitMinutes: direct
         ? 0
         : admission.serviceOpen && admission.queueState !== 'paused'
-        ? predictedWait
+          ? average.averageWaitMinutes
         : null,
     }
   })

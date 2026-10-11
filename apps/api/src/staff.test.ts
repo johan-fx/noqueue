@@ -1047,7 +1047,7 @@ async function declareRestaurant(
   expect(result.status, await result.clone().text()).toBe(200)
 }
 
-it('shares honest unknown projections across shadow joins, token reads and staff reads', async () => {
+it('supplies provisional customer waits while staff retains honest unknown operational availability', async () => {
   const t = await tenant()
   await declareRestaurant(t)
   const coordinator = env.QUEUE_COORDINATOR.getByName(t.queueId)
@@ -1059,17 +1059,17 @@ it('shares honest unknown projections across shadow joins, token reads and staff
   expect(joined.status).toBe(201)
   expect(joined.body).toMatchObject({
     position: 1,
-    etaMinutes: 0,
-    predictedAt: null,
-    estimateQuality: 'unknown',
+    etaMinutes: 30,
+    predictedAt: expect.any(Number),
+    estimateQuality: 'provisional',
   })
   const { readEntry } = await import('./features/queue/entries')
   const token = (joined.body as { recoveryToken: string }).recoveryToken
   expect(await readEntry(env, token)).toMatchObject({
     position: 1,
-    etaMinutes: 0,
-    predictedAt: null,
-    estimateQuality: 'unknown',
+    etaMinutes: 30,
+    predictedAt: expect.any(Number),
+    estimateQuality: 'provisional',
   })
   const staff = await request(
     `/staff/queues/${t.queueId}/entries`,
@@ -1787,7 +1787,7 @@ it('serves anonymous venue aggregates and protects token-bound commands, retries
     services: { waitingPeople: number; averageWaitMinutes: number | null }[]
   }
   expect(venue.services[0]?.waitingPeople).toBe(3)
-  expect(venue.services[0]?.averageWaitMinutes).toBeNull()
+  expect(venue.services[0]?.averageWaitMinutes).toBe(30)
   expect(JSON.stringify(venue)).not.toContain('Private Guest')
   expect(JSON.stringify(venue)).not.toContain(entry.recoveryToken)
   const path = `/public/entries/${entry.recoveryToken}/commands`

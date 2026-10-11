@@ -671,7 +671,15 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
     expect(recoveryToken).toMatch(/^[a-f0-9]{64}$/)
     const guest = await guestContext.newPage()
     await guest.goto(`/t/${recoveryToken}`)
-    await expect(guest.getByText('Sin estimación', { exact: true })).toBeVisible()
+    await expect(
+      guest.getByRole('progressbar').getByText(/^minutos:segundos\s*provisional$/),
+    ).toBeVisible()
+    const provisional = await guest.request.get(`/api/v1/public/entries/${recoveryToken}`)
+    expect(await provisional.json()).toMatchObject({
+      etaMinutes: 50,
+      estimateQuality: 'provisional',
+      customer: { phase: 'waiting' },
+    })
     await page.waitForResponse(async (response) => {
       if (
         response.request().method() !== 'GET' ||
@@ -704,7 +712,7 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
       exact: true,
     })
     await expect(
-      unavailable.getByText('No hay una mesa compatible disponible.', {
+      unavailable.getByText('No hay una mesa compatible libre. Si una mesa ya está libre, registra su disponibilidad en «Mesa libre» → «Liberar una mesa».', {
         exact: true,
       }),
     ).toBeVisible()

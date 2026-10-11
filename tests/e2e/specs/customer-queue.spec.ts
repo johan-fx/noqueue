@@ -140,7 +140,8 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
           ...latest.config,
           version: latest.version,
           open: true,
-          approachMinutes: 200,
+          // Five configured 50-minute parties give this customer 250 minutes.
+          approachMinutes: 300,
           applyApproachToActive: true,
         },
       },

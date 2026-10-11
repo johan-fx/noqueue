@@ -487,7 +487,7 @@ export function Dashboard(props: DashboardProps) {
       snapshot.action === 'call' &&
       currentEntry.assignment?.available === false
     ) {
-      setCommandError('No hay una mesa compatible disponible.')
+      setCommandError('No hay una mesa compatible libre. Si una mesa ya está libre, registra su disponibilidad en «Mesa libre» → «Liberar una mesa».')
       return
     }
     commandLock.current = true
@@ -958,7 +958,7 @@ export function Dashboard(props: DashboardProps) {
                     {!pendingEntry
                       ? 'El turno ya no permite esta acción.'
                       : pendingEntry.assignment?.available === false
-                      ? 'No hay una mesa compatible disponible.'
+                        ? 'No hay una mesa compatible libre. Si una mesa ya está libre, registra su disponibilidad en «Mesa libre» → «Liberar una mesa».'
                       : `Disponibilidad compatible${
                           pendingEntry.assignment?.spaceName
                             ? ` · ${pendingEntry.assignment.spaceName}`

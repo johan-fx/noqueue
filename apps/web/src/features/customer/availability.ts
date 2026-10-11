@@ -1,7 +1,8 @@
 import type { AdmissionStatus } from '@noqueue/contracts/queue'
 import type { Locale } from './shared'
 
-type PresentationStatus = {
+type PresentationStatus = { averageWaitQuality?: 'estimated' | 'provisional' | 'unknown' | undefined } & {
+
   [K in keyof AdmissionStatus]?: AdmissionStatus[K] | undefined
 }
 export function visualWaitingPeople(service: PresentationStatus) {
@@ -38,6 +39,6 @@ export function availabilityText(
       ? es
         ? 'Sin estimación'
         : 'No estimate'
-      : `${estimate} min`
+    : `${estimate} min${service.averageWaitQuality === 'provisional' ? es ? ' · Estimación provisional' : ' · Provisional estimate' : ''}`
   }`
 }

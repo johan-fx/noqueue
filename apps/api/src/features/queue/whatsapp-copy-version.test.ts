@@ -325,10 +325,9 @@ it('freezes the canonical v4 joined projection and dispatches it successfully', 
     copyVariant: 'queue_joined',
     serviceName: 'Example service',
     ahead: Math.max(0, projection!.position - 1),
-    etaMinutes:
-      projection!.quality === 'unknown' ? null : projection!.eta_minutes,
-    predictedAt: projection!.predicted_at,
-    estimateQuality: projection!.quality,
+    etaMinutes: 30,
+    predictedAt: expect.any(Number),
+    estimateQuality: 'provisional',
   })
   expect(row.revision).toBe(projection!.revision)
   expect(frozen.projectionPending).toBeUndefined()
@@ -371,7 +370,7 @@ it('freezes the canonical v4 joined projection and dispatches it successfully', 
   ).toEqual({ status: 'accepted' })
 })
 
-it('does not invent a v4 join estimate when restaurant inventory is unknown', async () => {
+it('uses a provisional configured minimum without inventing actual restaurant availability', async () => {
   const row = await joined('4', {
     type: 'restaurant',
     resourceStateKnown: false,
@@ -392,14 +391,14 @@ it('does not invent a v4 join estimate when restaurant inventory is unknown', as
   expect(projection).toMatchObject({ quality: 'unknown', eta_minutes: 0, predicted_at: null })
   expect(frozen).toMatchObject({
     ahead: 1,
-    etaMinutes: null,
-    predictedAt: null,
-    estimateQuality: 'unknown',
+    etaMinutes: 60,
+    predictedAt: expect.any(Number),
+    estimateQuality: 'provisional',
   })
   expect(row.revision).toBe(projection!.revision)
 })
 
-it('uses a resource-aware forecast instead of multiplying the queue count by its baseline', async () => {
+it('preserves the real resource forecast while a longer sequential customer minimum prevails', async () => {
   const row = await joined('4', {
     type: 'restaurant',
     resourceStateKnown: true,
@@ -422,9 +421,9 @@ it('uses a resource-aware forecast instead of multiplying the queue count by its
   expect(projection!.predicted_at).not.toBeNull()
   expect(frozen).toMatchObject({
     ahead: 1,
-    etaMinutes: 45,
-    predictedAt: projection!.predicted_at,
-    estimateQuality: 'estimated',
+    etaMinutes: 60,
+    predictedAt: expect.any(Number),
+    estimateQuality: 'provisional',
   })
   expect(row.revision).toBe(projection!.revision)
 })
@@ -546,9 +545,9 @@ it('repairs a durable v4 join intent if projection finalization was interrupted'
   })
   expect(JSON.parse(repaired.payload_snapshot)).toMatchObject({
     ahead: Math.max(0, repaired.position - 1),
-    etaMinutes: repaired.quality === 'unknown' ? null : repaired.eta_minutes,
-    predictedAt: repaired.predicted_at,
-    estimateQuality: repaired.quality,
+    etaMinutes: 30,
+    predictedAt: expect.any(Number),
+    estimateQuality: 'provisional',
   })
   expect(JSON.parse(repaired!.payload_snapshot)).not.toHaveProperty(
     'projectionPending',
@@ -560,7 +559,7 @@ it('freezes joined v3 at enqueue, keeps rate-limit retries identical after profi
   expect(JSON.parse(row.payload_snapshot)).toMatchObject({
     schemaVersion: 2,
     copyVersion: 3,
-    approachRecommended: true,
+    approachRecommended: false,
   })
   const sent: unknown[] = []
   network.use(
@@ -621,7 +620,7 @@ it('renders historical missing-version snapshots as exact v2 despite current v3 
   )
   expect(sent).toHaveLength(1)
   expect(sent[0]?.text?.body).toContain(
-    ': estás en la lista. Quedan 0 turnos por delante. Tiempo estimado: 0 min.',
+    ': estás en la lista. Quedan 0 turnos por delante. Tiempo estimado: 30 min.',
   )
   expect(sent[0]?.text?.body).not.toContain('Ya estás en la cola.')
 })

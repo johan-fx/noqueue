@@ -1,3 +1,4 @@
+import { configuredCustomerWork, customerMinimum, customerEstimate, stableOperationalAt, type CustomerMinimum } from './customer-estimate'
 import { maintainServiceEntries } from './service-expiry'
 import { noticeStatement, type QueueNoticeSnapshot } from './notices'
 import { evaluateEstimateNotice } from './estimate-notices'
@@ -383,7 +384,7 @@ export async function refreshQueue(
 ) {
   await maintainQueue(env, queueId, now)
   const freshness = await env.DB.prepare(
-    `SELECT COUNT(*) AS waiting,COUNT(p.entry_id) AS projected,MIN(p.updated_at) AS oldest,
+    `SELECT COUNT(*) AS waiting,COUNT(p.entry_id) AS projected,MIN(p.updated_at) AS oldest,COUNT(p.customer_minimum_at) AS initialized,
      MAX(p.updated_at) AS newest FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id
      WHERE e.queue_id=? AND e.status='waiting'`,
   )
@@ -391,6 +392,7 @@ export async function refreshQueue(
     .first<{
       waiting: number
       projected: number
+      initialized: number
       oldest: number | null
       newest: number | null
     }>()
@@ -398,6 +400,7 @@ export async function refreshQueue(
     freshness &&
     freshness.waiting > 0 &&
     freshness.waiting === freshness.projected &&
+    freshness.waiting === freshness.initialized &&
     freshness.oldest !== null &&
     freshness.oldest > now - 5000 &&
     (freshness.newest ?? now) <= now
@@ -468,7 +471,7 @@ async function projectionStatements(
     }
   }
   const priorRows = await env.DB.prepare(
-    `SELECT p.*,e.id AS entry_id,n.last_accepted_predicted_at,n.last_correction_accepted_at,n.last_accepted_operational_delta_ms
+    `SELECT p.*,e.id AS entry_id,n.last_accepted_predicted_at,n.last_correction_accepted_at,n.last_accepted_operational_delta_ms,n.last_accepted_customer_minimum_at,EXISTS(SELECT 1 FROM notification_outbox a WHERE a.entry_id=e.id AND a.kind='approaching') AS has_approach
      FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id
      LEFT JOIN queue_notification_state n ON n.entry_id=e.id WHERE e.id IN (SELECT value FROM json_each(?))`,
   )
@@ -482,21 +485,46 @@ async function projectionStatements(
       resource_id: string | null
       callable: number
       revision: number
+      updated_at: number
       operational_forecast_delta_ms: number
       last_accepted_predicted_at: number | null
       last_correction_accepted_at: number | null
       last_accepted_operational_delta_ms: number | null
+      last_accepted_customer_minimum_at: number | null
+      customer_minimum_at: number | null
+      customer_configured_work_ms: number | null
+      customer_initial_eta_minutes: number | null
+      customer_operational_at: number | null
+      has_approach: number
     }>()
   const priors = new Map(priorRows.results.map((row) => [row.entry_id, row]))
   const beforeProjections = new Map(before?.projections.map((p) => [p.id, p]))
+  const configuredWork = configuredCustomerWork(
+    state.parties, state.resources, state.config, state.baseline,
+  )
   for (const p of state.projections) {
-    if (p.quality !== 'unknown' && p.etaMinutes > 0)
-      statements.push(
-        env.DB.prepare(
-          'UPDATE queue_entry SET progress_initial_eta_minutes=? WHERE id=? AND progress_initial_eta_minutes IS NULL',
-        ).bind(p.etaMinutes, p.id),
-      )
     const prior = priors.get(p.id)
+    const initialized = prior?.customer_minimum_at != null &&
+      prior.customer_configured_work_ms != null &&
+      prior.customer_initial_eta_minutes != null
+    const priorMinimum: CustomerMinimum | null = initialized
+      ? {
+        minimumAt: prior.customer_minimum_at!,
+        configuredWorkMs: prior.customer_configured_work_ms!,
+        initialEtaMinutes: prior.customer_initial_eta_minutes!,
+      }
+      : null
+    const minimum = customerMinimum(priorMinimum, configuredWork.get(p.id)!, now, !!before)
+    const pendingMinimum = pendingJoinedSnapshots.get(p.id)?.snapshot.customerMinimumAt
+    if (!initialized && pendingMinimum != null && Number.isFinite(pendingMinimum)) minimum.minimumAt = pendingMinimum
+    const oldCustomer = prior
+      ? customerEstimate({
+        predictedAt: stableOperationalAt(
+            prior.predicted_at, prior.customer_operational_at ?? null,
+        ),
+        quality: prior.quality as 'estimated' | 'provisional' | 'unknown',
+      }, prior.customer_minimum_at ?? null, prior.updated_at ?? now)
+      : null
     const beforeProjection = beforeProjections.get(p.id)
     const operationalDelta =
       (prior?.operational_forecast_delta_ms ?? 0) +
@@ -506,22 +534,31 @@ async function projectionStatements(
       Number.isFinite(p.predictedAt)
         ? p.predictedAt - beforeProjection.predictedAt
         : 0)
+    const customerOperationalAt = stableOperationalAt(
+      p.predictedAt, prior?.customer_operational_at ?? null,
+      beforeProjection?.predictedAt,
+    )
+    const customer = customerEstimate({ ...p, predictedAt: customerOperationalAt }, minimum.minimumAt, now)
+    if (!initialized) minimum.initialEtaMinutes = Math.max(1, customer.etaMinutes)
+    if (p.quality !== 'unknown' && p.etaMinutes > 0)
+      statements.push(env.DB.prepare('UPDATE queue_entry SET progress_initial_eta_minutes=? WHERE id=? AND progress_initial_eta_minutes IS NULL').bind(p.etaMinutes, p.id))
     const approachingNow =
       !!state.config &&
-      p.quality !== 'unknown' &&
-      p.etaMinutes <= (state.config.approachMinutes ?? 10)
+      customer.estimateQuality !== 'unknown' &&
+      customer.etaMinutes <= (state.config.approachMinutes ?? 10)
     const approachingBefore =
       !!state.config &&
       !!prior &&
-      prior.quality !== 'unknown' &&
-      prior.predicted_at !== null &&
-      prior.eta_minutes <= (state.config.approachMinutes ?? 10)
+      initialized &&
+      oldCustomer?.estimateQuality !== 'unknown' &&
+      (oldCustomer?.etaMinutes ?? Infinity) <= (state.config.approachMinutes ?? 10)
     const changed =
       !prior ||
       prior.position !== p.position ||
       prior.quality !== p.quality ||
       prior.resource_id !== p.resourceId ||
       !!prior.callable !== p.callable ||
+      prior.customer_minimum_at !== minimum.minimumAt ||
       prior.operational_forecast_delta_ms !== operationalDelta ||
       approachingNow !== approachingBefore
     const revision = (prior?.revision ?? 0) + Number(changed)
@@ -529,17 +566,18 @@ async function projectionStatements(
       ? {
           schemaVersion: 2,
           operationalForecastDeltaMs: operationalDelta,
+        customerMinimumAt: minimum.minimumAt,
           approachRecommended: approachingNow,
           serviceName: state.config.name,
           ahead: Math.max(0, p.position - 1),
-          etaMinutes: p.quality === 'unknown' ? null : p.etaMinutes,
-          predictedAt: p.predictedAt,
-          estimateQuality: p.quality,
+        etaMinutes: customer.etaMinutes,
+        predictedAt: customer.predictedAt,
+        estimateQuality: customer.estimateQuality,
           resourceName: null,
           arrivalDeadlineAt: null,
         }
       : null
-    if (snapshot && approachingNow && !approachingBefore && prior)
+    if (snapshot && approachingNow && !approachingBefore && !prior?.has_approach && (initialized || (before && !beforeProjection)))
       statements.push(
         noticeStatement(
           env,
@@ -553,6 +591,8 @@ async function projectionStatements(
         ),
       )
     const notificationState = prior
+    if (prior?.last_accepted_predicted_at != null && prior.last_accepted_customer_minimum_at == null)
+      statements.push(env.DB.prepare('UPDATE queue_notification_state SET last_accepted_customer_minimum_at=? WHERE entry_id=? AND last_accepted_customer_minimum_at IS NULL').bind(minimum.minimumAt, p.id))
     // Never infer historical causality. Existing accepted forecasts start from current provenance.
     if (
       prior?.last_accepted_predicted_at != null &&
@@ -568,15 +608,18 @@ async function projectionStatements(
         notificationState?.last_accepted_operational_delta_ms ?? null,
       currentOperationalDeltaMs: operationalDelta,
       previousAcceptedAt: notificationState?.last_accepted_predicted_at ?? null,
-      currentPredictedAt: p.predictedAt,
-      quality: p.quality,
+      currentPredictedAt: customer.predictedAt,
+      quality: customer.estimateQuality,
+      currentOperationalPredictedAt: customerOperationalAt,
+      previousAcceptedMinimumAt: notificationState?.last_accepted_customer_minimum_at ?? null,
+      currentMinimumAt: minimum.minimumAt,
       lastCorrectionAcceptedAt:
         notificationState?.last_correction_accepted_at ?? null,
       thresholdMinutes: state.config?.etaChangeThresholdMinutes ?? 5,
       cooldownMinutes: state.config?.notificationCooldownMinutes ?? 10,
       now,
     })
-    if (correction && snapshot)
+    if (initialized && correction && snapshot)
       statements.push(
         noticeStatement(
           env,
@@ -591,7 +634,7 @@ async function projectionStatements(
       )
     statements.push(
       env.DB.prepare(
-        'INSERT INTO queue_projection(entry_id,position,eta_minutes,predicted_at,quality,resource_id,callable,revision,updated_at,operational_forecast_delta_ms) VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET position=excluded.position,eta_minutes=excluded.eta_minutes,predicted_at=excluded.predicted_at,quality=excluded.quality,resource_id=excluded.resource_id,callable=excluded.callable,revision=excluded.revision,updated_at=excluded.updated_at,operational_forecast_delta_ms=excluded.operational_forecast_delta_ms',
+        'INSERT INTO queue_projection(entry_id,position,eta_minutes,predicted_at,quality,resource_id,callable,revision,updated_at,operational_forecast_delta_ms,customer_minimum_at,customer_configured_work_ms,customer_initial_eta_minutes,customer_operational_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET position=excluded.position,eta_minutes=excluded.eta_minutes,predicted_at=excluded.predicted_at,quality=excluded.quality,resource_id=excluded.resource_id,callable=excluded.callable,revision=excluded.revision,updated_at=excluded.updated_at,operational_forecast_delta_ms=excluded.operational_forecast_delta_ms,customer_minimum_at=excluded.customer_minimum_at,customer_configured_work_ms=excluded.customer_configured_work_ms,customer_initial_eta_minutes=excluded.customer_initial_eta_minutes,customer_operational_at=excluded.customer_operational_at',
       ).bind(
         p.id,
         p.position,
@@ -603,6 +646,10 @@ async function projectionStatements(
         revision,
         now,
         operationalDelta,
+        minimum.minimumAt,
+        minimum.configuredWorkMs,
+        minimum.initialEtaMinutes,
+        customerOperationalAt,
       ),
     )
     const joinedSnapshot = pendingJoinedSnapshots.get(p.id)
@@ -610,10 +657,11 @@ async function projectionStatements(
       const frozen = { ...joinedSnapshot.snapshot }
       delete frozen.projectionPending
       frozen.ahead = Math.max(0, p.position - 1)
-      frozen.etaMinutes = p.quality === 'unknown' ? null : p.etaMinutes
+      frozen.etaMinutes = customer.etaMinutes
       frozen.operationalForecastDeltaMs = operationalDelta
-      frozen.predictedAt = p.predictedAt
-      frozen.estimateQuality = p.quality
+      frozen.customerMinimumAt = minimum.minimumAt
+      frozen.predictedAt = customer.predictedAt
+      frozen.estimateQuality = customer.estimateQuality
       statements.push(
         env.DB.prepare(
           "UPDATE notification_outbox SET payload_snapshot=?,revision=?,updated_at=? WHERE entry_id=? AND kind='queue_joined' AND status='pending' AND payload_version=2 AND payload_snapshot=?",
@@ -648,9 +696,9 @@ async function projectionStatements(
   }
   return statements
 }
-export async function readProjection(env: CloudflareBindings, entryId: string) {
+export async function readProjection(env: CloudflareBindings, entryId: string, customer = false) {
   const row = await env.DB.prepare(
-    'SELECT position,eta_minutes AS etaMinutes,predicted_at AS predictedAt,quality AS estimateQuality,resource_id AS resourceId,callable FROM queue_projection WHERE entry_id=?',
+    'SELECT p.position,p.eta_minutes AS etaMinutes,p.predicted_at AS predictedAt,p.quality AS estimateQuality,p.resource_id AS resourceId,p.callable,p.customer_minimum_at,p.customer_initial_eta_minutes,p.customer_operational_at,p.updated_at FROM queue_projection p WHERE p.entry_id=?',
   )
     .bind(entryId)
     .first<{
@@ -660,6 +708,28 @@ export async function readProjection(env: CloudflareBindings, entryId: string) {
       estimateQuality: 'estimated' | 'provisional' | 'unknown'
       resourceId: string | null
       callable: number
+      customer_operational_at: number | null
+      customer_minimum_at: number | null
+      customer_initial_eta_minutes: number | null
+      updated_at: number
     }>()
-  return row ? { ...row, callable: !!row.callable } : null
+  if (!row) return null
+  if (!customer) return {
+    ...row, initialEtaMinutes: row.customer_initial_eta_minutes,
+    callable: !!row.callable,
+  }
+  const now = Date.now()
+  const estimate = row.updated_at < now - 120000 || row.updated_at > now
+    ? { etaMinutes: 0, predictedAt: null, estimateQuality: 'unknown' as const }
+    : customerEstimate({
+      predictedAt: stableOperationalAt(
+          row.predictedAt, row.customer_operational_at,
+      ),
+      quality: row.estimateQuality,
+    }, row.customer_minimum_at, now)
+  return {
+    position: row.position, ...estimate,
+    initialEtaMinutes: row.customer_initial_eta_minutes,
+    callable: !!row.callable, resourceId: row.resourceId,
+  }
 }

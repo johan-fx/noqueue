@@ -108,3 +108,21 @@ it('polls public resources every five seconds only while visible and deduplicate
     vi.useRealTimers()
   }
 })
+it('retains the last accepted public snapshot and marks failed freshness validation stale', async () => {
+  const { act } = await import('@testing-library/react')
+  const { vi } = await import('vitest')
+  const { usePublicResource } = await import('./public-resource')
+  const parse = (value: unknown) => String(value)
+  const accept = (value: string) => value !== 'stale'
+  function Resource() {
+    const state = usePublicResource('/api/test', parse, true, 'same-origin', accept)
+    return <p>{state.data}{state.error ? ' outdated' : ''}</p>
+  }
+  vi.useFakeTimers()
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(Response.json('fresh')).mockResolvedValue(Response.json('stale')))
+  try {
+    await act(async () => { render(<Resource />); await Promise.resolve() })
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(screen.getByText('fresh outdated')).toBeVisible()
+  } finally { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals() }
+})

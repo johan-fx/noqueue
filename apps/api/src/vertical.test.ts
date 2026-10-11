@@ -239,12 +239,12 @@ describe('queue vertical in workerd', () => {
     const recovered = await request(`/public/entries/${entry.recoveryToken}`)
     expect(recovered.status).toBe(200)
     expect(await recovered.json()).toEqual({
-      initialEtaMinutes: null,
+      initialEtaMinutes: 5,
       code: entry.code,
       position: 1,
-      etaMinutes: 0,
-      predictedAt: null,
-      estimateQuality: 'unknown',
+      etaMinutes: 5,
+      predictedAt: expect.any(Number),
+      estimateQuality: 'provisional',
       status: 'waiting',
       notification: 'disabled',
     })
@@ -416,10 +416,10 @@ describe('queue vertical in workerd', () => {
         .run()
       await recalculateQueue(env, 'demo-queue', now)
       const projection = await env.DB.prepare(
-        'SELECT revision,predicted_at FROM queue_projection WHERE entry_id=?',
+        'SELECT revision,predicted_at,customer_minimum_at FROM queue_projection WHERE entry_id=?',
       )
         .bind(first.entry_id)
-        .first<{ revision: number; predicted_at: number }>()
+        .first<{ revision: number; predicted_at: number; customer_minimum_at: number }>()
       const firstPrediction = firstAcceptedAt + 120 * 60_000
       expect(projection?.predicted_at).toBe(firstPrediction)
       await env.DB.prepare(
@@ -436,6 +436,7 @@ describe('queue vertical in workerd', () => {
             resourceName: null,
             arrivalDeadlineAt: null,
             operationalForecastDeltaMs: 0,
+            customerMinimumAt: projection!.customer_minimum_at,
           }),
           projection!.revision,
           first.id,
@@ -1051,9 +1052,9 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
     await recalculateQueue(env, 'demo-queue', now)
     const acceptedPrediction = now + 60 * 60000
     await env.DB.prepare(
-      'INSERT INTO queue_notification_state(entry_id,last_accepted_predicted_at,updated_at,last_accepted_operational_delta_ms) VALUES (?,?,?,0)',
+      'INSERT INTO queue_notification_state(entry_id,last_accepted_predicted_at,updated_at,last_accepted_operational_delta_ms,last_accepted_customer_minimum_at) VALUES (?,?,?,0,?)',
     )
-      .bind(first!.entry_id, acceptedPrediction, now)
+      .bind(first!.entry_id, acceptedPrediction, now, acceptedPrediction)
       .run()
     now += 20 * 60000
     const change = async (minutes: number) => {

@@ -189,8 +189,18 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
       form.getByRole('button', { name: 'Ponerme en lista' }),
     ).toBeDisabled()
     await expect(
-      alice.getByText('Ya casi es tu turno', { exact: true }),
+      alice.getByRole('heading', {
+        name: 'Estás en la lista de espera de Queue Verification',
+        exact: true,
+      }),
     ).toBeVisible()
+    const token = new URL(alice.url()).pathname.split('/').at(-1)!
+    const retained = await alice.request.get(`/api/v1/public/entries/${token}`)
+    expect(await retained.json()).toMatchObject({
+      status: 'waiting',
+      etaMinutes: 50,
+      customer: { phase: 'waiting' },
+    })
     const rejected = await form.request.post(
       `/api/v1/public/services/${t.queue}/entries`,
       {
@@ -238,8 +248,10 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
       const projection = observeProjection(second)
       await join(first, t.queue, 'First')
       await join(second, t.queue, 'Second')
-      const initialProjection = await expectProjectedCountdown(second, projection, 50)
-      const expected = kind === 'MEAN' ? 35 : 54
+      // Customer configured work includes both parties; staff uses real scheduling.
+      const initialProjection = await expectProjectedCountdown(second, projection, 100)
+      const expectedCustomer = kind === 'MEAN' ? 70 : 100
+      const expectedStaff = kind === 'MEAN' ? 35 : 54
       if (kind === 'MEAN') {
         const queues = (await (
           await page.request.get(`/api/v1/staff/venues/${t.venueId}/queues`)
@@ -302,22 +314,25 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
         )
         expect(loaded.ok(), await loaded.text()).toBeTruthy()
       }
-      const updatedProjection = await expectProjectedCountdown(second, projection, expected)
-      expect(updatedProjection.predictedAt).not.toBe(initialProjection.predictedAt)
       const row = page
         .getByRole('dialog', { name: 'Gestionar lista', exact: true })
         .locator('li')
         .filter({ hasText: 'Second' })
       await expect(
-        row.getByText(`${expected} min`, { exact: true }),
+        row.getByText(`${expectedStaff} min`, { exact: true }),
       ).toBeVisible()
+      const updatedProjection = await expectProjectedCountdown(second, projection, expectedCustomer)
+      if (kind === 'MEAN')
+        expect(updatedProjection.predictedAt).not.toBe(initialProjection.predictedAt)
+      else
+        expect(updatedProjection.predictedAt).toBe(initialProjection.predictedAt)
       await prove(
         info,
         evidence,
         `Q-BROWSER-${kind}`,
-        'terrace/4 expected ETA and timestamp countdown rendered by both clients',
-        updatedProjection.etaMinutes,
-        expected,
+        'terrace/4 customer minimum and timestamp countdown preserve real staff ETA',
+        { customer: updatedProjection.etaMinutes, staff: expectedStaff },
+        { customer: expectedCustomer, staff: expectedStaff },
       )
       await second.screenshot({
         path: info.outputPath('customer-estimate.png'),
@@ -326,6 +341,137 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
       await guest.close()
     }
   })
+
+test('Q-BROWSER-COUNTDOWN polls and returning to the tab never restart the customer deadline', async ({
+  page,
+  request,
+  browser,
+  baseURL,
+  evidence,
+}, info) => {
+  const t = await setup(page, request, baseURL!)
+  const queues = (await (
+    await page.request.get(`/api/v1/staff/venues/${t.venueId}/queues`)
+  ).json()) as { id: string; version: number; config: Record<string, unknown> }[]
+  const queue = queues.find((item) => item.id === t.queue)!
+  const configured = await page.request.patch(`/api/v1/staff/queues/${t.queue}`, {
+    headers: t.headers,
+    data: {
+      ...queue.config,
+      open: true,
+      version: queue.version,
+      averageMinutes: 4,
+      spaces: [{
+        id: 'terrace', name: 'Terrace', tables: 1,
+        tableTypes: [{ seats: 4, count: 1, averageMinutes: 4 }],
+      }],
+    },
+  })
+  expect(configured.ok(), await configured.text()).toBeTruthy()
+  const guest = await newClientContext(browser, info, 'countdown', { baseURL: baseURL! })
+  const customer = await guest.newPage()
+  try {
+    const first = await guest.newPage()
+    await join(first, t.queue, 'First')
+    await join(customer, t.queue, 'Second')
+    const token = new URL(customer.url()).pathname.split('/').at(-1)!
+    const entryPath = `/api/v1/public/entries/${token}`
+    type Snapshot = Projection & { customer: { serverNow: number } }
+    const responses: Snapshot[] = []
+    customer.on('response', async (response) => {
+      if (response.request().method() === 'GET' &&
+          new URL(response.url()).pathname === entryPath && response.ok())
+        responses.push(await response.json() as Snapshot)
+    })
+    // Observe the mounted page's next real poll. Reloading here can invalidate
+    // the registration GET before its response body has been read. Every snapshot
+    // is the application's own fetch from isolated Worker/D1, never fulfilled JSON.
+    await expect.poll(() => responses.length).toBeGreaterThanOrEqual(1)
+    const initial = responses[0]!
+    expect(initial.etaMinutes).toBe(8)
+    expect(initial.predictedAt - initial.customer.serverNow).toBeGreaterThan(7 * 60000)
+    expect(initial.predictedAt - initial.customer.serverNow).toBeLessThanOrEqual(8 * 60000)
+    const countdown = customer.getByRole('progressbar')
+    const seconds = async () => {
+      const label = await countdown.getAttribute('aria-label')
+      const match = /^Espera aproximada: (\d+):(\d{2}) \(minutos:segundos\)$/.exec(label ?? '')
+      expect(match, label ?? 'Missing countdown').not.toBeNull()
+      return Number(match![1]) * 60 + Number(match![2])
+    }
+    await expect(countdown).toBeVisible()
+    // Capture every displayed tick, including a brief upward jump between polls.
+    await countdown.evaluate((element) => {
+      const samples: number[] = []
+      const record = () => {
+        const match = /^Espera aproximada: (\d+):(\d{2})/.exec(element.getAttribute('aria-label') ?? '')
+        if (match) samples.push(Number(match[1]) * 60 + Number(match[2]))
+        element.setAttribute('data-countdown-samples', JSON.stringify(samples))
+      }
+      record()
+      new MutationObserver(record).observe(element, {
+        attributes: true, attributeFilter: ['aria-label'],
+      })
+    })
+    let previousSeconds = await seconds()
+    let previousServerNow = initial.customer.serverNow
+    for (let poll = 1; poll <= 3; poll++) {
+      // Ignore incidental focus responses: each observation must cross the
+      // five-second production polling interval, with 500 ms scheduling tolerance.
+      const nextTimedSnapshot = () => responses.find((snapshot) =>
+        snapshot.customer.serverNow >= previousServerNow + 4500)
+      await expect.poll(nextTimedSnapshot, { timeout: 10_000 }).toBeDefined()
+      const snapshot = nextTimedSnapshot()!
+      expect(snapshot.customer.serverNow).toBeGreaterThan(previousServerNow)
+      expect(snapshot.predictedAt).toBe(initial.predictedAt)
+      await expect.poll(seconds).toBeLessThan(previousSeconds)
+      previousSeconds = await seconds()
+      previousServerNow = snapshot.customer.serverNow
+    }
+    const beforeHidden = { seconds: previousSeconds, now: Date.now(), responses: responses.length }
+    // Headless engines do not consistently hide pages via bringToFront(). Drive
+    // the Page Visibility API events explicitly, retaining real server/browser
+    // clocks and the production visibilitychange/focus listeners (no time mocks).
+    await customer.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
+      document.dispatchEvent(new Event('visibilitychange'))
+    })
+    // Cross a complete polling interval while hidden: no background GET allowed.
+    await expect.poll(() => Date.now() - beforeHidden.now, { timeout: 9000 }).toBeGreaterThanOrEqual(6000)
+    expect(responses).toHaveLength(beforeHidden.responses)
+    const returned = customer.waitForResponse((response) =>
+      response.request().method() === 'GET' &&
+      new URL(response.url()).pathname === entryPath && response.ok(),
+    { timeout: 4000 })
+    await customer.evaluate(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
+      document.dispatchEvent(new Event('visibilitychange'))
+      window.dispatchEvent(new Event('focus'))
+    })
+    const resumed = await (await returned).json() as Snapshot
+    expect(resumed.customer.serverNow).toBeGreaterThan(previousServerNow)
+    expect(resumed.predictedAt).toBe(initial.predictedAt)
+    await expect.poll(seconds).toBeLessThanOrEqual(beforeHidden.seconds - 5)
+    const resumedSeconds = await seconds()
+    // Returning must restart polling, not only issue one focus refresh.
+    await expect.poll(() => responses.some((snapshot) =>
+      snapshot.customer.serverNow >= resumed.customer.serverNow + 4500),
+    { timeout: 10_000 }).toBe(true)
+    expect(responses.at(-1)!.predictedAt).toBe(initial.predictedAt)
+    await expect.poll(seconds).toBeLessThan(resumedSeconds)
+    const finalSeconds = await seconds()
+    const elapsedSeconds = (responses.at(-1)!.customer.serverNow - initial.customer.serverNow) / 1000
+    expect(Math.abs(finalSeconds - (initial.predictedAt - Date.now()) / 1000)).toBeLessThanOrEqual(2)
+    const ticks = JSON.parse(await countdown.getAttribute('data-countdown-samples') ?? '[]') as number[]
+    expect(ticks.length).toBeGreaterThan(15)
+    expect(ticks.every((value, index) => index === 0 || value <= ticks[index - 1]!)).toBe(true)
+    await prove(info, evidence, 'Q-BROWSER-COUNTDOWN', 'stable deadline across polls, hidden interval and resumed polling',
+      { stable: responses.every((snapshot) => snapshot.predictedAt === initial.predictedAt), elapsed: elapsedSeconds >= 24, decreasing: finalSeconds < ticks[0]! - 20 },
+      { stable: true, elapsed: true, decreasing: true })
+  } finally {
+    await customer.removeAllListeners('response', { behavior: 'wait' })
+    await guest.close()
+  }
+})
 
 // Keep this synthetic entry route under Playwright interception across reloads.
 const progressTest = test.extend({ serviceWorkers: 'block' })

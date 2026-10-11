@@ -24,6 +24,8 @@ export type QueueNoticeSnapshot = {
   serviceName: string
   ahead: number | null
   etaMinutes: number | null
+  /** Separate configured-minimum evidence for effective customer corrections. */
+  customerMinimumAt?: number
   operationalForecastDeltaMs?: number
   predictedAt: number | null
   estimateQuality: 'estimated' | 'provisional' | 'unknown'

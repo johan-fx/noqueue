@@ -113,7 +113,7 @@ describe('D1 service discovery', () => {
       a = await f.service('Recepción', 10, true, false, 'reception'),
       b = await f.service('Restaurante', 20)
     const result = await search({ text: f.prefix })
-    expect(result.items.map((i) => i.id)).toEqual([a, b])
+    expect(result.items.map((i) => i.id)).toEqual([a, b].sort())
     expect(
       result.items.every(
         (i) => i.address === 'Calle Málaga 1' && i.distanceMeters === null,
@@ -155,28 +155,17 @@ describe('D1 service discovery', () => {
       .run()
     expect((await search({ recentIds: [id] })).items).toHaveLength(0)
   })
-  it('uses remaining fresh predictions rather than configured duration, keeps stale and empty waits unknown', async () => {
+  it('floors fresh public means at configured duration, uses an empty provisional minimum and keeps stale waits unknown', async () => {
     const f = await fixture(),
       closed = await f.service('Closed', 1, false),
       stale = await f.service('Stale', 1, true, true),
       empty = await f.service('Empty'),
       known = await f.service('Known', 7)
     const result = await search({ text: f.prefix })
-    expect(result.items[0]).toMatchObject({ id: known, waitMinutes: 7 })
-    expect(
-      result.items
-        .slice(1, 3)
-        .map((i) => i.id)
-        .sort(),
-    ).toEqual([stale, empty].sort())
-    expect(result.items.slice(1, 3).every((i) => i.waitMinutes === null)).toBe(
-      true,
-    )
-    expect(result.items[3]).toMatchObject({
-      id: closed,
-      open: false,
-      waitMinutes: null,
-    })
+    expect(result.items.find(i => i.id === known)).toMatchObject({ waitMinutes: 30, averageWaitQuality: 'provisional' })
+    expect(result.items.find(i => i.id === empty)).toMatchObject({ waitMinutes: 30, averageWaitQuality: 'provisional' })
+    expect(result.items.find(i => i.id === stale)).toMatchObject({ waitMinutes: null, averageWaitQuality: 'unknown' })
+    expect(result.items.find(i => i.id === closed)).toMatchObject({ open: false, waitMinutes: null })
   })
   it('computes exact Haversine including coincident points before radius filtering and pagination', async () => {
     const far = await fixture(40.5, -3.704),
@@ -291,6 +280,7 @@ it('bounds anonymous request origin and rate, sends no-cache headers and no inte
   for (const row of result.items)
     expect(Object.keys(row).sort()).toEqual(
       [
+        'averageWaitQuality',
         'serviceOpen',
         'queueState',
         'canJoin',
@@ -353,6 +343,7 @@ it('resolves discovery with physical opening, direct access, marker and automati
     canJoin: true,
     initialWaitingMarker: true,
     waitingPeople: 0,
-    waitMinutes: null,
+    waitMinutes: 30,
+    averageWaitQuality: 'provisional',
   })
 })

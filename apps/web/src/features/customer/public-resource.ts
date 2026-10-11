@@ -22,7 +22,8 @@ export function usePublicResource<T>(
   url: string | null,
   parse: (data: unknown) => T,
   polling = true,
-  credentials: RequestCredentials = 'same-origin'
+  credentials: RequestCredentials = 'same-origin',
+  accept?: (next: T, previous: T | null) => boolean
 ) {
   const [state, setState] = useState<{
     url: string
@@ -36,6 +37,7 @@ export function usePublicResource<T>(
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
     let pending: Promise<void> | null = null
+    let lastAccepted: T | null = null
     const refresh = () => {
       if (pending) return pending
       clearTimeout(timer)
@@ -48,7 +50,9 @@ export function usePublicResource<T>(
           })
           if (!response.ok) throw new Error('unavailable')
           const data = parse(await response.json())
+          if (accept && !accept(data, lastAccepted)) throw new Error('stale')
           if (!controller.signal.aborted) {
+            lastAccepted = data
             setState({ url, data, updatedAt: Date.now() })
             setError(false)
           }
@@ -80,7 +84,7 @@ export function usePublicResource<T>(
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('focus', visible)
     }
-  }, [url, parse, polling, credentials])
+  }, [url, parse, polling, credentials, accept])
   const refreshResource = useCallback(() => refreshRef.current(), [])
   return {
     data: state?.url === url ? state.data : null,

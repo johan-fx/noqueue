@@ -49,6 +49,7 @@ export const publicServiceSchema = z.object({
   venueId: z.string().optional(),
   open: z.number(),
   averageWaitMinutes: z.number().nullable().optional(),
+  averageWaitQuality: z.enum(['estimated', 'provisional', 'unknown']).optional(),
   type: z.enum(['restaurant', 'reception', 'pool']),
   receptionServices: z.array(receptionServiceSchema),
   spaces: z.array(

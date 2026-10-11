@@ -108,7 +108,21 @@ export async function api<T>(
     },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   })
-  const data = await response.json()
+  let data: Record<string, unknown>
+  try {
+    const parsed: unknown = await response.json()
+    data =
+      parsed && typeof parsed === 'object'
+        ? (parsed as Record<string, unknown>)
+        : {}
+  } catch {
+    throw new ApiError(
+      response.status,
+      messages.temporarily_unavailable!,
+      Math.max(0, Number(response.headers.get('Retry-After')) || 0),
+      'temporarily_unavailable',
+    )
+  }
   if (!response.ok)
     throw new ApiError(
       response.status,

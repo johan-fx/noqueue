@@ -265,7 +265,14 @@ it('location completion and directory backfill roll back together and version co
 it('publishes grouped calendars without legacy fields and derives open public admission from full-day ownership', async () => {
   const f = await fixture()
   const { twentyFourHours: _always, schedules: _slots, ...common } = valid
-  const day = new Date().getUTCDay(), next = (day + 1) % 7
+  const weekday = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Madrid',
+    weekday: 'short',
+  }).format(new Date())
+  const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(
+      weekday,
+    ),
+    next = (day + 1) % 7
   const grouped = { ...common, scheduleGroups: [{ days: [day], twentyFourHours: true, ranges: [] }, { days: [next], twentyFourHours: false, ranges: [{ from: '12:00', to: '15:00' }] }] }
   const id = await f.insert(grouped)
   await f.confirm()

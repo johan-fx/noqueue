@@ -59,6 +59,22 @@ type DashboardProps =
   | { venue: VenueSummary; mode?: 'membership' }
   | { venue: Omit<VenueSummary, 'role'>; mode: 'commercial' }
 
+function waitingCountsFor(
+  summaries: QueueSummary[],
+  selectedId: string,
+  rows: StaffEntry[],
+) {
+  return Object.fromEntries(
+    summaries.flatMap((summary) => {
+      const count =
+        summary.waitingCount ??
+        (summary.id === selectedId
+          ? rows.filter((entry) => entry.status === 'waiting').length
+          : undefined)
+      return count === undefined ? [] : [[summary.id, count]]
+    }),
+  ) as Record<string, number>
+}
 export function Dashboard(props: DashboardProps) {
   const { venue } = props
   const creationRequest = useRef<{ payload: string; key: string } | null>(null)
@@ -69,6 +85,7 @@ export function Dashboard(props: DashboardProps) {
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const savingRef = useRef(false)
+  const immediateRefresh = useRef<(() => Promise<void>) | null>(null)
   const refreshSequence = useRef(0)
   const queueRefreshSequence = useRef(0)
   const refreshPaused = useRef(false)
@@ -227,95 +244,91 @@ export function Dashboard(props: DashboardProps) {
     }
   }, [venue.id])
   useEffect(() => {
-    if (!selected) return
+    if (!selected || selectedRef.current !== selected) return
     const queueId = selected
-    if (selectedRef.current !== queueId) return
     let live = true
-    async function refresh() {
-      if (refreshPaused.current) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let controller: AbortController | undefined
+    async function poll(forced = false) {
+      clearTimeout(timer)
+      controller?.abort()
+      if (refreshPaused.current && !forced) {
+        timer = setTimeout(() => void poll().catch(() => undefined), 5000)
+        return
+      }
+      const request = new AbortController()
+      controller = request
       const sequence = ++refreshSequence.current
+      let deadline: ReturnType<typeof setTimeout> | undefined
       try {
-        const rows = await api<StaffEntry[]>(`/queues/${queueId}/entries`)
-        const summaries = await api<QueueSummary[]>(
-          `/venues/${venue.id}/queues`,
-        )
-        const counts = await Promise.all(
-          summaries.map(async (summary) => {
-            const waiting =
-              summary.id === queueId
-                ? rows
-                : await api<StaffEntry[]>(`/queues/${summary.id}/entries`)
-            return [
-              summary.id,
-              waiting.filter((entry) => entry.status === 'waiting').length,
-            ] as const
+        const [rows, summaries] = await Promise.race([
+          Promise.all([
+            api<StaffEntry[]>(
+              `/queues/${queueId}/entries`,
+              'GET',
+              undefined,
+              undefined,
+              request.signal,
+            ),
+            api<QueueSummary[]>(
+              `/venues/${venue.id}/queues`,
+              'GET',
+              undefined,
+              undefined,
+              request.signal,
+            ),
+          ]),
+          new Promise<never>((_, reject) => {
+            deadline = setTimeout(() => {
+              request.abort()
+              reject(
+                new ApiError(
+                  503,
+                  'Servicio temporalmente no disponible. Inténtalo de nuevo.',
+                  0,
+                  'temporarily_unavailable',
+                ),
+              )
+            }, 15000)
           }),
-        )
+        ])
         if (
           live &&
           sequence === refreshSequence.current &&
           selectedRef.current === queueId
         ) {
-          setWaitingCounts(Object.fromEntries(counts))
+          setWaitingCounts(waitingCountsFor(summaries, queueId, rows))
           commitQueues(summaries)
           commitEntries(rows)
           setLastSync(new Date().toLocaleTimeString())
+          setError('')
         }
-      } catch (e) {
+      } catch (error) {
         if (
           live &&
           sequence === refreshSequence.current &&
           selectedRef.current === queueId
-        )
-          setError(errorMessage(e))
+        ) {
+          setError(errorMessage(error))
+          throw error
+        }
+      } finally {
+        clearTimeout(deadline)
+        if (live && controller === request)
+          timer = setTimeout(() => void poll().catch(() => undefined), 5000)
       }
     }
-    void refresh()
-    const timer = setInterval(() => void refresh(), 5000)
+    immediateRefresh.current = () => poll(true)
+    void poll().catch(() => undefined)
     return () => {
       live = false
-      clearInterval(timer)
+      controller?.abort()
+      clearTimeout(timer)
+      immediateRefresh.current = null
     }
   }, [selected, venue.id])
   async function refresh() {
-    const queueId = selectedRef.current
-    if (!queueId || queueId !== selected) return
-    const sequence = ++refreshSequence.current
-    try {
-      const [rows, qs] = await Promise.all([
-        api<StaffEntry[]>(`/queues/${queueId}/entries`),
-        api<QueueSummary[]>(`/venues/${venue.id}/queues`),
-      ])
-      const counts = await Promise.all(
-        qs.map(
-          async (summary) =>
-            [
-              summary.id,
-              (summary.id === queueId
-                ? rows
-                : await api<StaffEntry[]>(`/queues/${summary.id}/entries`)
-              ).filter((entry) => entry.status === 'waiting').length,
-            ] as const,
-        ),
-      )
-      if (
-        sequence !== refreshSequence.current ||
-        selectedRef.current !== queueId ||
-        selected !== queueId
-      )
-        return
-      setWaitingCounts(Object.fromEntries(counts))
-      commitEntries(rows)
-      commitQueues(qs)
-      setError('')
-    } catch (error) {
-      if (
-        sequence === refreshSequence.current &&
-        selectedRef.current === queueId &&
-        selected === queueId
-      )
-        throw error
-    }
+    await immediateRefresh.current?.()
   }
   async function refreshQueues() {
     const queueId = selectedRef.current
@@ -328,6 +341,7 @@ export function Dashboard(props: DashboardProps) {
       )
         return
       commitQueues(summaries)
+      setWaitingCounts(waitingCountsFor(summaries, queueId, entriesRef.current))
       setError('')
     } catch (e) {
       if (

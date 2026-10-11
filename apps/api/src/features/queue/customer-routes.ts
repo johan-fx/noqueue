@@ -45,10 +45,11 @@ customerRoutes.get('/venues/:id/services', async (c) => {
     await coordinator(c.env, queue.id).refresh(queue.id)
     const service = await publicService(c.env, queue.id)
     if (!service) continue
+    const now = Date.now()
     const counts = await c.env.DB.prepare(
-      "SELECT COALESCE(SUM(e.party_size),0) AS waitingPeople,AVG(CASE WHEN p.quality!='unknown' AND p.predicted_at IS NOT NULL THEN p.eta_minutes END) AS averageWaitMinutes FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND e.status='waiting'",
+      "SELECT COALESCE(SUM(e.party_size),0) AS waitingPeople,AVG(CASE WHEN p.quality!='unknown' AND p.predicted_at IS NOT NULL AND p.updated_at>=? AND p.updated_at<=? THEN MAX(0,(p.predicted_at-?)/60000.0) END) AS averageWaitMinutes FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND e.status='waiting'",
     )
-      .bind(queue.id)
+      .bind(now - 120000, now, now, queue.id)
       .first<{ waitingPeople: number; averageWaitMinutes: number | null }>()
     services.push({
       ...service,

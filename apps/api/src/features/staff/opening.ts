@@ -9,7 +9,13 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { audit, queueAccess } from '../../auth/access'
 import { hash } from '../queue/crypto'
-import { loadQueueState, recalculateQueue } from '../queue/projection'
+import {
+  loadQueueState,
+  recalculateQueue,
+  commitQueueTransition,
+  maintainQueue,
+  type QueueModelInput,
+} from '../queue/projection'
 import {
   configurationComplete,
   inventoryConfirmed,
@@ -128,6 +134,7 @@ export async function runLifecycleCommand(
     await recalculateQueue(env, queueId)
     return { ok: true }
   }
+  await maintainQueue(env, queueId)
   const context = await openingContext(env, queueId)
   if (input.contextToken !== context.contextToken)
     throw new HTTPException(409, { message: 'version_conflict' })
@@ -142,9 +149,15 @@ export async function runLifecycleCommand(
     if (context.readiness.reasons.includes('configuration_missing'))
       throw new HTTPException(409, { message: 'configuration_missing' })
   }
-  const state = await loadQueueState(env, queueId),
-    config = state.config!,
-    now = Date.now()
+  const now = Date.now()
+  const state = await loadQueueState(env, queueId, now),
+    config = state.config!
+  const after: QueueModelInput = {
+    config,
+    allocations: state.allocations,
+    parties: state.parties,
+    holds: state.holds.map((h) => ({ ...h })),
+  }
   if (
     config.type !== 'restaurant' &&
     ['confirm_inventory', 'occupancy', 'release_unit'].includes(input.action)
@@ -234,6 +247,7 @@ export async function runLifecycleCommand(
     )
     if (!hold)
       throw new HTTPException(409, { message: 'no_external_occupancy' })
+    after.holds = after.holds!.filter((h) => h.resource_id !== hold.resource_id)
     statements.push(
       env.DB.prepare(
         'DELETE FROM queue_external_occupancy WHERE queue_id=? AND resource_id=?',
@@ -282,6 +296,12 @@ export async function runLifecycleCommand(
         (h) => h.space_id === group.spaceId && h.seats === group.seats,
       )
       const keep = prior.slice(0, answer.occupied)
+      after.holds = after.holds!.filter(
+        (h) =>
+          !prior
+            .slice(answer.occupied)
+            .some((old) => old.resource_id === h.resource_id),
+      )
       for (const hold of prior.slice(answer.occupied))
         statements.push(
           env.DB.prepare(
@@ -291,6 +311,13 @@ export async function runLifecycleCommand(
       const additional = availableIds
         .filter((id) => !prior.some((h) => h.resource_id === id))
         .slice(0, Math.max(0, answer.occupied - keep.length))
+      after.holds!.push(
+        ...additional.map((resource_id) => ({
+          resource_id,
+          space_id: group.spaceId,
+          seats: group.seats,
+        })),
+      )
       for (const resourceId of additional)
         statements.push(
           env.DB.prepare(
@@ -324,6 +351,11 @@ export async function runLifecycleCommand(
         'INSERT INTO queue_opening VALUES (?,?,?,?,?) ON CONFLICT(queue_id) DO UPDATE SET topology=excluded.topology,complete=excluded.complete,opened_at=excluded.opened_at,actor_id=excluded.actor_id',
       ).bind(queueId, topology(config), Number(complete), now, actor),
     )
+    after.config = {
+      ...config,
+      estimationMode: 'shadow',
+      resourceStateKnown: complete,
+    }
     const source = JSON.stringify({
       ...config,
       estimationMode: 'shadow',
@@ -413,7 +445,7 @@ export async function runLifecycleCommand(
       JSON.stringify({ ok: true }),
     ),
   )
-  await env.DB.batch(statements)
-  await recalculateQueue(env, queueId)
+  await commitQueueTransition(env, queueId, state, after, statements, now)
+  await recalculateQueue(env, queueId, now)
   return { ok: true }
 }

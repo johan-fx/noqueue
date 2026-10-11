@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { beforeAll, afterAll, afterEach, expect, it } from 'vitest'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from '../../../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { manualConsentVersion, publicServiceConsentVersion } from '@noqueue/contracts/queue'
 import { whatsappV4CatalogForEnvironment } from '../../integrations/whatsapp-copy-v4'

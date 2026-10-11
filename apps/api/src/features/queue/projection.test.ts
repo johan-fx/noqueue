@@ -286,3 +286,222 @@ it('preserves legacy group identities when an older client reorders spaces witho
   )
   expect(reordered.spaces.map((s) => s.id)).toEqual(['legacy-1', 'legacy-0'])
 })
+
+it('records duration-adjustment expiry as an operational improvement at fixed current time', async () => {
+  const start = 1_900_000_000_000,
+    queueId = crypto.randomUUID()
+  const config = {
+    name: 'Desk',
+    type: 'reception',
+    capacity: 99,
+    averageMinutes: 30,
+    graceMinutes: 2,
+    cutoffMinutes: 0,
+    twentyFourHours: true,
+    schedules: [],
+    receptionServices: ['other'],
+    spaces: [],
+    adjustments: [
+      {
+        spaceId: 'reception',
+        seats: 100,
+        minutes: 60,
+        reason: 'Temporary duration',
+        expiresAt: start + 60_000,
+      },
+    ],
+  }
+  await env.DB.prepare(
+    "INSERT INTO queue(id,venue_id,name,config,capacity,average_minutes) VALUES (?,'demo-venue','Desk',?,99,30)",
+  )
+    .bind(queueId, JSON.stringify(config))
+    .run()
+  const ids = [crypto.randomUUID(), crypto.randomUUID()]
+  for (const [i, id] of ids.entries())
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,'continuous:test')",
+    )
+      .bind(id, queueId, id, id, id, id, start, i + 1)
+      .run()
+  await recalculateQueue(env, queueId, start)
+  await recalculateQueue(env, queueId, start + 60_000)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?',
+      )
+        .bind(ids[1])
+        .first()
+    )?.operational_forecast_delta_ms,
+  ).toBe(-30 * 60_000)
+})
+
+it('accumulates signed fixed-time changes and never increments on clock refresh', async () => {
+  const { commitQueueTransition } = await import('./projection')
+  const start = 1_900_000_000_000,
+    queueId = crypto.randomUUID()
+  const config = {
+    name: 'Desk',
+    type: 'reception' as const,
+    capacity: 99,
+    averageMinutes: 60,
+    graceMinutes: 2,
+    cutoffMinutes: 0,
+    twentyFourHours: true,
+    schedules: [],
+    receptionServices: ['other' as const],
+    spaces: [],
+  }
+  await env.DB.prepare(
+    "INSERT INTO queue(id,venue_id,name,config,capacity,average_minutes) VALUES (?,'demo-venue','Desk',?,99,60)",
+  )
+    .bind(queueId, JSON.stringify(config))
+    .run()
+  const ids = [crypto.randomUUID(), crypto.randomUUID()]
+  for (const [i, id] of ids.entries())
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,'continuous:test')",
+    )
+      .bind(id, queueId, id, id, id, id, start, i + 1)
+      .run()
+  await recalculateQueue(env, queueId, start)
+  for (const elapsed of [20, 40, 60])
+    await recalculateQueue(env, queueId, start + elapsed * 60_000)
+  const row = () =>
+    env.DB.prepare(
+      'SELECT operational_forecast_delta_ms,revision FROM queue_projection WHERE entry_id=?',
+    )
+      .bind(ids[1])
+      .first<{ operational_forecast_delta_ms: number; revision: number }>()
+  expect(await row()).toMatchObject({
+    operational_forecast_delta_ms: 0,
+    revision: 1,
+  })
+  for (const minutes of [62, 64, 66, 60]) {
+    const now = start + 65 * 60_000
+    const before = await loadQueueState(env, queueId, now)
+    const next = { ...config, averageMinutes: minutes }
+    await commitQueueTransition(
+      env,
+      queueId,
+      before,
+      {
+        config: next,
+        allocations: before.allocations,
+        parties: before.parties,
+        holds: before.holds,
+      },
+      [
+        env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(
+          JSON.stringify(next),
+          queueId,
+        ),
+      ],
+      now,
+    )
+    expect((await row())?.operational_forecast_delta_ms).toBe(
+      (minutes - 60) * 60_000,
+    )
+  }
+})
+
+it('rolls back legacy quick-allocation retirement when canonical projection persistence fails', async () => {
+  const start = 1_900_000_000_000,
+    queueId = crypto.randomUUID(),
+    waiting = crypto.randomUUID(),
+    legacy = crypto.randomUUID()
+  const config = {
+    name: 'Legacy desk',
+    type: 'reception',
+    capacity: 99,
+    averageMinutes: 30,
+    graceMinutes: 2,
+    cutoffMinutes: 0,
+    twentyFourHours: true,
+    schedules: [],
+    receptionServices: ['other'],
+    spaces: [],
+    estimationMode: 'active',
+  }
+  await env.DB.prepare(
+    "INSERT INTO queue(id,venue_id,name,config,capacity,average_minutes) VALUES (?,'demo-venue','Legacy desk',?,99,30)"
+  )
+    .bind(queueId, JSON.stringify(config))
+    .run()
+  for (const [index, id] of [waiting, legacy].entries())
+    await env.DB.prepare(
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,?,'continuous:test')"
+    )
+      .bind(
+        id,
+        queueId,
+        id,
+        id,
+        id,
+        id,
+        start,
+        index + 1,
+        index ? 'completed' : 'waiting'
+      )
+      .run()
+  await recalculateQueue(env, queueId, start)
+  await env.DB.prepare(
+    "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,'reception:100:0','reception',100,?,?)"
+  )
+    .bind(legacy, queueId, start, start)
+    .run()
+  const DB = new Proxy(env.DB, {
+    get(target, key) {
+      if (key === 'batch')
+        return (statements: D1PreparedStatement[]) =>
+          target.batch([
+            ...statements,
+            target.prepare(
+              'INSERT INTO customer_command(entry_id,request_key,request_hash,result,created_at) VALUES (NULL,NULL,NULL,NULL,NULL)'
+            ),
+          ])
+      const value = Reflect.get(target, key)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  await expect(
+    recalculateQueue({ ...env, DB }, queueId, start + 1000)
+  ).rejects.toThrow()
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT released_at FROM queue_allocation WHERE entry_id=?'
+      )
+        .bind(legacy)
+        .first()
+    )?.released_at
+  ).toBeNull()
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT updated_at FROM queue_projection WHERE entry_id=?'
+      )
+        .bind(waiting)
+        .first()
+    )?.updated_at
+  ).toBe(start)
+  await recalculateQueue(env, queueId, start + 1000)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT released_at FROM queue_allocation WHERE entry_id=?'
+      )
+        .bind(legacy)
+        .first()
+    )?.released_at
+  ).toBe(start + 1000)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?'
+      )
+        .bind(waiting)
+        .first()
+    )?.operational_forecast_delta_ms
+  ).toBe(0)
+})

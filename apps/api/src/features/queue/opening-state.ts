@@ -1,3 +1,4 @@
+import { loadQueueState, commitQueueTransition } from './projection'
 import { directoryConfigStatement } from '../discovery/configuration'
 import {
   storedServiceSchema as serviceSchema,
@@ -109,6 +110,7 @@ export async function readiness(
 export async function activateIfReady(
   env: CloudflareBindings,
   queueId: string,
+  now = Date.now(),
 ) {
   const row = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
     .bind(queueId)
@@ -128,26 +130,43 @@ export async function activateIfReady(
     estimationMode: 'active',
     resourceStateKnown: parsed.data.type === 'restaurant',
   })
-  await env.DB.batch([
-    env.DB.prepare(
-      'UPDATE queue SET config=?,version=version+1 WHERE id=?',
-    ).bind(source, queueId),
-    directoryConfigStatement(env, queueId, source),
-    ...(parsed.data.type === 'restaurant'
-      ? [
-          env.DB.prepare(
-            'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
-          ).bind(
-            crypto.randomUUID(),
-            queueId,
-            'system',
-            'activated',
-            '{}',
-            Date.now(),
-          ),
-        ]
-      : []),
-  ])
+  const before = await loadQueueState(env, queueId, now)
+  await commitQueueTransition(
+    env,
+    queueId,
+    before,
+    {
+      config: {
+        ...parsed.data,
+        estimationMode: 'active',
+        resourceStateKnown: parsed.data.type === 'restaurant',
+      },
+      allocations: before.allocations,
+      parties: before.parties,
+      holds: before.holds,
+    },
+    [
+      env.DB.prepare(
+        'UPDATE queue SET config=?,version=version+1 WHERE id=?',
+      ).bind(source, queueId),
+      directoryConfigStatement(env, queueId, source),
+      ...(parsed.data.type === 'restaurant'
+        ? [
+            env.DB.prepare(
+              'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
+            ).bind(
+              crypto.randomUUID(),
+              queueId,
+              'system',
+              'activated',
+              '{}',
+              Date.now(),
+            ),
+          ]
+        : []),
+    ],
+    now,
+  )
 }
 
 /** Confirmation belongs to the current topology, independently of the admissions switch. */

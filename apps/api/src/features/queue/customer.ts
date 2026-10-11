@@ -1,4 +1,3 @@
-import { maintainServiceEntries } from './service-expiry'
 import { noticeStatement, publishNotice } from './notices'
 import { HTTPException } from 'hono/http-exception'
 import {
@@ -7,7 +6,7 @@ import {
 } from '@noqueue/contracts/queue'
 import { encryptDisplayName, hash, hmac, secureEqual } from './crypto'
 import { eligibleResources } from './engine'
-import { loadQueueState, recalculateQueue } from './projection'
+import { loadQueueState, recalculateQueue, commitQueueTransition, maintainQueue, type QueueModelInput } from './projection'
 import type { QueueNoticeSnapshot } from './notices'
 import {
   parseWhatsAppAction,
@@ -55,6 +54,7 @@ export async function expireArrivals(
       space_id: string | null
     }>()
   if (!due.results.length) return
+  const before = await loadQueueState(env, queueId, now)
   const statements = due.results.flatMap((entry) => {
     let serviceName = 'Service'
     let resourceName: string | null = null
@@ -108,7 +108,12 @@ export async function expireArrivals(
       "UPDATE queue_entry SET status='expired',version=version+1 WHERE id=? AND status='called' AND arrival_deadline_at<=?",
     ).bind(entry.id, now),
   ]})
-  await env.DB.batch(statements)
+  const expired = new Set(due.results.map(entry => entry.id))
+  await commitQueueTransition(env, queueId, before, {
+    config: before.config, parties: before.parties,
+    holds: before.holds, allocations: before.allocations.map(a => expired.has(a.entry_id) && a.released_at === null
+      ? { ...a, released_at: now, outcome: 'expired' } : a),
+  }, statements, now)
   for (const { id } of due.results) await publishNotice(env, id, 'expired')
 }
 
@@ -122,8 +127,7 @@ export async function runCustomerCommand(
   origin?: TrustedWhatsAppAction,
 ) {
   customerCommandSchema.parse(input)
-  await maintainServiceEntries(env, queueId, now)
-  await expireArrivals(env, queueId, now)
+  await maintainQueue(env, queueId, now)
   const entry = await env.DB.prepare(
     origin
       ? 'SELECT id,status,version,sequence,party_size,preferred_space_id,call_cycle,locale FROM queue_entry WHERE id=? AND queue_id=?'
@@ -191,10 +195,15 @@ export async function runCustomerCommand(
   )
     throw new HTTPException(409, { message: 'unsupported_service' })
   const statements: D1PreparedStatement[] = []
+  const after: QueueModelInput = {
+    config: state.config, allocations: state.allocations.map(item => ({ ...item })),
+    holds: state.holds, parties: state.parties.map(item => ({ ...item })),
+  }
   let metadata: Record<string, unknown> = {}
   let notifyCancellation = false
   let notifyReadyEntryId: string | null = null
   if (input.action === 'update') {
+    after.parties = after.parties!.map(p => p.id === entry.id ? { ...p, partySize: input.partySize, preferredSpaceId: input.preferredSpaceId } : p)
     const party = { id: entry.id, sequence: entry.sequence, ...input }
     if (
       !eligibleResources(
@@ -220,6 +229,8 @@ export async function runCustomerCommand(
       preferredSpaceId: input.preferredSpaceId,
     }
   } else if (input.action === 'cancel') {
+    after.parties = after.parties!.filter(p => p.id !== entry.id)
+    after.allocations = after.allocations!.map(a => a.entry_id === entry.id && a.released_at === null ? { ...a, released_at: now, outcome: 'cancelled' } : a)
     const snapshot: QueueNoticeSnapshot = {
       schemaVersion: 2,
       serviceName: state.config.name,
@@ -294,7 +305,15 @@ export async function runCustomerCommand(
         "UPDATE queue_allocation SET released_at=?,outcome='yielded' WHERE entry_id=? AND released_at IS NULL",
       ).bind(now, entry.id),
     )
+    after.allocations = after.allocations!.map(a => a.entry_id === entry.id && a.released_at === null ? { ...a, released_at: now, outcome: 'yielded' } : a)
     if (successor) {
+      after.parties = after.parties!.filter(p => p.id !== successor.id)
+      after.parties.push({ ...calledParty, sequence: successor.sequence })
+      after.appendedCallAt = now
+      if (allocation) after.allocations = [
+        ...after.allocations!.filter(a => a.entry_id !== successor.id),
+        { ...allocation, entry_id: successor.id, reserved_at: now, arrived_at: null, released_at: null, outcome: null },
+      ]
       const priorCycle = await env.DB.prepare(
         'SELECT call_cycle FROM queue_entry WHERE id=?',
       )
@@ -377,6 +396,7 @@ export async function runCustomerCommand(
       }
       notifyReadyEntryId = successor.id
     } else {
+      after.parties!.push(calledParty)
       statements.push(
         env.DB.prepare(
           "UPDATE queue_entry SET status='waiting',version=version+1,call_cycle=call_cycle+1,called_at=NULL,arrival_deadline_at=NULL WHERE id=? AND status='called'",
@@ -404,6 +424,7 @@ export async function runCustomerCommand(
     )
     if (!successor)
       throw new HTTPException(409, { message: 'no_compatible_successor' })
+    after.parties = after.parties!.map(p => p.id === entry.id ? { ...p, sequence: successor.sequence } : p.id === successor.id ? { ...p, sequence: entry.sequence } : p)
     statements.push(
       env.DB.prepare(
         'UPDATE queue_entry SET sequence=(SELECT MAX(sequence)+1 FROM queue_entry WHERE queue_id=?) WHERE id=?',
@@ -473,8 +494,7 @@ export async function runCustomerCommand(
       ).bind(now, origin.webhookEventId),
     )
   }
-  await env.DB.batch(statements)
-  await recalculateQueue(env, queueId, now)
+  await commitQueueTransition(env, queueId, state, after, statements, now)
   if (notifyCancellation) await publishNotice(env, entry.id, 'cancelled')
   if (notifyReadyEntryId) await publishNotice(env, notifyReadyEntryId, 'ready')
   if (origin?.replyWithinServiceWindow)

@@ -1,14 +1,12 @@
-import { maintainServiceEntries } from './features/queue/service-expiry'
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
 import {
   runCustomerCommand,
   runWhatsAppAction,
-  expireArrivals,
 } from './features/queue/customer'
 import type { CustomerCommand } from '@noqueue/contracts/queue'
 import { openingContext, runLifecycleCommand } from './features/staff/opening'
 import type { QueueLifecycleCommand } from '@noqueue/contracts/staff'
-import { recalculateQueue } from './features/queue/projection'
+import { recalculateQueue, maintainQueue, refreshQueue } from './features/queue/projection'
 import { HTTPException } from 'hono/http-exception'
 import type { QueueCommand } from '@noqueue/contracts/staff'
 import { runQueueCommand, configureQueue } from './features/staff/commands'
@@ -35,15 +33,14 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   private async withQueue<T>(queueId: string, work: () => Promise<T>) {
     await this.ctx.storage.put('queueId', queueId)
-    await maintainServiceEntries(this.env, queueId)
-    await expireArrivals(this.env, queueId)
+    await maintainQueue(this.env, queueId)
     try {
       return await work()
     } finally {
       const next = await this.env.DB.prepare(
-        "SELECT MIN(deadline) AS deadline FROM (SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called' UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting')",
+        "WITH checkpoint AS (SELECT MIN(p.updated_at) AS updated_at FROM queue_entry e JOIN queue_projection p ON p.entry_id=e.id WHERE e.queue_id=? AND e.status='waiting') SELECT MIN(deadline) AS deadline FROM (SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called' UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting' UNION ALL SELECT CAST(json_extract(a.value,'$.expiresAt') AS INTEGER) AS deadline FROM queue q,json_each(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.adjustments') a WHERE q.id=? AND CAST(json_extract(a.value,'$.expiresAt') AS INTEGER)>COALESCE((SELECT updated_at FROM checkpoint),?))",
       )
-        .bind(queueId, queueId)
+        .bind(queueId, queueId, queueId, queueId, Date.now())
         .first<{ deadline: number | null }>()
       if (next?.deadline != null)
         await this.ctx.storage.setAlarm(Math.max(Date.now() + 1, next.deadline))
@@ -125,7 +122,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   read(queueId: string, token: string) {
     return this.serialize(() =>
       this.withQueue(queueId, async () => {
-        await recalculateQueue(this.env, queueId)
+        await refreshQueue(this.env, queueId)
         return readEntrySnapshot(this.env, token)
       }),
     )
@@ -133,7 +130,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   refresh(queueId: string) {
     return this.serialize(() =>
       this.withQueue(queueId, async () => {
-        await recalculateQueue(this.env, queueId)
+        await refreshQueue(this.env, queueId)
         return { ok: true }
       }),
     )
@@ -201,9 +198,13 @@ export default {
   },
   async scheduled(_controller, env) {
     await backfillDirectoryConfigs(env)
-    const queues = await env.DB.prepare('SELECT id FROM queue').all<{
-      id: string
-    }>()
+    const queues = await env.DB.prepare(
+      `SELECT q.id FROM queue q
+       WHERE EXISTS(SELECT 1 FROM queue_entry e WHERE e.queue_id=q.id AND e.status IN ('waiting','called'))
+       OR EXISTS(SELECT 1 FROM queue_allocation a WHERE a.queue_id=q.id AND a.released_at IS NULL)
+       OR EXISTS(SELECT 1 FROM queue_external_occupancy h WHERE h.queue_id=q.id)
+       OR EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.adjustments') a WHERE json_extract(a.value,'$.expiresAt')>?)`,
+    ).bind(Date.now()).all<{ id: string }>()
     for (const queue of queues.results) {
       try {
         await (env.APP_ENV === 'local'

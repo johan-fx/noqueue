@@ -7,9 +7,44 @@ const platformAC = createAccessControl({
   user: ['create'],
   session: ['revoke'],
 } as const)
+const authConfigurationKeys = [
+  'BETTER_AUTH_SECRET',
+  'PUBLIC_APP_ORIGIN',
+  'APP_ENV',
+  'AUTH_EMAIL_API_KEY',
+  'AUTH_EMAIL_FROM',
+] as const
+type AuthConfiguration = Pick<
+  CloudflareBindings,
+  (typeof authConfigurationKeys)[number]
+>
+// Binding-only deployments can reuse an isolate. Keep one latest context per
+// weak DB owner, and compare every auth/mail input rather than env identity.
+const authInstances = new WeakMap<
+  D1Database,
+  { configuration: AuthConfiguration; auth: ReturnType<typeof initializeAuth> }
+>()
 export function createAuth(env: CloudflareBindings) {
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32)
     throw new Error('auth_not_configured')
+  const existing = authInstances.get(env.DB)
+  if (
+    existing &&
+    authConfigurationKeys.every(
+      (key) => existing.configuration[key] === env[key],
+    )
+  )
+    return existing.auth
+  // Snapshot closures too: an in-flight request must keep the configuration
+  // that initialized its auth instance even if its caller mutates env later.
+  const snapshot = { ...env }
+  const auth = initializeAuth(snapshot)
+  // betterAuth owns the shared initialization/schema-check promise, not us.
+  // Session and permission results are deliberately never stored here.
+  authInstances.set(env.DB, { configuration: snapshot, auth })
+  return auth
+}
+function initializeAuth(env: CloudflareBindings) {
   return betterAuth({
     database: env.DB,
     secret: env.BETTER_AUTH_SECRET,

@@ -24,6 +24,7 @@ export type QueueNoticeSnapshot = {
   serviceName: string
   ahead: number | null
   etaMinutes: number | null
+  operationalForecastDeltaMs?: number
   predictedAt: number | null
   estimateQuality: 'estimated' | 'provisional' | 'unknown'
   resourceName: string | null

@@ -10,12 +10,14 @@ import {
   it,
   expect,
 } from 'vitest'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from '../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
 import { createAuth } from './auth/server'
 import { provisionSchema, type ProvisionInput } from '@noqueue/contracts/staff'
 import { provision } from './features/staff/provision'
+import { profileD1 } from '../test/d1-profile'
+import { applyD1Migrations } from 'cloudflare:test'
 const network = setupNetwork(),
   mails = new Map<string, string>()
 beforeAll(() => network.enable())
@@ -1439,7 +1441,7 @@ it('does not allow configuration-only creation to establish a manual operational
     }),
   ).rejects.toThrow('operational_initialization_required')
 })
-it('recalculates an already-confirmed formerly gated queue on the normal staff summary read', async () => {
+it('keeps summaries read-only and repairs a formerly gated queue on selected entries read', async () => {
   const t = await tenant()
   await configureAndOpen(t, t.queueId, {
     ...input().services[0]!,
@@ -1478,8 +1480,19 @@ it('recalculates an already-confirmed formerly gated queue on the normal staff s
     config: { estimationMode: string }
     readiness: { state: string }
   }[]
-  expect(rows[0]?.readiness.state).toBe('active')
-  expect(rows[0]?.config.estimationMode).toBe('active')
+  expect(rows[0]?.readiness.state).toBe('pending')
+  expect(rows[0]?.config.estimationMode).toBe('shadow')
+  expect(
+    (await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie))
+      .status,
+  ).toBe(200)
+  expect(
+    JSON.parse(
+      (await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+        .bind(t.queueId)
+        .first<{ config: string }>())!.config,
+    ).estimationMode,
+  ).toBe('active')
   expect(
     await env.DB.prepare('SELECT * FROM queue_opening WHERE queue_id=?')
       .bind(t.queueId)
@@ -3056,4 +3069,340 @@ it('timestamps added services and counts closed services without per-card reads'
       .status,
   ).toBe(409)
   expect(await stamp()).toBe(saved)
+})
+it('keeps staff summary refreshes read-only at 10x queue count and counts 501 waiting turns beyond the entry page', async () => {
+  const { profileD1 } = await import('../test/d1-profile')
+  const t = await tenant()
+  await env.DB.prepare(
+    `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<501)
+    INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status,service_window_id)
+    SELECT ?||':'||i,?,?||':'||i,'hash',?||':'||i,?||':'||i,3,'en',0,i,'waiting','continuous:test' FROM n`,
+  )
+    .bind(t.queueId, t.queueId, t.queueId, t.queueId, t.queueId)
+    .run()
+  const measured = profileD1(env),
+    getByName = vi.fn(() => {
+      throw new Error('Summary must not refresh coordinators')
+    })
+  const bindings = {
+    ...measured.env,
+    QUEUE_COORDINATOR: {
+      ...env.QUEUE_COORDINATOR,
+      getByName,
+      jurisdiction: () => ({ getByName }),
+    },
+  } as unknown as typeof env
+  const read = () =>
+    app.request(
+      `${origin}/api/v1/staff/venues/${t.venueId}/queues`,
+      { headers: { Cookie: t.owner.cookie } },
+      bindings,
+    )
+  const costs = []
+  for (const queues of [1, 10]) {
+    if (queues === 10)
+      await env.DB.prepare(
+        `WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<9)
+      INSERT INTO queue(id,venue_id,name,capacity,average_minutes,open,config)
+      SELECT q.id||':copy:'||i,q.venue_id,q.name,q.capacity,q.average_minutes,q.open,q.config FROM queue q,n WHERE q.id=?`,
+      )
+        .bind(t.queueId)
+        .run()
+    measured.costs.length = 0
+    const response = await read()
+    expect(response.status).toBe(200)
+    const rows = (await response.json()) as {
+      id: string
+      waitingCount: number
+    }[]
+    expect(rows).toHaveLength(queues)
+    expect(rows.find((row) => row.id === t.queueId)?.waitingCount).toBe(501)
+    expect(getByName).not.toHaveBeenCalled()
+    expect(
+      measured.costs.some((cost) => /INSERT|UPDATE|DELETE/.test(cost.sql)),
+    ).toBe(false)
+    const summary = measured.costs.find((cost) =>
+      cost.sql.includes('AS waitingCount'),
+    )!
+    const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${summary.sql}`)
+      .bind(t.venueId)
+      .all<{ detail: string }>()
+    expect(
+      plan.results.some((row) => row.detail.includes('queue_venue_lookup')),
+    ).toBe(true)
+    expect(
+      plan.results.some((row) =>
+        row.detail.includes('queue_entry_status_sequence'),
+      ),
+    ).toBe(true)
+    costs.push({
+      queues,
+      statements: measured.costs.length,
+      rowsRead: measured.costs.reduce(
+        (total, cost) => total + cost.rowsRead,
+        0,
+      ),
+    })
+  }
+  console.info({ event: 'local_staff_summary_read_cost', costs })
+  expect(costs[1]!.statements).toBeLessThan(costs[0]!.statements * 10)
+  expect(costs[1]!.rowsRead).toBeLessThan(costs[0]!.rowsRead * 10)
+})
+
+describe('auth initialization reuse without cached authorization', () => {
+  const schemaReads = (costs: Array<{ sql: string }>) =>
+    costs.filter(({ sql }) => /sqlite_master|pragma_table_info/i.test(sql))
+  const sessionReads = (costs: Array<{ sql: string }>) =>
+    costs.filter(({ sql }) => /select.*[" ]session[" ]/i.test(sql))
+  const read = (bindings: typeof env, cookie: string, path = '/staff/me') =>
+    app.request(
+      `${origin}/api/v1${path}`,
+      { headers: { Cookie: cookie } },
+      { ...bindings },
+    )
+
+  it('validates cold auth once and keeps warm authenticated summary requests free of schema rescans', async () => {
+    const t = await tenant(),
+      measured = profileD1(env)
+    const path = `/staff/venues/${t.venueId}/queues`
+    expect((await read(measured.env, t.owner.cookie, path)).status).toBe(200)
+    const cold = [...measured.costs]
+    expect(cold.some(({ sql }) => /sqlite_master/i.test(sql))).toBe(true)
+    expect(cold.some(({ sql }) => /pragma_table_info/i.test(sql))).toBe(true)
+    const warm = []
+    for (let i = 0; i < 3; i++) {
+      measured.costs.length = 0
+      expect((await read(measured.env, t.owner.cookie, path)).status).toBe(200)
+      warm.push([...measured.costs])
+      expect(sessionReads(measured.costs)).not.toHaveLength(0)
+    }
+    const summarize = (costs: typeof measured.costs) => ({
+      statements: costs.length,
+      rowsRead: costs.reduce((total, cost) => total + cost.rowsRead, 0),
+      schemaStatements: schemaReads(costs).length,
+    })
+    console.info({
+      event: 'local_auth_initialization_read_cost',
+      cold: summarize(cold),
+      warm: warm.map(summarize),
+    })
+    expect(warm.map((costs) => schemaReads(costs).length)).toEqual([0, 0, 0])
+  })
+
+  it('shares the cold schema check across concurrent authenticated requests', async () => {
+    const user = await identity(),
+      measured = profileD1(env)
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => read(measured.env, user.cookie)),
+    )
+    expect(responses.map((response) => response.status)).toEqual([
+      200, 200, 200, 200, 200,
+    ])
+    expect(
+      measured.costs.filter(({ sql }) => /sqlite_master/i.test(sql)),
+    ).toHaveLength(1)
+    expect(sessionReads(measured.costs)).toHaveLength(5)
+  })
+
+  it('keeps initialization and sessions isolated between actual local databases', async () => {
+    const user = await identity(),
+      first = profileD1(env)
+    const isolation = (env as typeof env & { AUTH_ISOLATION_DB: D1Database })
+      .AUTH_ISOLATION_DB
+    await applyD1Migrations(isolation, env.TEST_MIGRATIONS)
+    const second = profileD1({ ...env, DB: isolation })
+    expect((await read(first.env, user.cookie)).status).toBe(200)
+    expect((await read(second.env, user.cookie)).status).toBe(401)
+    expect(schemaReads(first.costs).length).toBeGreaterThan(0)
+    expect(schemaReads(second.costs).length).toBeGreaterThan(0)
+    first.costs.length = second.costs.length = 0
+    expect((await read(first.env, user.cookie)).status).toBe(200)
+    expect((await read(second.env, user.cookie)).status).toBe(401)
+    expect(schemaReads([...first.costs, ...second.costs])).toHaveLength(0)
+    expect(sessionReads(second.costs)).not.toHaveLength(0)
+  })
+
+  it('retries native schema validation after a transient local database failure', async () => {
+    const user = await identity()
+    let fail = true
+    const DB = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === 'prepare')
+          return (sql: string) => {
+            if (fail && /sqlite_master/i.test(sql)) {
+              fail = false
+              throw new Error('fixture database unavailable')
+            }
+            return target.prepare(sql)
+          }
+        const value = Reflect.get(target, key)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const measured = profileD1({ ...env, DB })
+    expect((await read(measured.env, user.cookie)).status).toBe(503)
+    expect((await read(measured.env, user.cookie)).status).toBe(200)
+    expect(schemaReads(measured.costs).length).toBeGreaterThan(0)
+    measured.costs.length = 0
+    expect((await read(measured.env, user.cookie)).status).toBe(200)
+    expect(schemaReads(measured.costs)).toHaveLength(0)
+  })
+
+  it.each([
+    ['BETTER_AUTH_SECRET', 'different-test-only-auth-secret-at-least-32-bytes'],
+    ['PUBLIC_APP_ORIGIN', 'https://different-origin.example'],
+    ['APP_ENV', 'staging'],
+    ['AUTH_EMAIL_API_KEY', 'different-test-mail-key'],
+    ['AUTH_EMAIL_FROM', 'Changed <changed@example.com>'],
+  ] as const)(
+    'reinitializes for a changed %s on the same DB and mutable env',
+    async (key, value) => {
+      const user = await identity(),
+        measured = profileD1(env)
+      const original = createAuth(measured.env)
+      await original.api.getSession({
+        headers: new Headers({ Cookie: user.cookie }),
+      })
+      measured.costs.length = 0
+      measured.env[key] = value
+      const changed = createAuth(measured.env)
+      await changed.api.getSession({
+        headers: new Headers({ Cookie: user.cookie }),
+      })
+      expect(changed === original).toBe(false)
+      expect(schemaReads(measured.costs).length).toBeGreaterThan(0)
+      measured.costs.length = 0
+      expect(createAuth({ ...measured.env }) === changed).toBe(true)
+      await changed.api.getSession({
+        headers: new Headers({ Cookie: user.cookie }),
+      })
+      expect(schemaReads(measured.costs)).toHaveLength(0)
+      if (key === 'BETTER_AUTH_SECRET')
+        expect(
+          await changed.api.getSession({
+            headers: new Headers({ Cookie: user.cookie }),
+          }),
+        ).toBeNull()
+      if (key === 'PUBLIC_APP_ORIGIN') {
+        expect(changed.options.baseURL).toBe(value)
+        expect(changed.options.trustedOrigins).toEqual([value])
+        expect(
+          (
+            await changed.handler(
+              new Request(`${value}/api/v1/auth/sign-out`, {
+                method: 'POST',
+                headers: { Origin: origin, Cookie: user.cookie },
+              }),
+            )
+          ).status,
+        ).toBe(403)
+      }
+      if (key === 'APP_ENV')
+        expect(changed.options.advanced.useSecureCookies).toBe(true)
+      expect(changed.options.session.cookieCache.enabled).toBe(false)
+      expect(changed.options.rateLimit).toMatchObject({
+        enabled: true,
+        storage: 'database',
+      })
+      measured.env.BETTER_AUTH_SECRET = 'short'
+      expect(() => createAuth(measured.env)).toThrow('auth_not_configured')
+    },
+  )
+
+  it('captures fresh mail configuration without changing in-flight auth closures', async () => {
+    const user = await identity(),
+      bindings = { ...env }
+    const original = createAuth(bindings)
+    await original.api.getSession({
+      headers: new Headers({ Cookie: user.cookie }),
+    })
+    const deliveries: Array<{ authorization: string | null; from: string }> = []
+    network.use(
+      http.post('https://api.resend.com/emails', async ({ request }) => {
+        deliveries.push({
+          authorization: request.headers.get('Authorization'),
+          from: ((await request.json()) as { from: string }).from,
+        })
+        return HttpResponse.json({ id: 'mock' })
+      }),
+    )
+    bindings.AUTH_EMAIL_API_KEY = 'changed-test-mail-key'
+    bindings.AUTH_EMAIL_FROM = 'Changed <changed@example.com>'
+    const changed = createAuth(bindings)
+    for (const auth of [original, changed])
+      await auth.api.changeEmail({
+        headers: new Headers({ Cookie: user.cookie }),
+        body: { newEmail: `${username()}@example.com` },
+      })
+    expect(deliveries).toEqual([
+      {
+        authorization: `Bearer ${env.AUTH_EMAIL_API_KEY}`,
+        from: env.AUTH_EMAIL_FROM,
+      },
+      {
+        authorization: 'Bearer changed-test-mail-key',
+        from: 'Changed <changed@example.com>',
+      },
+    ])
+  })
+
+  it('reads current sessions, bans, organization membership and venue roles after warmup', async () => {
+    const t = await tenant(),
+      staff = await member(t, 'venue_manager'),
+      measured = profileD1(env)
+    const summary = `/staff/venues/${t.venueId}/queues`
+    const configure = () =>
+      app.request(
+        `${origin}/api/v1/staff/venues/${t.venueId}/queues`,
+        {
+          method: 'POST',
+          headers: {
+            Origin: origin,
+            Cookie: staff.cookie,
+            'Content-Type': 'application/json',
+          },
+          body: '{}',
+        },
+        measured.env,
+      )
+    expect((await read(measured.env, staff.cookie, summary)).status).toBe(200)
+    expect((await configure()).status).toBe(400)
+    await env.DB.prepare(
+      "UPDATE venue_membership SET role='viewer' WHERE user_id=? AND venue_id=?",
+    )
+      .bind(staff.id, t.venueId)
+      .run()
+    expect((await configure()).status).toBe(403)
+    await env.DB.prepare(
+      'UPDATE venue_membership SET active=0 WHERE user_id=? AND venue_id=?',
+    )
+      .bind(staff.id, t.venueId)
+      .run()
+    expect((await read(measured.env, staff.cookie, summary)).status).toBe(404)
+    await env.DB.prepare(
+      'UPDATE venue_membership SET active=1 WHERE user_id=? AND venue_id=?',
+    )
+      .bind(staff.id, t.venueId)
+      .run()
+    expect((await read(measured.env, staff.cookie, summary)).status).toBe(200)
+    await env.DB.prepare(
+      'DELETE FROM member WHERE userId=? AND organizationId=?',
+    )
+      .bind(staff.id, t.organizationId)
+      .run()
+    expect((await read(measured.env, staff.cookie, summary)).status).toBe(404)
+    await env.DB.prepare('UPDATE user SET banned=1 WHERE id=?')
+      .bind(staff.id)
+      .run()
+    expect((await read(measured.env, staff.cookie)).status).toBe(403)
+    await env.DB.prepare('UPDATE user SET banned=0 WHERE id=?')
+      .bind(staff.id)
+      .run()
+    expect((await read(measured.env, staff.cookie)).status).toBe(200)
+    await env.DB.prepare('DELETE FROM session WHERE userId=?')
+      .bind(staff.id)
+      .run()
+    expect((await read(measured.env, staff.cookie)).status).toBe(401)
+    expect(sessionReads(measured.costs).length).toBeGreaterThan(1)
+  })
 })

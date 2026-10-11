@@ -37,6 +37,7 @@ function acceptedNoticeStateStatement(
   input: {
     entryId: string
     predictedAt: number
+    operationalDeltaMs: number | null
     acceptedAt: number
     revision: number
     callCycle: number
@@ -47,10 +48,11 @@ function acceptedNoticeStateStatement(
   return env.DB.prepare(
     `INSERT INTO queue_notification_state(
        entry_id,last_accepted_predicted_at,last_correction_accepted_at,updated_at,
-       last_accepted_at,last_accepted_call_cycle,last_accepted_revision,last_accepted_notification_id
-     ) VALUES (?,?,?,?,?,?,?,?)
+       last_accepted_at,last_accepted_call_cycle,last_accepted_revision,last_accepted_notification_id,last_accepted_operational_delta_ms
+     ) VALUES (?,?,?,?,?,?,?,?,?)
      ON CONFLICT(entry_id) DO UPDATE SET
        last_accepted_predicted_at=excluded.last_accepted_predicted_at,
+       last_accepted_operational_delta_ms=excluded.last_accepted_operational_delta_ms,
        last_correction_accepted_at=CASE WHEN ? IN ('delayed','improved') THEN excluded.last_correction_accepted_at ELSE queue_notification_state.last_correction_accepted_at END,
        updated_at=excluded.updated_at,
        last_accepted_at=excluded.last_accepted_at,
@@ -77,6 +79,7 @@ function acceptedNoticeStateStatement(
     input.callCycle,
     input.revision,
     input.notificationId,
+    input.operationalDeltaMs,
     input.kind,
   )
 }
@@ -131,10 +134,15 @@ export async function dispatchNotificationSerialized(
     )
       await recalculateQueue(env, pendingJoin.queue_id)
   }
+  if (
+    pendingJoin?.status === 'pending' &&
+    ['approaching', 'delayed', 'improved'].includes(pendingJoin.kind)
+  )
+    await recalculateQueue(env, pendingJoin.queue_id)
   const row = await env.DB.prepare(
     `SELECT n.status,n.attempts,n.kind,n.position,n.payload_version,n.payload_snapshot,n.revision,n.call_cycle,n.accepted_at,
     e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,v.id AS venue_id,
-    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta
+    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta,p.operational_forecast_delta_ms AS current_operational_delta
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
     LEFT JOIN queue_confirmation f ON f.entry_id=e.id
     JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id
@@ -169,6 +177,7 @@ export async function dispatchNotificationSerialized(
       current_predicted_at: number | null
       current_quality: 'estimated' | 'provisional' | 'unknown' | null
       current_eta: number | null
+      current_operational_delta: number | null
       entry_call_cycle: number
     }>()
   if (!row || row.status !== 'pending') return
@@ -287,15 +296,21 @@ export async function dispatchNotificationSerialized(
   let correctionIsCurrent = true
   if (row.kind === 'delayed' || row.kind === 'improved') {
     const baseline = await env.DB.prepare(
-      'SELECT last_accepted_predicted_at,last_correction_accepted_at FROM queue_notification_state WHERE entry_id=?',
+      'SELECT last_accepted_predicted_at,last_correction_accepted_at,last_accepted_operational_delta_ms FROM queue_notification_state WHERE entry_id=?',
     )
       .bind(row.id)
       .first<{
         last_accepted_predicted_at: number | null
         last_correction_accepted_at: number | null
+        last_accepted_operational_delta_ms: number | null
       }>()
     correctionIsCurrent =
+      snapshot?.operationalForecastDeltaMs !== undefined &&
+      snapshot.operationalForecastDeltaMs === row.current_operational_delta &&
       evaluateEstimateNotice({
+        previousAcceptedOperationalDeltaMs:
+          baseline?.last_accepted_operational_delta_ms ?? null,
+        currentOperationalDeltaMs: row.current_operational_delta ?? 0,
         previousAcceptedAt: baseline?.last_accepted_predicted_at ?? null,
         currentPredictedAt: row.current_predicted_at,
         quality: row.current_quality ?? 'unknown',
@@ -575,6 +590,7 @@ export async function dispatchNotificationSerialized(
         acceptedNoticeStateStatement(env, {
           entryId: row.id,
           predictedAt: snapshot.predictedAt,
+          operationalDeltaMs: snapshot.operationalForecastDeltaMs ?? null,
           acceptedAt,
           revision: row.revision,
           callCycle: row.call_cycle,
@@ -742,6 +758,7 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
           acceptedNoticeStateStatement(env, {
             entryId: notification.entry_id,
             predictedAt: snapshot.predictedAt,
+            operationalDeltaMs: snapshot.operationalForecastDeltaMs ?? null,
             acceptedAt: notification.accepted_at,
             revision: notification.revision,
             callCycle: notification.call_cycle,

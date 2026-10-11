@@ -1,4 +1,4 @@
-import { availabilityText } from './availability'
+import { availabilityText, visualWaitingPeople } from './availability'
 import { Link } from 'react-router'
 import { ConciergeBell, Utensils, Martini, Clock, MapPin } from 'lucide-react'
 import type { PublicSearchResult } from '@noqueue/contracts/discovery'
@@ -60,6 +60,10 @@ export function ServiceResult({
           </span>
         </span>
         <span className="block text-xs text-gray-600">{service.address}</span>
+        <span className="block text-xs text-gray-600">
+          {visualWaitingPeople(service)}{' '}
+          {locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
+        </span>
       </span>
     </Link>
   )

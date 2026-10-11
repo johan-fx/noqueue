@@ -8,7 +8,7 @@ import {
   it,
   expect,
 } from 'vitest'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from '../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
 import {

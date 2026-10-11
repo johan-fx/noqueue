@@ -898,7 +898,11 @@ test('advanced service drafts are discarded and space tabs remain keyboard acces
   await signInOwner(page, venue.owner, venue.password, venue.venueName)
   const { drawer, advanced } = await openServiceAdvanced(page)
   await expect(advanced.getByLabel('Plazo de llegada (minutos)')).toHaveValue('5')
-  await expect(advanced.getByLabel('Turnos por delante')).toHaveValue('2')
+  await expect(
+    advanced.getByLabel('Minutos restantes para aviso de acercamiento', {
+      exact: true,
+    }),
+  ).toHaveValue('10')
   await expect(
     advanced.getByLabel('Cambio mínimo de estimación (min)'),
   ).toHaveValue('5')

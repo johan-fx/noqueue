@@ -38,3 +38,39 @@ it('records a verified direct service visit as an ID-only recent', async () => {
     'direct-service',
   ])
 })
+it.each(['reception', 'pool'] as const)(
+  'shows the existing counter for joinable %s',
+  async (type) => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({
+            id: 'q',
+            name: 'Service',
+            venueId: 'v',
+            venueName: 'Venue',
+            type,
+            open: 1,
+            serviceOpen: true,
+            queueState: 'active',
+            canJoin: true,
+            waitingPeople: 0,
+            spaces: [],
+            receptionServices: [],
+          }),
+        ),
+    )
+    render(
+      <MemoryRouter initialEntries={['/q/q']}>
+        <Routes>
+          <Route path="/q/:queueId" element={<PublicQueue />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(
+      await screen.findByText('1 personas en lista de espera'),
+    ).toBeVisible()
+  },
+)

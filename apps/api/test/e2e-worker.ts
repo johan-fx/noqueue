@@ -2,7 +2,7 @@ import './http-only-platform'
 
 // Local-only entrypoint. Never referenced by deployable Wrangler configuration.
 import { env } from 'cloudflare:workers'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from './fake-network'
 import { http, HttpResponse } from 'msw'
 import worker from '../src/index'
 import { app } from '../src/app'

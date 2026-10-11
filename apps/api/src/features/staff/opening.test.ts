@@ -1142,7 +1142,7 @@ it('validates service details and protects active preferred spaces from removal 
   ).toBe(201)
 })
 
-it('replays a manual join after a post-commit projection failure without another entry or audit', async () => {
+it('retries an uncommitted manual join after a transition-plan failure without another entry or audit', async () => {
   const { joinQueue } = await import('../queue/entries')
   const projection = await import('../queue/projection')
   const t = await setup()
@@ -1155,18 +1155,18 @@ it('replays a manual join after a post-commit projection failure without another
       whatsapp: { consent: false as const },
     }
   const fail = vi
-    .spyOn(projection, 'recalculateQueue')
-    .mockRejectedValueOnce(new Error('post_commit'))
+    .spyOn(projection, 'commitQueueTransition')
+    .mockRejectedValueOnce(new Error('planning_failure'))
   try {
     await expect(
       joinQueue(env, t.queue, key, input, false, t.actor),
-    ).rejects.toThrow('post_commit')
+    ).rejects.toThrow('planning_failure')
   } finally {
     fail.mockRestore()
   }
   expect(
     (await joinQueue(env, t.queue, key, input, false, t.actor)).status,
-  ).toBe(200)
+  ).toBe(201)
   expect(
     (await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM queue_entry WHERE queue_id=?',

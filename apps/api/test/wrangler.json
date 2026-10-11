@@ -12,6 +12,11 @@
       "database_name": "noqueue-local",
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "../migrations"
+    },
+    {
+      "binding": "AUTH_ISOLATION_DB",
+      "database_name": "noqueue-auth-isolation-local",
+      "database_id": "00000000-0000-0000-0000-000000000001"
     }
   ],
   "durable_objects": {

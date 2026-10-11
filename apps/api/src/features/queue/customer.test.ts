@@ -595,3 +595,178 @@ it('captures unknown-to-positive once and shares immutable progress across edits
     captured,
   )
 })
+it('rolls back the operational command when its canonical projection fails', async () => {
+  const { queueId, entries } = await fixture()
+  const id = entries[0]!.id
+  const projectionStatements = new WeakSet<object>()
+  const DB = new Proxy(env.DB, {
+    get(target, property) {
+      if (property === 'prepare')
+        return (sql: string) => {
+          const statement = target.prepare(sql)
+          if (!sql.startsWith('INSERT INTO queue_projection')) return statement
+          return new Proxy(statement, {
+            get(prepared, key) {
+              if (key === 'bind')
+                return (...values: unknown[]) => {
+                  const bound = prepared.bind(...values)
+                  projectionStatements.add(bound)
+                  return bound
+                }
+              const value = Reflect.get(prepared, key)
+              return typeof value === 'function' ? value.bind(prepared) : value
+            },
+          })
+        }
+      if (property === 'batch')
+        return (statements: D1PreparedStatement[]) =>
+          target.batch(
+            statements.some((statement) => projectionStatements.has(statement))
+              ? [
+                  ...statements,
+                  target.prepare(
+                    'INSERT INTO customer_command(entry_id,request_key,request_hash,result,created_at) VALUES (NULL,NULL,NULL,NULL,NULL)',
+                  ),
+                ]
+              : statements,
+          )
+      const value = Reflect.get(target, property)
+      return typeof value === 'function' ? value.bind(target) : value
+    },
+  })
+  await expect(
+    runCustomerCommand(
+      { ...env, DB },
+      queueId,
+      entries[0]!.token,
+      crypto.randomUUID(),
+      {
+        action: 'update',
+        version: 0,
+        displayName: 'Updated',
+        partySize: 3,
+        preferredSpaceId: 'terrace',
+        locale: 'en',
+      },
+    ),
+  ).rejects.toThrow()
+  expect(
+    await env.DB.prepare(
+      'SELECT version,party_size FROM queue_entry WHERE id=?',
+    )
+      .bind(id)
+      .first(),
+  ).toEqual({ version: 0, party_size: 2 })
+  expect(
+    (
+      await env.DB.prepare('SELECT * FROM customer_command WHERE entry_id=?')
+        .bind(id)
+        .all()
+    ).results,
+  ).toHaveLength(0)
+})
+it('preserves signed operational improvement on idempotent cancellation replay and creates no new intent for the cancelled entry', async () => {
+  const { recalculateQueue } = await import('./projection')
+  const { queueId, entries } = await fixture(),
+    now = Date.now()
+  await env.DB.prepare(
+    "UPDATE queue SET config=json_set(config,'$.resourceStateKnown',json('true')) WHERE id=?",
+  )
+    .bind(queueId)
+    .run()
+  await recalculateQueue(env, queueId, now)
+  const cancelled = entries[0]!,
+    successor = entries[2]!,
+    key = crypto.randomUUID()
+  const intents = () =>
+    env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM queue_estimate_intent WHERE entry_id=?',
+    )
+      .bind(cancelled.id)
+      .first<{ n: number }>()
+  const originalIntents = await intents()
+  await runCustomerCommand(
+    env,
+    queueId,
+    cancelled.token,
+    key,
+    { action: 'cancel', version: 0 },
+    now,
+  )
+  const provenance = () =>
+    env.DB.prepare(
+      'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?',
+    )
+      .bind(successor.id)
+      .first<{ operational_forecast_delta_ms: number }>()
+  expect((await provenance())?.operational_forecast_delta_ms).toBe(-30 * 60000)
+  await recalculateQueue(env, queueId, now + 20 * 60000)
+  await runCustomerCommand(
+    env,
+    queueId,
+    cancelled.token,
+    key,
+    { action: 'cancel', version: 0 },
+    now + 40 * 60000,
+  )
+  expect((await provenance())?.operational_forecast_delta_ms).toBe(-30 * 60000)
+  expect(await intents()).toEqual(originalIntents)
+})
+it('arms an already-due unprocessed adjustment when its deadline passes during coordinated work', async () => {
+  const { runInDurableObject, runDurableObjectAlarm } = await import(
+    'cloudflare:test'
+  )
+  const { recalculateQueue } = await import('./projection')
+  const { queueId, entries } = await fixture(),
+    start = Date.now(),
+    deadline = start + 1000
+  let clock = start
+  const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock)
+  try {
+    await env.DB.prepare(
+      "UPDATE queue SET config=json_set(config,'$.resourceStateKnown',json('true'),'$.adjustments',json(?)) WHERE id=?",
+    )
+      .bind(
+        JSON.stringify([
+          {
+            spaceId: 'terrace',
+            seats: 4,
+            minutes: 60,
+            reason: 'Temporary duration',
+            expiresAt: deadline,
+          },
+        ]),
+        queueId,
+      )
+      .run()
+    const stub = env.QUEUE_COORDINATOR.getByName(queueId)
+    const alarm = await runInDurableObject(stub, async (instance, state) => {
+      const coordinator = instance as unknown as {
+        withQueue: (id: string, work: () => Promise<void>) => Promise<void>
+      }
+      await coordinator.withQueue(queueId, async () => {
+        await recalculateQueue(env, queueId, start)
+        clock = deadline
+      })
+      return state.storage.getAlarm()
+    })
+    expect(alarm).toBe(deadline + 1)
+    await runDurableObjectAlarm(stub)
+    expect(
+      await runInDurableObject(stub, (_instance, state) =>
+        state.storage.getAlarm(),
+      ),
+    ).toBeNull()
+    expect(
+      (
+        await env.DB.prepare(
+          'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?',
+        )
+          .bind(entries[2]!.id)
+          .first()
+      )?.operational_forecast_delta_ms,
+    ).toBe(-30 * 60000)
+  } finally {
+    nowSpy.mockRestore()
+  }
+})

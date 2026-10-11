@@ -1,12 +1,13 @@
 import { sameConfiguration, touchVenueConfiguration } from './configuration'
-import { maintainServiceEntries } from '../queue/service-expiry'
 import { assignmentContext } from './assignment'
 import { noticeStatement, publishNotice } from '../queue/notices'
 import { admissionState } from './availability'
 import { directoryConfigStatement } from '../discovery/configuration'
-import { expireArrivals } from '../queue/customer'
-import { topology } from '../queue/opening-state'
+import { topology, activateIfReady } from '../queue/opening-state'
 import {
+  commitQueueTransition,
+  maintainQueue,
+  type QueueModelInput,
   loadQueueState,
   normalizeConfig,
   recalculateQueue,
@@ -47,8 +48,8 @@ export async function runQueueCommand(
     await recalculateQueue(env, queueId, now)
     return JSON.parse(previous.result) as { ok: true }
   }
-  await expireArrivals(env, queueId, now)
-  const state = await recalculateQueue(env, queueId, now)
+  await maintainQueue(env, queueId, now)
+  const state = await loadQueueState(env, queueId, now)
   const quick = state.config?.type !== 'restaurant'
   let input: EntryCommand
   if (command.action === 'assign_next') {
@@ -130,6 +131,38 @@ export async function runQueueCommand(
     skip: 'waiting',
     restore: 'waiting',
   }[input.action]
+  const after: QueueModelInput = {
+    config: state.config,
+    allocations: state.allocations.map((a) => ({ ...a })),
+    holds: state.holds,
+    parties: state.parties.map((p) => ({ ...p })),
+  }
+  if (status !== 'waiting')
+    after.parties = after.parties!.filter((p) => p.id !== input.entryId)
+  if (input.action === 'skip') {
+    const max = await env.DB.prepare(
+      'SELECT MAX(sequence) AS sequence FROM queue_entry WHERE queue_id=?',
+    )
+      .bind(queueId)
+      .first<{ sequence: number }>()
+    after.parties = after.parties!.map((p) =>
+      p.id === input.entryId ? { ...p, sequence: (max?.sequence ?? 0) + 1 } : p,
+    )
+  }
+  if (input.action === 'restore') {
+    const party = await env.DB.prepare(
+      'SELECT id,sequence,party_size AS partySize,preferred_space_id AS preferredSpaceId FROM queue_entry WHERE id=?',
+    )
+      .bind(input.entryId)
+      .first<{
+        id: string
+        sequence: number
+        partySize: number
+        preferredSpaceId: string | null
+      }>()
+    if (party) after.parties!.push(party)
+  }
+  if (input.action === 'call') after.appendedCallAt = now
   const extra: D1PreparedStatement[] = []
   const allocation = state.allocations.find(
     (a) => a.entry_id === input.entryId && a.released_at === null,
@@ -164,6 +197,20 @@ export async function runQueueCommand(
         state.config?.spaces.find((space) => space.id === resource.spaceId)
           ?.name ?? null
     if (resource)
+      after.allocations = [
+        ...after.allocations!.filter((a) => a.entry_id !== input.entryId),
+        {
+          entry_id: input.entryId,
+          resource_id: resource.id,
+          space_id: resource.spaceId,
+          seats: resource.seats,
+          reserved_at: now,
+          arrived_at: input.arrivalMode === 'present' ? now : null,
+          released_at: null,
+          outcome: null,
+        },
+      ]
+    if (resource)
       extra.push(
         env.DB.prepare(
           'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(entry_id) DO UPDATE SET resource_id=excluded.resource_id,space_id=excluded.space_id,seats=excluded.seats,reserved_at=excluded.reserved_at,arrived_at=excluded.arrived_at,released_at=NULL,outcome=NULL WHERE queue_allocation.released_at IS NOT NULL',
@@ -194,22 +241,34 @@ export async function runQueueCommand(
         now,
       ),
     )
-  if (input.action === 'complete' && allocation && !quick)
+  if (input.action === 'complete' && allocation && !quick) {
+    after.allocations = after.allocations!.map((a) =>
+      a.entry_id === input.entryId && a.released_at === null
+        ? { ...a, arrived_at: now }
+        : a,
+    )
     extra.push(
       env.DB.prepare(
         'UPDATE queue_allocation SET arrived_at=? WHERE entry_id=? AND released_at IS NULL',
       ).bind(now, input.entryId),
     )
+  }
   if (
     allocation &&
     (['release', 'cancel', 'no_show'].includes(input.action) ||
       (quick && input.action === 'complete'))
-  )
+  ) {
+    after.allocations = after.allocations!.map((a) =>
+      a.entry_id === input.entryId && a.released_at === null
+        ? { ...a, released_at: now, outcome: status }
+        : a,
+    )
     extra.push(
       env.DB.prepare(
         'UPDATE queue_allocation SET released_at=?,outcome=? WHERE entry_id=? AND released_at IS NULL',
       ).bind(now, status, input.entryId),
     )
+  }
   if (input.action === 'call') {
     const predicted = await env.DB.prepare(
       'SELECT predicted_at,created_at,legacy_eta_minutes FROM queue_forecast_anchor WHERE entry_id=?',
@@ -320,63 +379,70 @@ export async function runQueueCommand(
       ).bind(now, input.entryId),
     )
   }
-  await env.DB.batch([
-    ...extra,
-    env.DB.prepare(
-      `UPDATE queue_entry SET status=?,version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
-    ).bind(
-      status,
-      input.action === 'call' && input.arrivalMode !== 'present'
-        ? state.config?.graceMinutes ?? (quick ? 2 : 5)
-        : null,
-      input.action,
-      input.action === 'call'
-        ? now
-        : input.action === 'restore'
-        ? null
-        : entry.called_at,
-      input.action,
-      input.arrivalMode === 'present'
-        ? null
-        : now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
-      input.action,
-      input.action,
-      queueId,
-      input.entryId,
-      queueId,
-      input.version,
-    ),
-    env.DB.prepare(
-      'INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,?,?)',
-    ).bind(
-      crypto.randomUUID(),
-      input.entryId,
-      input.action === 'restore'
-        ? 'restored'
-        : status === 'waiting'
-        ? 'skipped'
-        : status,
-      now,
-    ),
-    audit(
-      env,
-      actor,
-      access.organizationId,
-      access.venueId,
-      `queue.${command.action}`,
-      input.entryId,
-    ),
-    env.DB.prepare('INSERT INTO staff_command VALUES (?,?,?,?)').bind(
-      actor,
-      key,
-      fingerprint,
-      JSON.stringify({ ok: true }),
-    ),
-  ])
+  await commitQueueTransition(
+    env,
+    queueId,
+    state,
+    after,
+    [
+      ...extra,
+      env.DB.prepare(
+        `UPDATE queue_entry SET status=?,version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
+      ).bind(
+        status,
+        input.action === 'call' && input.arrivalMode !== 'present'
+          ? state.config?.graceMinutes ?? (quick ? 2 : 5)
+          : null,
+        input.action,
+        input.action === 'call'
+          ? now
+          : input.action === 'restore'
+          ? null
+          : entry.called_at,
+        input.action,
+        input.arrivalMode === 'present'
+          ? null
+          : now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
+        input.action,
+        input.action,
+        queueId,
+        input.entryId,
+        queueId,
+        input.version,
+      ),
+      env.DB.prepare(
+        'INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,?,?)',
+      ).bind(
+        crypto.randomUUID(),
+        input.entryId,
+        input.action === 'restore'
+          ? 'restored'
+          : status === 'waiting'
+          ? 'skipped'
+          : status,
+        now,
+      ),
+      audit(
+        env,
+        actor,
+        access.organizationId,
+        access.venueId,
+        `queue.${command.action}`,
+        input.entryId,
+      ),
+      env.DB.prepare('INSERT INTO staff_command VALUES (?,?,?,?)').bind(
+        actor,
+        key,
+        fingerprint,
+        JSON.stringify({ ok: true }),
+      ),
+    ],
+    now,
+  )
   if (input.action === 'call' && input.arrivalMode !== 'present')
     await publishNotice(env, input.entryId, 'ready')
   if (notifyCancellation) await publishNotice(env, input.entryId, 'cancelled')
-  await recalculateQueue(env, queueId, now)
+  await activateIfReady(env, queueId, now)
   return { ok: true }
 }
 export async function configureQueue(
@@ -385,8 +451,9 @@ export async function configureQueue(
   queueId: string,
   body: unknown,
 ) {
+  const now = Date.now()
   const access = await queueAccess(env, actor, queueId, 'queue.configure')
-  await maintainServiceEntries(env, queueId)
+  await maintainQueue(env, queueId, now)
   const parsed = queueSettingsSchema.safeParse(body)
   if (!parsed.success)
     throw new HTTPException(400, { message: 'invalid_settings' })
@@ -398,7 +465,7 @@ export async function configureQueue(
     .first<{ version: number; open: number }>()
   if (!current || current.version !== version)
     throw new HTTPException(409, { message: 'version_conflict' })
-  const old = await loadQueueState(env, queueId)
+  const old = await loadQueueState(env, queueId, now)
   if (old.config?.scheduleGroups && !rawConfig.scheduleGroups)
     throw new HTTPException(409, { message: 'schedule_format_conflict' })
   const config = normalizeConfig(rawConfig, old.config)
@@ -533,65 +600,76 @@ export async function configureQueue(
     !old.config ||
     !sameConfiguration(configurationOnly(config), configurationOnly(old.config))
   if (!configurationChanged && !adjustmentsChanged) return { ok: true }
-  await env.DB.batch([
-    ...(topologyChanged
-      ? [
-          env.DB.prepare(
-            'UPDATE queue_opening SET complete=0 WHERE queue_id=?',
-          ).bind(queueId),
-        ]
-      : []),
-    ...(topologyChanged && old.inventorySafety.managed
-      ? [
-          env.DB.prepare(
-            'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
-          ).bind(
-            crypto.randomUUID(),
-            queueId,
-            actor,
-            'inventory_invalidated',
-            JSON.stringify({ topology: topology(config) }),
-            Date.now(),
-          ),
-        ]
-      : []),
-    ...(adjustmentsChanged
-      ? [
-          env.DB.prepare(
-            'INSERT INTO queue_adjustment_audit VALUES (?,?,?,?,?)',
-          ).bind(
-            crypto.randomUUID(),
-            queueId,
-            actor,
-            JSON.stringify(config.adjustments ?? []),
-            Date.now(),
-          ),
-        ]
-      : []),
-    env.DB.prepare(
-      'UPDATE queue SET capacity=?,average_minutes=?,open=?,name=?,config=?,version=version+1 WHERE id=? AND version=?',
-    ).bind(
-      config.capacity,
-      config.averageMinutes,
-      Number(open),
-      config.name,
-      JSON.stringify(config),
-      queueId,
-      version,
-    ),
-    ...(configurationChanged
-      ? [touchVenueConfiguration(env, access.venueId, Date.now(), true)]
-      : []),
-    directoryConfigStatement(env, queueId, JSON.stringify(config)),
-    audit(
-      env,
-      actor,
-      access.organizationId,
-      access.venueId,
-      'queue.configured',
-      queueId,
-    ),
-  ])
-  await recalculateQueue(env, queueId)
+  await commitQueueTransition(
+    env,
+    queueId,
+    old,
+    {
+      config,
+      allocations: old.allocations,
+      parties: old.parties,
+      holds: old.holds,
+    },
+    [
+      ...(topologyChanged
+        ? [
+            env.DB.prepare(
+              'UPDATE queue_opening SET complete=0 WHERE queue_id=?',
+            ).bind(queueId),
+          ]
+        : []),
+      ...(topologyChanged && old.inventorySafety.managed
+        ? [
+            env.DB.prepare(
+              'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
+            ).bind(
+              crypto.randomUUID(),
+              queueId,
+              actor,
+              'inventory_invalidated',
+              JSON.stringify({ topology: topology(config) }),
+              Date.now(),
+            ),
+          ]
+        : []),
+      ...(adjustmentsChanged
+        ? [
+            env.DB.prepare(
+              'INSERT INTO queue_adjustment_audit VALUES (?,?,?,?,?)',
+            ).bind(
+              crypto.randomUUID(),
+              queueId,
+              actor,
+              JSON.stringify(config.adjustments ?? []),
+              Date.now(),
+            ),
+          ]
+        : []),
+      env.DB.prepare(
+        'UPDATE queue SET capacity=?,average_minutes=?,open=?,name=?,config=?,version=version+1 WHERE id=? AND version=?',
+      ).bind(
+        config.capacity,
+        config.averageMinutes,
+        Number(open),
+        config.name,
+        JSON.stringify(config),
+        queueId,
+        version,
+      ),
+      ...(configurationChanged
+        ? [touchVenueConfiguration(env, access.venueId, Date.now(), true)]
+        : []),
+      directoryConfigStatement(env, queueId, JSON.stringify(config)),
+      audit(
+        env,
+        actor,
+        access.organizationId,
+        access.venueId,
+        'queue.configured',
+        queueId,
+      ),
+    ],
+    now,
+  )
   return { ok: true }
 }

@@ -9,7 +9,7 @@ import {
   expect,
   vi,
 } from 'vitest'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from '../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
 import {
@@ -18,10 +18,16 @@ import {
 } from './integrations/360dialog'
 import {
   dispatchNotification,
+  dispatchNotificationSerialized,
   processWebhook,
   reconcile,
 } from './features/queue/notifications'
 import { joinQueue } from './features/queue/entries'
+import {
+  loadQueueState,
+  recalculateQueue,
+  commitQueueTransition,
+} from './features/queue/projection'
 import {
   joinedEntrySchema,
   publicServiceConsentVersion,
@@ -361,23 +367,61 @@ describe('queue vertical in workerd', () => {
     const firstAcceptedAt = 1_800_000_000_000
     let now = firstAcceptedAt
     const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    const originalConfig = await env.DB.prepare(
+      'SELECT config FROM queue WHERE id=?',
+    )
+      .bind('demo-queue')
+      .first<{ config: string | null }>()
     try {
       expect((await join()).status).toBe(201)
       const first = await env.DB.prepare(
         'SELECT id,entry_id FROM notification_outbox LIMIT 1',
       ).first<{ id: string; entry_id: string }>()
       if (!first) throw new Error('Missing initial queue notice')
+      const config = {
+        name: 'Demo',
+        type: 'restaurant' as const,
+        capacity: 100,
+        averageMinutes: 120,
+        graceMinutes: 5,
+        cutoffMinutes: 0,
+        twentyFourHours: true,
+        schedules: [],
+        receptionServices: [],
+        resourceStateKnown: true,
+        spaces: [
+          {
+            id: 'room',
+            name: 'Room',
+            tables: 1,
+            tableTypes: [{ seats: 100, count: 1, averageMinutes: 120 }],
+          },
+        ],
+      }
+      const occupied = crypto.randomUUID()
+      await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+        .bind(JSON.stringify(config), 'demo-queue')
+        .run()
+      await env.DB.prepare(
+        `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status)
+        VALUES (?,'demo-queue',?,'hash',?,?,2,'en',?,0,'completed')`,
+      )
+        .bind(occupied, occupied, occupied, occupied, now)
+        .run()
+      await env.DB.prepare(
+        `INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at)
+        VALUES (?,'demo-queue','room:100:0','room',100,?,?)`,
+      )
+        .bind(occupied, now, now)
+        .run()
+      await recalculateQueue(env, 'demo-queue', now)
       const projection = await env.DB.prepare(
-        'SELECT revision FROM queue_projection WHERE entry_id=?',
+        'SELECT revision,predicted_at FROM queue_projection WHERE entry_id=?',
       )
         .bind(first.entry_id)
-        .first<{ revision: number }>()
+        .first<{ revision: number; predicted_at: number }>()
       const firstPrediction = firstAcceptedAt + 120 * 60_000
-      await env.DB.prepare(
-        'UPDATE queue_projection SET predicted_at=?,eta_minutes=120,quality=? WHERE entry_id=?',
-      )
-        .bind(firstPrediction, 'estimated', first.entry_id)
-        .run()
+      expect(projection?.predicted_at).toBe(firstPrediction)
       await env.DB.prepare(
         'UPDATE notification_outbox SET payload_version=2,payload_snapshot=?,revision=?,call_cycle=0 WHERE id=?',
       )
@@ -385,14 +429,15 @@ describe('queue vertical in workerd', () => {
           JSON.stringify({
             schemaVersion: 2,
             serviceName: 'Demo',
-            ahead: 1,
+            ahead: 0,
             etaMinutes: 120,
             predictedAt: firstPrediction,
             estimateQuality: 'estimated',
             resourceName: null,
             arrivalDeadlineAt: null,
+            operationalForecastDeltaMs: 0,
           }),
-          projection?.revision ?? 1,
+          projection!.revision,
           first.id,
         )
         .run()
@@ -410,33 +455,35 @@ describe('queue vertical in workerd', () => {
       await dispatchNotification(env, first.id)
       now += 1_000
       const correctionPrediction = firstPrediction + 10 * 60_000
-      await env.DB.prepare(
-        'UPDATE queue_projection SET predicted_at=?,eta_minutes=130,quality=? WHERE entry_id=?',
+      const before = await loadQueueState(env, 'demo-queue', now)
+      const changed = {
+        ...before.config!,
+        averageMinutes: 130,
+        spaces: [
+          {
+            ...before.config!.spaces[0]!,
+            tableTypes: [{ seats: 100, count: 1, averageMinutes: 130 }],
+          },
+        ],
+      }
+      await commitQueueTransition(
+        env,
+        'demo-queue',
+        before,
+        {
+          config: changed,
+          allocations: before.allocations,
+          holds: before.holds,
+          parties: before.parties,
+        },
+        [
+          env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(
+            JSON.stringify(changed),
+            'demo-queue',
+          ),
+        ],
+        now,
       )
-        .bind(correctionPrediction, 'estimated', first.entry_id)
-        .run()
-      await env.DB.prepare(
-        `INSERT INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at,payload_version,payload_snapshot,revision,call_cycle)
-         VALUES (?,?,?,'delayed',?,2,?,?,0)`,
-      )
-        .bind(
-          crypto.randomUUID(),
-          first.entry_id,
-          `${first.entry_id}:delayed:test-revision`,
-          now,
-          JSON.stringify({
-            schemaVersion: 2,
-            serviceName: 'Demo',
-            ahead: 1,
-            etaMinutes: 130,
-            predictedAt: correctionPrediction,
-            estimateQuality: 'estimated',
-            resourceName: null,
-            arrivalDeadlineAt: null,
-          }),
-          projection?.revision ?? 1,
-        )
-        .run()
       const correction = await env.DB.prepare(
         "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='delayed'",
       )
@@ -484,6 +531,9 @@ describe('queue vertical in workerd', () => {
         )?.n,
       ).toBe(1)
     } finally {
+      await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+        .bind(originalConfig?.config ?? null, 'demo-queue')
+        .run()
       nowSpy.mockRestore()
     }
   })
@@ -950,4 +1000,185 @@ describe('provider boundary', () => {
       { kind: 'inbound', id: 'x', phone: '+34600000000', timestamp: 1000 },
     ])
   })
+})
+it('obsoletes compensated and legacy correction snapshots before any provider dispatch', async () => {
+  let now = 1_800_000_000_000
+  const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
+  const originalConfig = await env.DB.prepare(
+    'SELECT config FROM queue WHERE id=?',
+  )
+    .bind('demo-queue')
+    .first<{ config: string | null }>()
+  try {
+    expect((await join()).status).toBe(201)
+    const first = await env.DB.prepare(
+      'SELECT entry_id FROM notification_outbox LIMIT 1',
+    ).first<{ entry_id: string }>()
+    const config = {
+      name: 'Operational',
+      type: 'restaurant' as const,
+      capacity: 100,
+      averageMinutes: 60,
+      graceMinutes: 5,
+      cutoffMinutes: 0,
+      twentyFourHours: true,
+      schedules: [],
+      receptionServices: [],
+      resourceStateKnown: true,
+      spaces: [
+        {
+          id: 'room',
+          name: 'Room',
+          tables: 1,
+          tableTypes: [{ seats: 100, count: 1, averageMinutes: 60 }],
+        },
+      ],
+    }
+    const occupied = crypto.randomUUID()
+    await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+      .bind(JSON.stringify(config), 'demo-queue')
+      .run()
+    await env.DB.prepare(
+      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,'demo-queue',?,'hash',?,?,2,'en',?,0,'completed')`,
+    )
+      .bind(occupied, occupied, occupied, occupied, now)
+      .run()
+    await env.DB.prepare(
+      `INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,'demo-queue','room:100:0','room',100,?,?)`,
+    )
+      .bind(occupied, now, now)
+      .run()
+    await recalculateQueue(env, 'demo-queue', now)
+    const acceptedPrediction = now + 60 * 60000
+    await env.DB.prepare(
+      'INSERT INTO queue_notification_state(entry_id,last_accepted_predicted_at,updated_at,last_accepted_operational_delta_ms) VALUES (?,?,?,0)',
+    )
+      .bind(first!.entry_id, acceptedPrediction, now)
+      .run()
+    now += 20 * 60000
+    const change = async (minutes: number) => {
+      const before = await loadQueueState(env, 'demo-queue', now)
+      const next = {
+        ...before.config!,
+        averageMinutes: minutes,
+        spaces: [
+          {
+            ...before.config!.spaces[0]!,
+            tableTypes: [{ seats: 100, count: 1, averageMinutes: minutes }],
+          },
+        ],
+      }
+      return commitQueueTransition(
+        env,
+        'demo-queue',
+        before,
+        {
+          config: next,
+          allocations: before.allocations,
+          parties: before.parties,
+          holds: before.holds,
+        },
+        [
+          env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(
+            JSON.stringify(next),
+            'demo-queue',
+          ),
+        ],
+        now,
+      )
+    }
+    const changed = await change(70)
+    expect(changed.projections[0]).toMatchObject({
+      predictedAt: acceptedPrediction + 10 * 60000,
+      etaMinutes: 50,
+    })
+    const delayed = await env.DB.prepare(
+      "SELECT id,payload_snapshot FROM notification_outbox WHERE entry_id=? AND kind='delayed' ORDER BY rowid DESC LIMIT 1",
+    )
+      .bind(first!.entry_id)
+      .first<{ id: string; payload_snapshot: string }>()
+    expect(
+      JSON.parse(delayed!.payload_snapshot).operationalForecastDeltaMs,
+    ).toBe(10 * 60000)
+    await change(60)
+    let sends = 0
+    network.use(
+      http.post(endpoint, () => {
+        sends++
+        return HttpResponse.json(
+          { messages: [{ id: 'wamid.unexpected' }] },
+          { status: 201 },
+        )
+      }),
+    )
+    await dispatchNotificationSerialized(env, delayed!.id)
+    expect(await status(delayed!.id)).toBe('cancelled')
+    expect(sends).toBe(0)
+    await change(70)
+    const legacy = await env.DB.prepare(
+      "SELECT id,payload_snapshot FROM notification_outbox WHERE entry_id=? AND kind='delayed' AND status='pending' ORDER BY rowid DESC LIMIT 1",
+    )
+      .bind(first!.entry_id)
+      .first<{ id: string; payload_snapshot: string }>()
+    const frozen = JSON.parse(legacy!.payload_snapshot)
+    delete frozen.operationalForecastDeltaMs
+    await env.DB.prepare(
+      'UPDATE notification_outbox SET payload_snapshot=? WHERE id=?',
+    )
+      .bind(JSON.stringify(frozen), legacy!.id)
+      .run()
+    await dispatchNotificationSerialized(env, legacy!.id)
+    expect(await status(legacy!.id)).toBe('cancelled')
+    expect(
+      (
+        await env.DB.prepare(
+          "SELECT kind FROM notification_outbox WHERE provider_id='wamid.unexpected'",
+        ).all()
+      ).results,
+    ).toEqual([])
+    expect(sends).toBe(0)
+    const beforeUnknown = await loadQueueState(env, 'demo-queue', now)
+    await commitQueueTransition(
+      env,
+      'demo-queue',
+      beforeUnknown,
+      {
+        config: beforeUnknown.config,
+        allocations: beforeUnknown.allocations.map((allocation) => ({
+          ...allocation,
+          released_at: now,
+          outcome: 'completed',
+        })),
+        parties: beforeUnknown.parties,
+        holds: [{ resource_id: 'room:100:0', space_id: 'room', seats: 100 }],
+      },
+      [
+        env.DB.prepare(
+          "UPDATE queue_allocation SET released_at=?,outcome='completed' WHERE entry_id=?",
+        ).bind(now, occupied),
+        env.DB.prepare(
+          "INSERT INTO queue_external_occupancy VALUES ('demo-queue','room:100:0','room',100,?)",
+        ).bind(now),
+      ],
+      now,
+    )
+    expect(
+      await env.DB.prepare(
+        'SELECT operational_forecast_delta_ms,quality FROM queue_projection WHERE entry_id=?',
+      )
+        .bind(first!.entry_id)
+        .first(),
+    ).toMatchObject({
+      operational_forecast_delta_ms: 10 * 60000,
+      quality: 'unknown',
+    })
+  } finally {
+    await env.DB.prepare(
+      "DELETE FROM queue_external_occupancy WHERE queue_id='demo-queue'",
+    ).run()
+    await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+      .bind(originalConfig?.config ?? null, 'demo-queue')
+      .run()
+    nowSpy.mockRestore()
+  }
 })

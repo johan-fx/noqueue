@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { beforeAll, afterAll, afterEach, expect, it, vi } from 'vitest'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from '../../../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { runQueueCommand } from '../staff/commands'
 import { joinQueue } from './entries'

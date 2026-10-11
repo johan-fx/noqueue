@@ -20,6 +20,7 @@ vi.mock('./api', async (original) => ({
 }))
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.restoreAllMocks()
   vi.resetAllMocks()
 })
@@ -1063,11 +1064,14 @@ it.each([false, true])(
 
 it('uses refreshed assignment availability, version, and token in an open confirmation sheet', async () => {
   let poll: (() => void) | undefined
-  vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
-    if (delay === 5000) poll = callback as () => void
-    return 1
+  const schedule = window.setTimeout.bind(window)
+  vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay) => {
+    if (delay === 5000) {
+      poll = callback as () => void
+      return 1
+    }
+    return schedule(callback, delay)
   })
-  vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
   const unavailable = {
     id: 'fresh-entry',
     code: 'FRESH',
@@ -1150,11 +1154,14 @@ it.each(['removed', 'disallowed'] as const)(
   'blocks an open confirmation when its refreshed entry is %s',
   async (change) => {
     let poll: (() => void) | undefined
-    vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
-      if (delay === 5000) poll = callback as () => void
-      return 1
+    const schedule = window.setTimeout.bind(window)
+    vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay) => {
+      if (delay === 5000) {
+        poll = callback as () => void
+        return 1
+      }
+      return schedule(callback, delay)
     })
-    vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
     const entry = {
       id: 'changed-entry',
       code: 'CHANGED',
@@ -1217,11 +1224,14 @@ it.each(['removed', 'disallowed'] as const)(
 
 it('does not commit a late entry refresh for a queue that is no longer selected', async () => {
   let poll: (() => void) | undefined
-  vi.spyOn(window, 'setInterval').mockImplementation((callback, delay) => {
-    if (delay === 5000) poll = callback as () => void
-    return 1
+  const schedule = window.setTimeout.bind(window)
+  vi.spyOn(window, 'setTimeout').mockImplementation((callback, delay) => {
+    if (delay === 5000) {
+      poll = callback as () => void
+      return 1
+    }
+    return schedule(callback, delay)
   })
-  vi.spyOn(window, 'clearInterval').mockImplementation(() => undefined)
   const first = { ...service, id: 'first', name: 'First service' }
   const second = { ...service, id: 'second', name: 'Second service' }
   const firstEntry = {
@@ -1560,7 +1570,13 @@ it('does not invent an initial count or allow an older poll to overwrite a confi
       return { ok: true }
     }
     if (path.endsWith('/queues'))
-      return [{ ...service, queueState: active ? 'active' : 'inactive' }]
+      return [
+        {
+          ...service,
+          queueState: active ? 'active' : 'inactive',
+          ...(active ? { waitingCount: 1 } : {}),
+        },
+      ]
     if (path.endsWith('/entries'))
       return ++reads === 1
         ? new Promise((resolve) => {
@@ -1657,3 +1673,198 @@ it.each(['reception', 'pool'] as const)(
     await waitFor(() => expect(next).toBeEnabled())
   },
 )
+
+it('publishes a slow poll and never fetches nonselected entries', async () => {
+  vi.useFakeTimers()
+  let finish!: (rows: unknown[]) => void
+  const second = { ...service, id: 'other', name: 'Other', waitingCount: 701 }
+  let reads = 0
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues'))
+      return [{ ...service, waitingCount: 0 }, second]
+    if (path === '/queues/restaurant/entries') {
+      reads++
+      if (reads === 1)
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+    }
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Org',
+        role: 'viewer',
+      }}
+    />,
+  )
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  expect(reads).toBe(1)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(6000)
+  })
+  await act(async () => finish([]))
+  expect(reads).toBe(1)
+  expect(
+    vi
+      .mocked(api)
+      .mock.calls.some(([path]) => path === '/queues/other/entries'),
+  ).toBe(false)
+  expect(screen.getByText(/701/)).toBeVisible()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  expect(reads).toBe(2)
+  vi.useRealTimers()
+})
+
+it('times out at 15 seconds, preserves valid rows, aborts and recovers on the next completion-driven retry', async () => {
+  vi.useFakeTimers()
+  let reads = 0,
+    pendingSignal: AbortSignal | undefined
+  const row = (code: string) => ({
+    id: code,
+    code,
+    partySize: 1,
+    status: 'waiting',
+    version: 0,
+    sequence: 1,
+    calledAt: null,
+  })
+  vi.mocked(api).mockImplementation(
+    async (path, _method, _body, _key, signal) => {
+      if (path.endsWith('/queues')) return [{ ...service, waitingCount: 1 }]
+      if (path.endsWith('/entries')) {
+        reads++
+        if (reads === 2) {
+          pendingSignal = signal
+          return new Promise(() => undefined)
+        }
+        return [row(reads === 1 ? 'VALID' : 'RECOVERED')]
+      }
+      return []
+    },
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Org',
+        role: 'viewer',
+      }}
+    />,
+  )
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Ver lista' }))
+  expect(screen.getByText('VALID')).toBeVisible()
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15000)
+  })
+  expect(pendingSignal?.aborted).toBe(true)
+  expect(screen.getByText('VALID')).toBeVisible()
+  expect(
+    screen
+      .getAllByText(/Servicio temporalmente no disponible/)
+      .every((element) => element.textContent?.includes('temporalmente')),
+  ).toBe(true)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  expect(screen.getByText('RECOVERED')).toBeVisible()
+  expect(
+    screen.queryByText(/Servicio temporalmente no disponible/),
+  ).not.toBeInTheDocument()
+  vi.useRealTimers()
+})
+it('invalidates and aborts stale selection results before they can publish', async () => {
+  vi.useFakeTimers()
+  let finish!: (rows: unknown[]) => void, oldSignal: AbortSignal | undefined
+  const other = { ...service, id: 'other', name: 'Other', waitingCount: 0 }
+  vi.mocked(api).mockImplementation(
+    async (path, _method, _body, _key, signal) => {
+      if (path.endsWith('/queues')) return [service, other]
+      if (path === '/queues/restaurant/entries') {
+        oldSignal = signal
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+      }
+      return []
+    },
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Org',
+        role: 'viewer',
+      }}
+    />,
+  )
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  fireEvent.click(
+    within(screen.getByRole('article', { name: 'Servicio Other' })).getByRole(
+      'button',
+      { name: 'Ver lista' },
+    ),
+  )
+  await act(async () =>
+    finish([{ id: 'old', code: 'STALE', status: 'waiting', partySize: 1 }]),
+  )
+  expect(oldSignal?.aborted).toBe(true)
+  expect(screen.queryByText('STALE')).not.toBeInTheDocument()
+  expect(
+    vi
+      .mocked(api)
+      .mock.calls.filter(([path]) => path === '/queues/other/entries'),
+  ).toHaveLength(1)
+  vi.useRealTimers()
+})
+it('keeps a missing legacy summary count unknown instead of inventing zero for an unselected queue', async () => {
+  vi.useFakeTimers()
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [service, { ...service, id: 'other', name: 'Other' }]
+      : [],
+  )
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Org',
+        role: 'viewer',
+      }}
+    />,
+  )
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  const card = screen.getByRole('article', { name: 'Servicio Other' })
+  expect(
+    within(card).getByText('Turnos en lista de espera').nextElementSibling,
+  ).toHaveTextContent('—')
+  vi.useRealTimers()
+})

@@ -545,6 +545,8 @@ export type VenueSummary = {
   role: StaffRole
 }
 export type QueueSummary = Partial<AdmissionStatus> & {
+  /** Real waiting turns, independent of the paginated staff entry list. */
+  waitingCount?: number
   reminderDue?: boolean
   reminderId?: string | null
   manualJoinWhatsappRequired?: boolean

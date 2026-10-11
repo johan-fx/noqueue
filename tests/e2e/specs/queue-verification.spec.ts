@@ -327,7 +327,9 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
     }
   })
 
-test('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call deadline and arrival', async ({
+// Keep this synthetic entry route under Playwright interception across reloads.
+const progressTest = test.extend({ serviceWorkers: 'block' })
+progressTest('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call deadline and arrival', async ({
   page,
   evidence,
 }, info) => {
@@ -398,10 +400,10 @@ test('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call deadline
       percentage,
     )
   }
-  await checkProgress(0, '50', 'text-gray-700')
+  await checkProgress(0, '50', 'text-black')
   // Waiting changes only when the next backend poll delivers a different estimate.
   await page.clock.runFor(2000)
-  await checkProgress(0, '50', 'text-gray-700')
+  await checkProgress(0, '50', 'text-black')
   for (const [remaining, percentage] of [
     [25, 50],
     [40, 20],
@@ -415,7 +417,7 @@ test('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call deadline
     await checkProgress(
       percentage!,
       String(remaining),
-      remaining === 10 ? 'text-orange-500' : 'text-gray-700',
+      remaining === 10 ? 'text-orange-500' : 'text-black',
     )
   }
   snapshot.customer.phase = 'called'

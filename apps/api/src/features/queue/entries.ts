@@ -12,7 +12,14 @@ import {
 import { maintainServiceEntries } from './service-expiry'
 import { customerPhase } from './customer'
 import { publicService } from './public-context'
-import { normalizeConfig, recalculateQueue, readProjection } from './projection'
+import {
+  normalizeConfig,
+  recalculateQueue,
+  readProjection,
+  loadQueueState,
+  commitQueueTransition,
+  maintainQueue,
+} from './projection'
 import { unavailableCopyStatement, type QueueNoticeSnapshot } from './notices'
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { queueAccess, audit } from '../../auth/access'
@@ -253,7 +260,7 @@ export async function joinQueue(
   actor?: string,
   source: JoinSource = 'legacy',
 ) {
-  await maintainServiceEntries(env, queueId)
+  await maintainQueue(env, queueId)
   const access = actor
     ? await queueAccess(env, actor, queueId, 'queue.operate')
     : null
@@ -439,6 +446,23 @@ export async function joinQueue(
   const id = crypto.randomUUID(),
     now = Date.now(),
     token = await recoveryToken(env, id)
+  const before = await loadQueueState(env, queueId, now)
+  const afterModel = {
+    config: before.config,
+    allocations: before.allocations,
+    holds: before.holds,
+    parties: [
+      ...before.parties,
+      {
+        id,
+        sequence: queue.sequence,
+        partySize: input.partySize,
+        preferredSpaceId: input.preferredSpaceId ?? null,
+      },
+    ],
+  }
+  const projectionState = await loadQueueState(env, queueId, now, afterModel)
+  const joinedProjection = projectionState.projections.find((p) => p.id === id)
   const joinedV4Snapshot: QueueNoticeSnapshot | null =
     selectedCopyVersion === 4 && queue.config
       ? {
@@ -447,13 +471,18 @@ export async function joinQueue(
           copyVariant: 'queue_joined',
           serviceName:
             (JSON.parse(queue.config) as { name?: string }).name ?? 'Service',
-          ahead: null,
-          etaMinutes: null,
-          predictedAt: null,
-          estimateQuality: 'unknown',
+          ahead: joinedProjection
+            ? Math.max(0, joinedProjection.position - 1)
+            : null,
+          etaMinutes:
+            joinedProjection?.quality === 'unknown'
+              ? null
+              : joinedProjection?.etaMinutes ?? null,
+          predictedAt: joinedProjection?.predictedAt ?? null,
+          estimateQuality: joinedProjection?.quality ?? 'unknown',
+          operationalForecastDeltaMs: 0,
           resourceName: null,
           arrivalDeadlineAt: null,
-          projectionPending: true,
         }
       : null
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
@@ -520,7 +549,7 @@ export async function joinQueue(
         ? unavailableCopyStatement(env, id, 'queue_joined', now, `joined:${id}`, id)
         : joinedV4Snapshot
         ? env.DB.prepare(
-            'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot,revision) VALUES (?,?,?,?,?,?,2,?,0)',
+            'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot,revision) VALUES (?,?,?,?,?,?,2,?,1)',
           ).bind(
             id,
             id,
@@ -548,22 +577,16 @@ export async function joinQueue(
         ).bind(id, crypto.randomUUID(), now, now + 15 * 60 * 1000),
       )
   }
-  await env.DB.batch(statements)
-  const projectionState = await recalculateQueue(env, queueId)
   if (
     input.whatsapp.consent &&
     projectionState.config &&
     selectedCopyVersion !== 4
   ) {
     const projection = projectionState.projections.find((item) => item.id === id)
-    const revision = await env.DB.prepare(
-      'SELECT revision FROM queue_projection WHERE entry_id=?',
-    )
-      .bind(id)
-      .first<{ revision: number }>()
     if (projection) {
       const snapshot: QueueNoticeSnapshot = {
         schemaVersion: 2,
+        operationalForecastDeltaMs: 0,
         approachRecommended:
           customerPhase(
             'waiting',
@@ -584,21 +607,24 @@ export async function joinQueue(
         resourceName: null,
         arrivalDeadlineAt: null,
       }
-      await env.DB.prepare(
-        "UPDATE notification_outbox SET payload_version=2,payload_snapshot=?,revision=?,updated_at=? WHERE id=? AND kind='queue_joined' AND status='pending'",
-      )
-        .bind(
+      statements.push(
+        env.DB.prepare(
+          "UPDATE notification_outbox SET payload_version=2,payload_snapshot=?,revision=?,updated_at=? WHERE id=? AND kind='queue_joined' AND status='pending'",
+        ).bind(
           JSON.stringify({
             ...snapshot,
             copyVersion: selectedCopyVersion ?? 'invalid',
           }),
-          revision?.revision ?? 0,
-          Date.now(),
+          1,
+          now,
           id,
-        )
-        .run()
+        ),
+      )
     }
   }
+  await commitQueueTransition(env, queueId, before, afterModel, statements, now)
+  // Maintenance can become due while admission commits; run it before the response.
+  await maintainQueue(env, queueId)
   // Publishing is best-effort only after the durable transaction. The scheduled sweep repairs this gap.
   if (input.whatsapp.consent && env.WHATSAPP_ENABLED === 'true') {
     try {

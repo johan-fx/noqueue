@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers'
 import { beforeAll, afterAll, afterEach, expect, it } from 'vitest'
-import { setupNetwork } from '@msw/cloudflare'
+import { setupNetwork } from '../../../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { joinQueue } from './entries'
 import { dispatchNotificationSerialized } from './notifications'

@@ -496,16 +496,8 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
   const venue = await c.env.DB.prepare('SELECT timezone FROM venue WHERE id=?')
     .bind(c.req.param('id'))
     .first<{ timezone: string }>()
-  const queueIds = await c.env.DB.prepare(
-    'SELECT id FROM queue WHERE venue_id=?',
-  )
-    .bind(c.req.param('id'))
-    .all<{ id: string }>()
-  await Promise.all(
-    queueIds.results.map((row) => coordinator(c.env, row.id).refresh(row.id)),
-  )
   const rows = await c.env.DB.prepare(
-    'SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config FROM queue WHERE venue_id=?',
+    "SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config,(SELECT COUNT(*) FROM queue_entry e WHERE e.queue_id=queue.id AND e.status='waiting') AS waitingCount FROM queue WHERE venue_id=?",
   )
     .bind(c.req.param('id'))
     .all<{ id: string; config: string }>()

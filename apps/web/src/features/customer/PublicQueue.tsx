@@ -48,7 +48,7 @@ export function PublicQueue() {
           {locale === 'es' ? 'Cargando…' : 'Loading…'}
         </p>
       )}
-      {service && (service.type === 'restaurant' || !service.canJoin) && (
+      {service && (
         <div className="space-y-2 px-4 pt-4">
           <p role="status">
             {availabilityText(

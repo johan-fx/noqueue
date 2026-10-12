@@ -4,7 +4,8 @@
   "scripts": {
     "check-types": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:pwa": "playwright test --config pwa.config.ts"
   },
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.23.0",

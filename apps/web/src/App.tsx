@@ -5,11 +5,17 @@ import { createAppRouter } from '@/app/bootstrap/create-app-router'
 import { detectRuntime } from '@/app/bootstrap/runtime'
 import { registerDeepLinkListener } from '@/platform/capacitor/deep-links'
 import { customerRouteFromUrl } from '@/platform/capacitor/deep-link-routing'
+import { initPwaUpdates } from '@/app/pwa/update-coordinator'
+import { PwaUpdateBanner } from '@/app/pwa/PwaUpdateBanner'
 
 const runtime = detectRuntime()
 const router = createAppRouter(runtime)
 
 export default function App() {
+  useEffect(() => {
+    if (runtime === 'web') void initPwaUpdates()
+  }, [])
+
   useEffect(() => {
     if (runtime !== 'native') return
     let live = true
@@ -32,5 +38,10 @@ export default function App() {
     }
   }, [])
 
-  return <RouterProvider router={router} />
+  return (
+    <>
+      <RouterProvider router={router} />
+      {runtime === 'web' && <PwaUpdateBanner />}
+    </>
+  )
 }

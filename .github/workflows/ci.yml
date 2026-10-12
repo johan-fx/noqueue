@@ -26,6 +26,10 @@ jobs:
       - run: pnpm --filter '!@noqueue/api' --filter '!@noqueue/root' -r --if-present test
       - run: pnpm build
       - run: pnpm --filter @noqueue/e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Verify safe PWA release transitions
+        run: pnpm --filter @noqueue/e2e test:pwa
+        env:
+          QUEUE_REPORT_DIR: ${{ github.workspace }}/queue-reports/pwa
       - run: node scripts/queue-verification/run.mjs --all
       - uses: actions/upload-artifact@v4
         if: always()

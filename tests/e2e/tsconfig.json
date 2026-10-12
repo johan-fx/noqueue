@@ -16,7 +16,9 @@
   },
   "include": [
     "playwright.config.ts",
+    "pwa.config.ts",
     "specs/**/*.ts",
+    "pwa/**/*.ts",
     "demo.config.ts",
     "demo/**/*.ts",
     "helpers/**/*.ts"

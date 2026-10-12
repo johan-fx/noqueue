@@ -23,6 +23,7 @@ import {
   processWebhook,
   reconcile,
 } from './features/queue/notifications'
+import { handleWorkerRequest } from './static-assets'
 
 export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   private tail: Promise<unknown> = Promise.resolve()
@@ -227,7 +228,17 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
 }
 export default {
-  fetch: app.fetch,
+  fetch(
+    request: Request,
+    env: CloudflareBindings,
+    executionCtx: ExecutionContext,
+  ) {
+    return handleWorkerRequest(
+      request,
+      (assetRequest) => env.ASSETS.fetch(assetRequest),
+      (applicationRequest) => app.fetch(applicationRequest, env, executionCtx),
+    )
+  },
   async queue(batch, env) {
     for (const message of batch.messages) {
       const job = jobSchema.safeParse(message.body)

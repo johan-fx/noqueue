@@ -55,3 +55,45 @@ pnpm test:e2e
 Then confirm the target account/environment, D1 identifier, pending migrations and required secrets. Apply D1 migrations explicitly before deploying the Worker version. Verify `/api/v1/health`, the SPA fallback and observability after deployment.
 
 Native releases are separate: build the web artifact with the target public API origin, run `pnpm mobile:sync`, then archive/sign in the platform toolchain. Never reuse a staging bundle for production.
+
+## Browser updates and missing chunks
+
+The web app uses a **waiting, consented PWA update**, not an immediately activated
+service worker. Keep the previous worker and its precached assets in use while a
+customer or staff member finishes a form. The update banner can be postponed.
+Applying an update is explicit; the worker must refuse forced activation while
+other application windows are open. Finish work and close those windows before
+retrying. Do not clear browser storage, cookies, recovery links, or all caches as
+an update mechanism.
+
+The open-window check is conservative, not an atomic browser-wide lock: a new
+window can open between the check and activation. No other window is instructed
+to reload; the route recovery remains necessary for that race, cache eviction,
+and ordinary network failures. Do not describe this as guaranteeing that a
+dynamic import can never fail.
+
+The eager root route error boundary also covers rejected lazy imports. Its reload
+button checks for an update and coordinates activation before reloading the same
+URL, including query parameters and fragment. Offline/failed checks remain on the
+recovery screen with a manual retry: there are no automatic reload loops. Ordinary
+application errors must not be presented as confirmed version conflicts, and raw
+errors/URLs/tokens must not appear on the recovery screen.
+
+`/assets/*` is Worker-first as well as `/api/*`: a missing asset must return a real,
+non-cacheable 404 rather than the SPA HTML fallback. Existing hashed asset MIME,
+ETag and cache headers are preserved. Normal navigation (`/q/...`, `/t/...`, etc.)
+continues to use the SPA fallback. Keep web assets and the Worker in the same
+release; do not publish HTML that points to an incomplete asset set.
+
+Before an authorized deployment, run the focused production-browser PWA suite
+(`pnpm --filter @noqueue/e2e test:pwa`) in addition to unit/type/build checks.
+It exercises a local release switch with a real service worker. Verify postponed
+updates, a second open tab, explicit activation, offline recovery, and a failed
+lazy module request. No real turns, messages, or remote deployments are needed.
+
+After an authorized deployment, verify a current JS asset returns JavaScript,
+an invented `/assets/missing.js` returns 404 (not HTML), deep links still return
+the app, and an already-open client can safely transition to the new release.
+Legacy clients already running the former `autoUpdate` bundle cannot acquire
+the new recovery UI retroactively: a one-time close/reopen may be needed on this
+first rollout. These source changes and tests are **not evidence of deployment**.

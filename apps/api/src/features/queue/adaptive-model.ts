@@ -127,7 +127,7 @@ export type EstimateContext = {
   spaceId: string | null
   seats: number | null
   baselineMinutes: number
-  provenance: 'inferred' | 'general'
+  provenance: 'confirmed' | 'inferred' | 'general'
 }
 
 /** Requested context only: this never claims an actual physical allocation. */
@@ -261,7 +261,8 @@ export function compatibleSuccessor(
       ? candidate.preferredSpaceId
       : null
   return (
-    zone === context.spaceId &&
+    (zone === context.spaceId ||
+      (context.provenance === 'confirmed' && zone === null)) &&
     candidate.partySize <= (context.seats ?? source.partySize)
   )
 }

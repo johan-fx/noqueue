@@ -221,7 +221,7 @@ test('legacy inventory readiness does not block assignment and viewer cannot dra
   await assignment.click()
   await page
     .getByRole('dialog', { name: 'Asignar turno', exact: true })
-    .getByRole('button', { name: 'Confirmar', exact: true })
+    .getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true })
     .click()
   await expect.poll(() => setup.commands()).toBe(1)
   await setup.mocks.assertComplete()

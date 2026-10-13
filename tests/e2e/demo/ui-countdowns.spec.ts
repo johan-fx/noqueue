@@ -101,7 +101,7 @@ test('real waiting and arrival countdowns match customer, with the delay above t
     check('delay-survives-reload', await client.getByText('La espera se ha prolongado').count(), 1)
     await row.getByRole('button', { name: /Acciones del turno/ }).click()
     await row.getByRole('button', { name: 'Asignar turno', exact: true }).click()
-    await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
+    await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true }).click()
     await expect(client.getByRole('heading', { name: '¡Es tu turno!', exact: true })).toBeVisible()
     const arrival = row.getByTitle('Tiempo restante para llegar', { exact: true })
     await expect(arrival).toHaveText(/^\d+:\d{2}$/)

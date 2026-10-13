@@ -1,7 +1,7 @@
 import { assignmentContext } from '../staff/assignment'
 import { env } from 'cloudflare:workers'
 import { afterEach, expect, it, vi } from 'vitest'
-import type { ServiceInput } from '@noqueue/contracts/staff'
+import type { AssignmentSeating, ServiceInput } from '@noqueue/contracts/staff'
 import { loadQueueState, recalculateQueue } from './projection'
 import { readEntrySnapshot } from './entries'
 import { runQueueCommand } from '../staff/commands'
@@ -144,6 +144,7 @@ async function assign(
   at: number,
   zone: string | null,
   size = 2,
+  seating?: AssignmentSeating,
 ) {
   f.clock(at)
   await env.DB.prepare(
@@ -156,7 +157,7 @@ async function assign(
     f.actor,
     f.queueId,
     crypto.randomUUID(),
-    { action: 'call', entryId: f.ids[i]!, version: 0 },
+    { action: 'call', entryId: f.ids[i]!, version: 0, ...(seating ? { seating } : {}) },
     Date.now(),
   )
 }
@@ -218,7 +219,7 @@ it('learns hierarchical contexts from consecutive human service assignments, not
   await configure(f)
   const minutes = [0, 1, 9, 10, 18, 19, 27, 28, 36]
   for (const [i, t] of minutes.entries())
-    await assign(f, i, t * minute, i % 2 ? 'inside' : 'outside')
+    await assign(f, i, t * minute, i % 2 ? 'inside' : 'outside', 2, { mode: 'confirmed', spaceId: i % 2 ? 'inside' : 'outside', seats: 2 })
   const rows = (
     await env.DB.prepare(
       'SELECT source,provenance,space_id,seats,interval_ms,ratio,resource_id FROM queue_assignment_observation WHERE queue_id=? ORDER BY assigned_at',
@@ -237,7 +238,7 @@ it('learns hierarchical contexts from consecutive human service assignments, not
   )
   expect(rows[1]).toMatchObject({
     source: 'staff',
-    provenance: 'inferred',
+    provenance: 'confirmed',
     space_id: 'inside',
     seats: 2,
     resource_id: null,
@@ -271,7 +272,7 @@ it('uses only the last 30 valid observations at each level including sparse type
   for (let i = 0; i < 100; i++)
     await env.DB.prepare(
       `INSERT INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,space_id,seats,baseline_ms,interval_ms,ratio,source,provenance,model_revision)
-    VALUES (?,1,?,'test',?,'inside',?,240000,240000,?,'staff','inferred',2)`,
+    VALUES (?,1,?,'test',?,'inside',?,240000,240000,?,'staff','confirmed',2)`,
     )
       .bind(f.ids[i]!, f.queueId, f.now + i, i % 2 ? 2 : 4, i < 20 ? 100 : 1)
       .run()
@@ -610,4 +611,298 @@ it('updates catalogue quantities without echoing or mutating retired inventory f
     adjustments: legacy.adjustments,
     spaces: [{ tables: 1, tableTypes: [{ seats: 4, count: 1 }] }],
   })
+})
+
+it('records the actual larger table and different space without changing the party or preference', async () => {
+  const f = await fixture(3)
+  await configure(f)
+  const key = crypto.randomUUID()
+  await env.DB.prepare(
+    "UPDATE queue_entry SET preferred_space_id='inside' WHERE id=?",
+  )
+    .bind(f.ids[0]!)
+    .run()
+  const command = {
+    action: 'call' as const,
+    entryId: f.ids[0]!,
+    version: 0,
+    arrivalMode: 'present' as const,
+    seating: { mode: 'confirmed' as const, spaceId: 'outside', seats: 4 },
+  }
+  await runQueueCommand(env, f.actor, f.queueId, key, command, f.now)
+  await runQueueCommand(env, f.actor, f.queueId, key, command, f.now + minute)
+  expect(
+    await env.DB.prepare(
+      'SELECT party_size,preferred_space_id,status FROM queue_entry WHERE id=?',
+    )
+      .bind(f.ids[0]!)
+      .first(),
+  ).toEqual({
+    party_size: 2,
+    preferred_space_id: 'inside',
+    status: 'completed',
+  })
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT space_id,seats,baseline_ms,provenance,resource_id FROM queue_assignment_observation WHERE entry_id=?',
+      )
+        .bind(f.ids[0]!)
+        .all()
+    ).results,
+  ).toEqual([
+    {
+      space_id: 'outside',
+      seats: 4,
+      baseline_ms: 12 * minute,
+      provenance: 'confirmed',
+      resource_id: null,
+    },
+  ])
+  expect(
+    await env.DB.prepare(
+      'SELECT count(*) AS n FROM queue_allocation WHERE queue_id=?',
+    )
+      .bind(f.queueId)
+      .first(),
+  ).toEqual({ n: 0 })
+  await expect(
+    runQueueCommand(
+      env,
+      f.actor,
+      f.queueId,
+      key,
+      { ...command, seating: { ...command.seating, seats: 2 } },
+      f.now,
+    ),
+  ).rejects.toThrow('idempotency_conflict')
+  await expect(
+    runQueueCommand(
+      env,
+      f.actor,
+      f.queueId,
+      crypto.randomUUID(),
+      command,
+      f.now,
+    ),
+  ).rejects.toThrow('version_conflict')
+})
+
+it.each([
+  { mode: 'confirmed' as const, spaceId: 'foreign', seats: 4 },
+  { mode: 'confirmed' as const, spaceId: 'inside', seats: 3 },
+  { mode: 'confirmed' as const, spaceId: 'inside', seats: 2 },
+  { mode: 'unspecified' as const },
+])(
+  'rejects incompatible or unjustified seating without recording a call: %j',
+  async (seating) => {
+    const f = await fixture()
+    await configure(f)
+    await env.DB.prepare('UPDATE queue_entry SET party_size=3 WHERE id=?')
+      .bind(f.ids[0]!)
+      .run()
+    await expect(
+      runQueueCommand(
+        env,
+        f.actor,
+        f.queueId,
+        crypto.randomUUID(),
+        {
+          action: 'call',
+          entryId: f.ids[0]!,
+          version: 0,
+          seating,
+        },
+        f.now,
+      ),
+    ).rejects.toThrow('assignment_seating_changed')
+    expect(
+      await env.DB.prepare('SELECT status,version FROM queue_entry WHERE id=?')
+        .bind(f.ids[0]!)
+        .first(),
+    ).toEqual({ status: 'waiting', version: 0 })
+    expect(
+      await env.DB.prepare(
+        'SELECT count(*) AS n FROM queue_assignment_observation WHERE queue_id=?',
+      )
+        .bind(f.queueId)
+        .first(),
+    ).toEqual({ n: 0 })
+  },
+)
+
+it('rejects a selection removed from the catalogue and accepts a reviewed selection', async () => {
+  const f = await fixture()
+  await configure(f)
+  f.config.spaces[0]!.tableTypes = [{ seats: 2, count: 2, averageMinutes: 4 }]
+  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+    .bind(JSON.stringify(f.config), f.queueId)
+    .run()
+  await expect(
+    assign(f, 0, minute, 'inside', 2, {
+      mode: 'confirmed',
+      spaceId: 'inside',
+      seats: 4,
+    }),
+  ).rejects.toThrow('assignment_seating_changed')
+  await assign(f, 0, minute, 'inside', 2, {
+    mode: 'confirmed',
+    spaceId: 'inside',
+    seats: 2,
+  })
+  expect(
+    await env.DB.prepare(
+      'SELECT seats,provenance FROM queue_assignment_observation WHERE entry_id=?',
+    )
+      .bind(f.ids[0]!)
+      .first(),
+  ).toEqual({ seats: 2, provenance: 'confirmed' })
+})
+
+it.each(['missing', 'too-small'] as const)(
+  'allows an explicit general exception for %s catalogue types',
+  async (reason) => {
+    const f = await fixture(5)
+    await configure(f)
+    if (reason === 'missing') {
+      f.config.spaces = [{ id: 'inside', name: 'Interior', tables: 2 }]
+      await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
+        .bind(JSON.stringify(f.config), f.queueId)
+        .run()
+    }
+    for (let i = 0; i < 4; i++)
+      await assign(f, i, i * minute, 'inside', reason === 'missing' ? 2 : 10, {
+        mode: 'unspecified',
+      })
+    const rows = (
+      await env.DB.prepare(
+        'SELECT space_id,seats,baseline_ms,provenance FROM queue_assignment_observation WHERE queue_id=?',
+      )
+        .bind(f.queueId)
+        .all()
+    ).results
+    expect(rows).toHaveLength(4)
+    for (const row of rows)
+      expect(row).toEqual({
+        space_id: null,
+        seats: null,
+        baseline_ms: 8 * minute,
+        provenance: 'general',
+      })
+    const factors = (await loadQueueState(env, f.queueId, f.now + 4 * minute))
+      .adaptive!.factors
+    expect(factors.service).toBeLessThan(1)
+    expect(factors.zones.get('inside')).toBe(factors.service)
+  },
+)
+
+it('keeps inferred historical calls in general learning but excludes them from contextual learning', async () => {
+  const f = await fixture(6)
+  await configure(f)
+  for (let i = 0; i < 4; i++) await assign(f, i, i * minute, 'inside')
+  const factors = (await loadQueueState(env, f.queueId, f.now + 4 * minute))
+    .adaptive!.factors
+  expect(factors.service).toBeLessThan(1)
+  expect(factors.zones.get('inside')).toBe(factors.service)
+  expect(factors.types.get(contextKey('inside', 2))).toBe(factors.service)
+  expect(
+    await env.DB.prepare(
+      'SELECT provenance,seats FROM queue_assignment_observation WHERE entry_id=?',
+    )
+      .bind(f.ids[0]!)
+      .first(),
+  ).toEqual({ provenance: 'inferred', seats: 2 })
+})
+
+it('hands confirmed seating to the earliest fitting same-zone or no-preference successor without learning again', async () => {
+  const f = await fixture(6)
+  await configure(f)
+  // Skip an earlier party preferring another zone and one that cannot fit.
+  await env.DB.prepare(
+    "UPDATE queue_entry SET preferred_space_id='inside' WHERE id=?",
+  )
+    .bind(f.ids[1]!)
+    .run()
+  await env.DB.prepare('UPDATE queue_entry SET party_size=5 WHERE id=?')
+    .bind(f.ids[2]!)
+    .run()
+  await env.DB.prepare(
+    "UPDATE queue_entry SET preferred_space_id='outside' WHERE id=?",
+  )
+    .bind(f.ids[4]!)
+    .run()
+  await assign(f, 0, minute, 'inside', 2, {
+    mode: 'confirmed',
+    spaceId: 'outside',
+    seats: 4,
+  })
+  const before = await env.DB.prepare(
+    'SELECT last_assignment_at FROM queue_cadence_state WHERE queue_id=?',
+  )
+    .bind(f.queueId)
+    .first()
+  const key = crypto.randomUUID()
+  f.clock(2 * minute)
+  for (let i = 0; i < 2; i++)
+    await runCustomerCommand(
+      env,
+      f.queueId,
+      f.ids[0]!,
+      key,
+      { action: 'yield', version: 1 },
+      Date.now(),
+    )
+  expect(
+    await env.DB.prepare(
+      'SELECT source,provenance,space_id,seats,ratio FROM queue_assignment_observation WHERE entry_id=?',
+    )
+      .bind(f.ids[3]!)
+      .first(),
+  ).toEqual({
+    source: 'handoff',
+    provenance: 'confirmed',
+    space_id: 'outside',
+    seats: 4,
+    ratio: null,
+  })
+  expect(
+    await env.DB.prepare(
+      'SELECT last_assignment_at FROM queue_cadence_state WHERE queue_id=?',
+    )
+      .bind(f.queueId)
+      .first(),
+  ).toEqual(before)
+  expect(
+    await env.DB.prepare(
+      "SELECT count(*) AS n FROM queue_assignment_observation WHERE queue_id=? AND source='staff'",
+    )
+      .bind(f.queueId)
+      .first(),
+  ).toEqual({ n: 1 })
+  expect(
+    await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+      .bind(f.ids[1]!)
+      .first(),
+  ).toEqual({ status: 'waiting' })
+})
+
+it('learns the selected larger table instead of the smallest table in the requested space', async () => {
+  const f = await fixture(5)
+  await configure(f)
+  for (let i = 0; i < 4; i++) {
+    await assign(f, i, i * 3 * minute, 'inside', 2, {
+      mode: 'confirmed', spaceId: 'outside', seats: 4,
+    })
+  }
+  const samples = (await env.DB.prepare(
+    'SELECT space_id,seats,baseline_ms,ratio FROM queue_assignment_observation WHERE queue_id=? AND ratio IS NOT NULL',
+  ).bind(f.queueId).all()).results
+  expect(samples).toHaveLength(3)
+  for (const sample of samples) expect(sample).toEqual({
+    space_id: 'outside', seats: 4, baseline_ms: 12 * minute, ratio: 0.25,
+  })
+  const factors = (await loadQueueState(env, f.queueId, f.now + 10 * minute)).adaptive!.factors
+  expect(factors.zones.get('inside')).toBe(factors.service)
+  expect(factors.zones.get('outside')).toBeLessThan(factors.service)
+  expect(factors.types.get(contextKey('outside', 4))).toBeLessThan(factors.zones.get('outside')!)
 })

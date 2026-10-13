@@ -250,8 +250,8 @@ it('allows assignment when legacy inventory says unavailable and asks for no pri
   const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
   expect(within(sheet).getByText(/confirmas que puedes atender/i)).toBeVisible()
   expect(within(sheet).queryByLabelText(/motivo de prioridad/i)).not.toBeInTheDocument()
-  expect(within(sheet).getByRole('button', { name: 'Confirmar' })).toBeEnabled()
-  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+  expect(within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })).toBeEnabled()
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' }))
   await waitFor(() => expect(commands).toHaveLength(1))
   expect(commands[0]?.body).toMatchObject({ entryId: 'entry', action: 'call' })
   expect(commands[0]?.body).not.toHaveProperty('overrideReason')
@@ -876,10 +876,10 @@ it('reuses the exact request after an unknown outcome when refreshed assignment 
   fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
   const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
   fireEvent.click(
-    within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
+    within(sheet).getByRole('button', { name: 'Ya está presente' }),
   )
   expect(within(sheet).queryByLabelText(/motivo de prioridad/i)).not.toBeInTheDocument()
-  const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
+  const confirm = within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })
   fireEvent.click(confirm)
   await waitFor(() => expect(commands).toHaveLength(1))
   await waitFor(() => expect(entryReads).toBeGreaterThan(1))
@@ -895,6 +895,7 @@ it('reuses the exact request after an unknown outcome when refreshed assignment 
     action: 'call',
     arrivalMode: 'present',
     assignmentToken: 'first-token',
+    seating: { mode: 'unspecified' },
   })
   expect(commands[0]!.key).toEqual(expect.any(String))
   expect(commands[1]!.body).toEqual(commands[0]!.body)
@@ -1010,19 +1011,19 @@ it.each([false, true])(
     fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
     const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
     expect(
-      within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
-    ).not.toBeChecked()
+      within(sheet).getByRole('button', { name: 'Ya está presente' }),
+    ).toHaveAttribute('aria-pressed', 'false')
     expect(
-      within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
-    ).toHaveAttribute('data-slot', 'checkbox')
-    const submit = within(sheet).getByRole('button', { name: 'Confirmar' })
-    const present = within(sheet).getByRole('checkbox', {
-      name: 'Cliente ya presente',
+      within(sheet).getByRole('button', { name: 'Ya está presente' }),
+    ).toHaveAttribute('data-slot', 'button')
+    const submit = within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })
+    const present = within(sheet).getByRole('button', {
+      name: 'Ya está presente',
     })
     fireEvent.click(present)
-    expect(present).toBeChecked()
-    fireEvent.click(present)
-    expect(present).not.toBeChecked()
+    expect(present).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Avisar al cliente' }))
+    expect(present).toHaveAttribute('aria-pressed', 'false')
     if (available) {
       expect(submit).toBeEnabled()
       fireEvent.click(present)
@@ -1104,7 +1105,7 @@ it('uses refreshed assignment availability, version, and token in an open confir
   )
   fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
   const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
-  const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
+  const confirm = within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })
   expect(confirm).toBeDisabled()
 
   expect(poll).toBeDefined()
@@ -1123,6 +1124,7 @@ it('uses refreshed assignment availability, version, and token in an open confir
     action: 'call',
     arrivalMode: 'notify',
     assignmentToken: 'fresh-token',
+    seating: { mode: 'unspecified' },
   })
   expect(commands[0]?.key).toEqual(expect.any(String))
 })
@@ -1184,7 +1186,7 @@ it.each(['removed', 'disallowed'] as const)(
     )
     fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
     const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
-    const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
+    const confirm = within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })
     expect(confirm).toBeEnabled()
 
     await act(async () => {
@@ -1844,4 +1846,218 @@ it('keeps a missing legacy summary count unknown instead of inventing zero for a
     within(card).getByText('Turnos en lista de espera').nextElementSibling,
   ).toHaveTextContent('—')
   vi.useRealTimers()
+})
+
+const seatingService: QueueSummary = {
+  ...service,
+  config: {
+    ...service.config,
+    spaces: [
+      {
+        id: 'inside',
+        name: 'Interior',
+        tables: 2,
+        tableTypes: [
+          { seats: 3, count: 1 },
+          { seats: 4, count: 1 },
+        ],
+      },
+      {
+        id: 'outside',
+        name: 'Terraza',
+        tables: 1,
+        tableTypes: [{ seats: 4, count: 1 }],
+      },
+    ],
+  },
+}
+const seatingEntry = {
+  id: 'seating',
+  code: 'SEAT',
+  partySize: 2,
+  status: 'waiting',
+  sequence: 1,
+  version: 0,
+  calledAt: null,
+  preferredSpaceId: 'inside',
+}
+async function openSeatingDashboard() {
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Empresa',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  fireEvent.click(
+    await screen.findByRole('button', { name: 'Acciones del turno SEAT' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+  return screen.findByRole('dialog', { name: 'Asignar turno' })
+}
+it('confirms a larger table and changed space through buttons, and resets on reopening', async () => {
+  const commands: unknown[] = []
+  vi.mocked(api).mockImplementation(async (path, _method, body) => {
+    if (path.endsWith('/queues')) return [seatingService]
+    if (path.endsWith('/commands')) {
+      commands.push(body)
+      return { ok: true }
+    }
+    return [seatingEntry]
+  })
+  let sheet = await openSeatingDashboard()
+  expect(within(sheet).getByText('Grupo de 2 personas')).toBeVisible()
+  expect(
+    within(sheet).getByRole('button', { name: 'Mesa para 3 personas' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(
+    within(sheet).getByRole('button', { name: 'Mesa para 4 personas' }),
+  )
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Terraza' }))
+  expect(within(sheet).getByRole('status')).toHaveTextContent(
+    'El cliente pidió Interior',
+  )
+  fireEvent.click(
+    within(sheet).getByRole('button', { name: 'Ya está presente' }),
+  )
+  expect(commands).toHaveLength(0)
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Asignar turno' }))
+  await waitFor(() =>
+    expect(commands).toEqual([
+      expect.objectContaining({
+        arrivalMode: 'present',
+        seating: { mode: 'confirmed', spaceId: 'outside', seats: 4 },
+      }),
+    ]),
+  )
+  await waitFor(() =>
+    expect(
+      screen.queryByRole('dialog', { name: 'Asignar turno' }),
+    ).not.toBeInTheDocument(),
+  )
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Acciones del turno SEAT' }),
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+  sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
+  expect(
+    within(sheet).getByRole('button', { name: 'Interior' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(
+    within(sheet).getByRole('button', { name: 'Mesa para 3 personas' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(
+    within(sheet).getByRole('button', { name: 'Avisar al cliente' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+})
+it('requires a space choice for an ambiguous no-preference party', async () => {
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [seatingService]
+      : [{ ...seatingEntry, preferredSpaceId: 'fastest' }],
+  )
+  const sheet = await openSeatingDashboard()
+  const submit = within(sheet).getByRole('button', { name: 'Asignar turno' })
+  expect(submit).toBeDisabled()
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Terraza' }))
+  expect(submit).toBeEnabled()
+})
+it('freezes and retries the exact confirmed selection after an uncertain result even if the catalogue changes', async () => {
+  let updated = false
+  const commands: { body: unknown; key: unknown }[] = []
+  vi.mocked(api).mockImplementation(async (path, _method, body, key) => {
+    if (path.endsWith('/queues'))
+      return [
+        updated
+          ? {
+              ...seatingService,
+              config: { ...seatingService.config, spaces: [] },
+            }
+          : seatingService,
+      ]
+    if (path.endsWith('/commands')) {
+      commands.push({ body, key })
+      if (commands.length === 1) {
+        updated = true
+        throw new Error('Network lost')
+      }
+      return { ok: true }
+    }
+    return [{ ...seatingEntry, version: updated ? 1 : 0 }]
+  })
+  const sheet = await openSeatingDashboard()
+  fireEvent.click(
+    within(sheet).getByRole('button', { name: 'Mesa para 4 personas' }),
+  )
+  const submit = within(sheet).getByRole('button', { name: 'Asignar turno' })
+  fireEvent.click(submit)
+  await within(sheet).findByText(/Reintenta la misma acción/)
+  await waitFor(() => expect(submit).toBeEnabled())
+  expect(
+    within(sheet).getByRole('button', { name: 'Ya está presente' }),
+  ).toBeDisabled()
+  fireEvent.click(submit)
+  await waitFor(() => expect(commands).toHaveLength(2))
+  expect(commands[1]).toEqual(commands[0])
+  expect(commands[0]?.body).toMatchObject({
+    version: 0,
+    seating: { mode: 'confirmed', spaceId: 'inside', seats: 4 },
+  })
+})
+it('asks for review after a definitive conflict without silently choosing a replacement', async () => {
+  let updated = false
+  const commands: unknown[] = []
+  vi.mocked(api).mockImplementation(async (path, _method, body) => {
+    if (path.endsWith('/queues'))
+      return [
+        updated
+          ? {
+              ...seatingService,
+              config: {
+                ...seatingService.config,
+                spaces: [
+                  {
+                    id: 'inside',
+                    name: 'Interior',
+                    tables: 1,
+                    tableTypes: [{ seats: 4, count: 1 }],
+                  },
+                ],
+              },
+            }
+          : seatingService,
+      ]
+    if (path.endsWith('/commands')) {
+      commands.push(body)
+      if (commands.length === 1) {
+        updated = true
+        throw new ApiError(409, 'assignment_seating_changed')
+      }
+      return { ok: true }
+    }
+    return [seatingEntry]
+  })
+  const sheet = await openSeatingDashboard()
+  const submit = within(sheet).getByRole('button', { name: 'Asignar turno' })
+  fireEvent.click(submit)
+  await within(sheet).findByText(/Datos actualizados/)
+  expect(submit).toBeDisabled()
+  expect(
+    within(sheet).queryByRole('button', { name: 'Mesa para 4 personas' }),
+  ).not.toBeInTheDocument()
+  fireEvent.click(
+    within(sheet).getByRole('button', { name: 'Revisar asignación' }),
+  )
+  expect(within(sheet).getByText('Interior · Mesa para 4')).toBeVisible()
+  expect(submit).toBeEnabled()
+  fireEvent.click(submit)
+  await waitFor(() => expect(commands).toHaveLength(2))
+  expect(commands[1]).toMatchObject({
+    seating: { mode: 'confirmed', spaceId: 'inside', seats: 4 },
+  })
 })

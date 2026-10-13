@@ -71,7 +71,9 @@ const messages: Record<string, string> = {
     'Inicializa los recursos desde la cuenta del establecimiento después de crear el servicio.',
   legacy_arrival_deadline:
     'Resuelve los turnos asignados antiguos antes de cambiar el plazo de llegada. Puedes guardar los demás ajustes.',
-  assignment_context_changed: 'La disponibilidad o el orden han cambiado.',
+  assignment_context_changed: 'El turno ha cambiado. Revisa los datos antes de asignar.',
+  assignment_seating_changed: 'El espacio o la capacidad ya no son válidos. Revisa la selección.',
+  invalid_assignment_seating: 'La selección de mesa solo está disponible al asignar un turno de restaurante.',
   unsupported_action:
     'Esta acción no está disponible para este servicio y estado.',
   queue_empty: 'No hay personas en espera.',

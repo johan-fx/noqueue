@@ -698,7 +698,7 @@ test('owner can assign from the queue without releasing inventory and arrival fi
       exact: true,
     })
     const confirmAssignment = assignment.getByRole('button', {
-      name: 'Confirmar',
+      name: 'Asignar turno',
       exact: true,
     })
     await expect(confirmAssignment).toBeEnabled()

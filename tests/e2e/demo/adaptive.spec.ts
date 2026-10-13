@@ -98,15 +98,15 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
       await drawer.getByRole('tab', { name: 'Lista', exact: true }).click()
       await row(name).getByRole('button', { name: /Acciones del turno/ }).click()
       await row(name).getByRole('button', { name: 'Asignar turno', exact: true }).click()
-      await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
+      await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true }).click()
       // A concurrent join can invalidate the version shown in the staff drawer.
       // Follow the actual UI's review/reconfirm instruction, never bypass it.
-      const stale = staff.getByText('La disponibilidad o el orden han cambiado. Datos actualizados; revisa el turno y confirma de nuevo.', { exact: true })
+      const stale = staff.getByText('El turno ha cambiado. Revisa los datos antes de asignar. Datos actualizados; revisa el turno y confirma de nuevo.', { exact: true })
       for (let retry = 0; retry < 2; retry++) {
         await expect.poll(async () => await row(name).getByText('Pendiente de llegada', { exact: true }).isVisible() ? 'called' : await stale.isVisible() ? 'stale' : 'pending').not.toBe('pending')
         if (!await stale.isVisible()) break
         await moment('reconfirm', 'Datos actualizados · El personal revisa y confirma de nuevo')
-        await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
+        await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true }).click()
       }
       await expect(row(name).getByText('Pendiente de llegada', { exact: true })).toBeVisible()
     }

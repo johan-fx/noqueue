@@ -529,7 +529,16 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   )
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    `SELECT id,code,party_size AS partySize,status,sequence,version,CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=queue_entry.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,arrival_deadline_at AS arrivalDeadlineAt,NULL AS resourceId,NULL AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
+    `SELECT e.id,e.code,e.party_size AS partySize,e.status,e.sequence,e.version,
+      CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=e.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,
+      e.display_name_cipher AS displayNameCipher,e.reception_service AS receptionService,e.preferred_space_id AS preferredSpaceId,
+      e.called_at AS calledAt,e.arrival_deadline_at AS arrivalDeadlineAt,NULL AS resourceId,
+      o.space_id AS assignedSpaceId,o.seats AS assignedSeats
+      FROM queue_entry e LEFT JOIN queue_assignment_observation o
+      ON o.entry_id=e.id AND o.call_cycle=e.call_cycle AND o.provenance='confirmed'
+        AND e.status IN ('called','completed','served')
+      WHERE e.queue_id=? ORDER BY CASE WHEN e.status IN ('waiting','called','completed') THEN 0 ELSE 1 END,
+      CASE WHEN e.status IN ('waiting','called','completed') THEN e.sequence ELSE -e.sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
     .all()
@@ -556,6 +565,7 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
         const {
           displayNameCipher,
           assignedSpaceId,
+          assignedSeats,
           cancellationReason,
           ...entry
         } = row
@@ -579,6 +589,14 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
         const space = config?.spaces.find((space) => space.id === spaceId)
         return {
           ...entry,
+          assignedSeating:
+            assignedSpaceId && assignedSeats != null
+              ? {
+                  spaceId: String(assignedSpaceId),
+                  seats: Number(assignedSeats),
+                  spaceName: space?.name ?? 'Espacio ya no configurado',
+                }
+              : null,
           ...(cancellationReason ? { cancellationReason } : {}),
           ...projection,
           ...(row.status === 'waiting'

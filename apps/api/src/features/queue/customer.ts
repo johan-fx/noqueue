@@ -302,7 +302,7 @@ export async function runCustomerCommand(
         space_id: string | null
         seats: number | null
         baseline_ms: number
-        provenance: 'inferred' | 'general'
+        provenance: 'confirmed' | 'inferred' | 'general'
       }>()
     const context = resolveEstimateContext(
       calledParty,

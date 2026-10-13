@@ -342,7 +342,11 @@ export function QueueEntryCard({
                 <Users className="size-4" aria-hidden="true" />
                 {entry.partySize}{' '}
                 {entry.partySize === 1 ? 'persona' : 'personas'}
-                {entry.space && (
+                {entry.assignedSeating ? (
+                  <span className="break-words">
+                    · {entry.assignedSeating.spaceName} · Mesa para {entry.assignedSeating.seats}
+                  </span>
+                ) : entry.space && (
                   <span className="break-words">
                     {entry.space.name} ·{' '}
                     {

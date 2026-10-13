@@ -99,13 +99,13 @@ export async function loadAdaptiveState(
       `
       SELECT o.space_id,o.seats,o.ratio,o.assigned_at,o.rowid AS observation_id FROM json_each(?) g
       JOIN queue_assignment_observation o ON o.rowid IN (
-        SELECT rowid FROM queue_assignment_observation WHERE queue_id=? AND model_revision=2 AND source='staff'
+        SELECT rowid FROM queue_assignment_observation WHERE queue_id=? AND model_revision=2 AND source='staff' AND provenance='confirmed'
         AND space_id=json_extract(g.value,'$.spaceId') AND seats=json_extract(g.value,'$.seats')
         AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30)
       UNION
       SELECT o.space_id,o.seats,o.ratio,o.assigned_at,o.rowid AS observation_id FROM json_each(?) g
       JOIN queue_assignment_observation o ON o.rowid IN (
-        SELECT rowid FROM queue_assignment_observation WHERE queue_id=? AND model_revision=2 AND source='staff'
+        SELECT rowid FROM queue_assignment_observation WHERE queue_id=? AND model_revision=2 AND source='staff' AND provenance='confirmed'
         AND space_id=json_extract(g.value,'$.spaceId')
         AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30)
       ORDER BY assigned_at,observation_id`,
@@ -159,19 +159,18 @@ export async function loadAdaptiveState(
       .first()
     if (!already) {
       assignmentRecorded = assignment.source !== 'handoff'
-      const inferred =
-        assignment.source === 'handoff' && assignment.context
-          ? assignment.context
-          : resolveEstimateContext(
-              {
-                partySize: assignment.partySize ?? assignment.seats ?? 1,
-                preferredSpaceId:
-                  assignment.preferredSpaceId ?? assignment.spaceId ?? null,
-              },
-              config,
-              baseline,
-            )
-      const baselineMs = inferred.baselineMinutes * 60000
+      const resolvedContext = assignment.context
+        ? assignment.context
+        : resolveEstimateContext(
+            {
+              partySize: assignment.partySize ?? assignment.seats ?? 1,
+              preferredSpaceId:
+                assignment.preferredSpaceId ?? assignment.spaceId ?? null,
+            },
+            config,
+            baseline,
+          )
+      const baselineMs = resolvedContext.baselineMinutes * 60000
       const interval =
         !assignmentRecorded || !active || state.last_assignment_at === null
           ? null
@@ -187,21 +186,24 @@ export async function loadAdaptiveState(
           state.episode_id,
           now,
           null,
-          inferred.spaceId,
-          inferred.seats,
+          resolvedContext.spaceId,
+          resolvedContext.seats,
           baselineMs,
           interval,
           ratio,
           assignment.source ?? 'staff',
-          inferred.provenance,
+          resolvedContext.provenance,
         ),
       )
       if (ratio !== null) {
         rows.push({ ratio })
-        if (inferred.spaceId)
+        if (
+          resolvedContext.spaceId &&
+          resolvedContext.provenance === 'confirmed'
+        )
           observations.push({
-            space_id: inferred.spaceId,
-            seats: inferred.seats,
+            space_id: resolvedContext.spaceId,
+            seats: resolvedContext.seats,
             ratio,
             observation_id: -1,
             assigned_at: now,

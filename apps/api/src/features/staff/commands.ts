@@ -1,3 +1,7 @@
+import {
+  configuredIntervalMinutes,
+  type EstimateContext,
+} from '../queue/adaptive-model'
 import { sameConfiguration, touchVenueConfiguration } from './configuration'
 import { assignmentContext } from './assignment'
 import { noticeStatement, publishNotice } from '../queue/notices'
@@ -19,6 +23,7 @@ import {
   type EntryCommand,
   type ServiceInput,
   allowedEntryActions,
+  assignmentTableOptions,
 } from '@noqueue/contracts/staff'
 import { HTTPException } from 'hono/http-exception'
 import { queueAccess, audit } from '../../auth/access'
@@ -166,6 +171,45 @@ export async function runQueueCommand(
   if (input.action === 'call') after.appendedCallAt = now
   const extra: D1PreparedStatement[] = []
   const assignedResourceName: string | null = null
+  let seatingContext: EstimateContext | undefined
+  if (input.seating) {
+    if (input.action !== 'call' || state.config?.type !== 'restaurant')
+      throw new HTTPException(400, { message: 'invalid_assignment_seating' })
+    const party = state.parties.find((p) => p.id === input.entryId)!
+    const options = assignmentTableOptions(state.config, party.partySize)
+    if (input.seating.mode === 'unspecified') {
+      if (options.length)
+        throw new HTTPException(409, { message: 'assignment_seating_changed' })
+      seatingContext = {
+        spaceId: null,
+        seats: null,
+        provenance: 'general',
+        baselineMinutes: configuredIntervalMinutes(
+          state.config,
+          state.baseline,
+        ),
+      }
+    } else {
+      const { spaceId, seats } = input.seating
+      if (
+        !options.some(
+          (space) => space.spaceId === spaceId && space.seats.includes(seats),
+        )
+      )
+        throw new HTTPException(409, { message: 'assignment_seating_changed' })
+      seatingContext = {
+        spaceId,
+        seats,
+        provenance: 'confirmed',
+        baselineMinutes: configuredIntervalMinutes(
+          state.config,
+          state.baseline,
+          spaceId,
+          seats,
+        ),
+      }
+    }
+  }
   if (input.action === 'call') {
     const context = await assignmentContext(state, input.entryId, now)
     if (input.assignmentToken && input.assignmentToken !== context.token)
@@ -302,6 +346,7 @@ export async function runQueueCommand(
       partySize: party.partySize,
       preferredSpaceId: party.preferredSpaceId,
       source: 'staff',
+      ...(seatingContext ? { context: seatingContext } : {}),
     }
   }
   await commitQueueTransition(
@@ -429,7 +474,7 @@ export async function configureQueue(
   const adjustmentsChanged =
     rawConfig.adjustments !== undefined &&
     JSON.stringify(config.adjustments) !==
-    JSON.stringify(old.config?.adjustments)
+      JSON.stringify(old.config?.adjustments)
   if (adjustmentsChanged)
     throw new HTTPException(410, { message: 'operation_retired' })
   // New clients need not echo retired inventory fields. Preserve the historical

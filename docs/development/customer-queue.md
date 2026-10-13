@@ -2,14 +2,25 @@
 
 Guests use `/v/:venueId` to choose a real service, `/q/:queueId` to join, and a private `/t/:recoveryToken` link to recover their turn. Restaurant forms and turn states live in the customer feature; reception, pool, and demo flows keep their existing forms.
 
-## Release checklist
+## Confirmed staff seating (current queue-only model)
+
+Restaurant staff confirm a space and table capacity in the existing assignment sheet. Buttons appear only when there are multiple compatible choices; a single space/capacity is shown as a compact informational summary. If a catalogue refresh leaves an invalid or unset choice without selectors, an explicit review action restores a valid choice before submission. The party size and original preference remain unchanged. This is context for the interval between assignments, not a table reservation or occupancy count. The resource/allocation descriptions below document the legacy model, not the current operational flow.
+
+- `call.seating` accepts `{ mode: "confirmed", spaceId, seats }` or `{ mode: "unspecified" }`. The latter is allowed only when no configured combination fits. Older clients can omit the field; their inferred context is never promoted to confirmed evidence.
+- The selected space/capacity is validated against the current service catalogue and recorded atomically per call cycle with `provenance: "confirmed"`. Called/completed staff rows expose `assignedSeating`; removing a catalogue space preserves its historical ID/capacity with an unavailable-name label.
+- Contextual learning uses only confirmed human assignments. General cadence retains historical observations. A confirmed handoff may serve a fitting party in the same space or without a space preference, but contributes no new capacity sample.
+- Unknown command outcomes freeze the choice and retry the identical body/key. Definitive conflicts require review; no selection is silently replaced at submission.
+- Before a separately authorized release, apply `0024_confirmed_assignment_indexes.sql`, then deploy the backward-compatible API and finally the web client. The migration adds two partial indexes only; it does not alter tables or rewrite history. Local integration/browser tests use isolated databases and simulated messaging, not staging/production.
+- Regression coverage: `contextual-queue.test.ts`, `read-cost.test.ts`, the assignment contract/UI tests, and `assignment-seating.spec.ts` in Chromium, Firefox and WebKit.
+
+## Legacy release checklist
 
 1. Apply additive D1 migration `0009_customer_queue.sql` before deploying the API code. No migration or deployment is performed by this change.
 2. Deploy the API/coordinator and web client together. Existing response fields remain compatible; new customer context is optional.
 3. Check a restaurant call has a persisted deadline and a coordinator alarm. Keep the minute cron enabled as alarm recovery.
 4. Verify late arrival expires and frees its allocation. Legacy calls with a NULL deadline remain manual.
 
-## Behavior and boundaries
+## Legacy behavior and boundaries
 
 | Behavior    | Invariant                                                                                                                                                                                                         |
 | ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

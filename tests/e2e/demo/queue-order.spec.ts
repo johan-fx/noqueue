@@ -128,7 +128,7 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
               await row(n).getByRole('button', { name: 'Asignar turno', exact: true }).click()
               await expect(staff.getByRole('dialog', { name: 'Asignar turno', exact: true })).toBeVisible()
               if (visible) await moment('assign-dialog', 'El personal asigna el turno desde la cola · Sin gestionar inventario')
-              await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
+              await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true }).click()
             } else await drawer.getByRole('button', { name: 'Asignar próximo turno', exact: true }).click()
             await expect(row(n).getByText('Pendiente de llegada', { exact: true })).toBeVisible()
             await expect.poll(async () => (await entries()).find(e => e.displayName === n)?.status).toBe('called')

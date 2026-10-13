@@ -181,7 +181,7 @@ export async function act(
   if (label === "Confirmar llegada") return;
   await page
     .getByRole("dialog", { name: label, exact: true })
-    .getByRole("button", { name: "Confirmar", exact: true })
+    .getByRole("button", { name: label === "Asignar turno" ? /^Asignar (turno|sin especificar mesa)$/ : label === "Cancelar turno" ? "Cancelar turno" : "Confirmar", exact: true })
     .click();
 }
 export async function prove(

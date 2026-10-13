@@ -288,7 +288,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     .click()
   await page
     .getByRole('dialog', { name: 'Asignar turno', exact: true })
-    .getByRole('button', { name: 'Confirmar', exact: true })
+    .getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true })
     .click()
   await expect(
     maria.getByText('Pendiente de llegada', { exact: true }),
@@ -304,7 +304,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   ).toHaveCount(0)
   await expect(drawer.getByText('María López')).toHaveCount(0)
   await drawer.getByRole('tab', { name: 'Completados' }).click()
-  await expect(drawer.getByText('Terraza · Preferido')).toBeVisible()
+  await expect(drawer.getByText(/Terraza · Mesa para 6/)).toBeVisible()
   await expect(drawer.getByText('Completado', { exact: true })).toBeVisible()
   await expect(
     drawer.getByRole('tabpanel', { name: 'Completados' }).getByRole('button', {

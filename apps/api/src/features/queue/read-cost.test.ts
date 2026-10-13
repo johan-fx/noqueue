@@ -53,16 +53,16 @@ async function fixture(history: number) {
     .run()
   return { id, waiting }
 }
-it('bounds contextual assignment reads at 10x terminal inventory history', async () => {
+it.each(['inferred', 'confirmed', 'mixed'])('bounds contextual assignment reads at 10x %s history', async (provenance) => {
   const measurements = []
   for (const history of [100, 1000]) {
     const { id } = await fixture(history),
       measured = profileD1(env)
     await env.DB.prepare(
       `INSERT INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,space_id,seats,baseline_ms,interval_ms,ratio,source,provenance,model_revision)
-      SELECT id,1,queue_id,'read-cost',sequence,'room',4,1800000,3600000,2,'staff','inferred',2
+      SELECT id,1,queue_id,'read-cost',sequence,'room',4,1800000,3600000,2,'staff',CASE WHEN ?='mixed' THEN CASE WHEN sequence<=35 THEN 'confirmed' ELSE 'inferred' END ELSE ? END,2
       FROM queue_entry WHERE queue_id=? AND status='served'`,
-    ).bind(id).run()
+    ).bind(provenance, provenance, id).run()
     const state = await loadQueueState(measured.env, id, 1_900_000_000_000)
     expect(state.allocations).toEqual([])
     expect(state.resources).toEqual([])

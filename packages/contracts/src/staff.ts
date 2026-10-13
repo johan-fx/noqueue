@@ -492,6 +492,49 @@ export type StaffMember = {
   active: number
   canEditDetails: boolean
 }
+/** Physical context confirmed by staff, never an inventory reservation. */
+export const assignmentSeatingSchema = z.discriminatedUnion('mode', [
+  z
+    .object({
+      mode: z.literal('confirmed'),
+      spaceId: z.string().min(1).max(100),
+      seats: z.number().int().min(1).max(100),
+    })
+    .strict(),
+  z.object({ mode: z.literal('unspecified') }).strict(),
+])
+export type AssignmentSeating = z.infer<typeof assignmentSeatingSchema>
+
+/** Catalogue compatibility only: quantities and occupancy are deliberately ignored. */
+export function assignmentTableOptions(
+  config: ServiceInput,
+  partySize: number,
+) {
+  if (config.type !== 'restaurant') return []
+  return config.spaces.flatMap((space, index) => {
+    const seats = (space.tableTypes ?? [])
+      .filter((type) => type.seats >= partySize)
+      .map((type) => type.seats)
+      .sort((a, b) => a - b)
+    return seats.length
+      ? [{ spaceId: space.id ?? `legacy-${index}`, name: space.name, seats }]
+      : []
+  })
+}
+export function defaultAssignmentSeating(
+  config: ServiceInput,
+  party: { partySize: number; preferredSpaceId?: string | null | undefined },
+): AssignmentSeating | null {
+  const options = assignmentTableOptions(config, party.partySize)
+  if (!options.length) return { mode: 'unspecified' }
+  const space =
+    options.find((option) => option.spaceId === party.preferredSpaceId) ??
+    (options.length === 1 ? options[0] : undefined)
+  return space
+    ? { mode: 'confirmed', spaceId: space.spaceId, seats: space.seats[0]! }
+    : null
+}
+
 export const entryCommandSchema = z
   .object({
     entryId: z.string().uuid(),
@@ -508,6 +551,11 @@ export const entryCommandSchema = z
     overrideReason: z.string().trim().min(3).max(300).optional(),
     arrivalMode: z.enum(['notify', 'present']).optional(),
     assignmentToken: z.string().optional(),
+    seating: assignmentSeatingSchema.optional(),
+  })
+  .refine((input) => !input.seating || input.action === 'call', {
+    message: 'Seating is only allowed when assigning a turn',
+    path: ['seating'],
   })
   .refine((input) => input.action !== 'release', {
     message: 'operation_retired',
@@ -571,6 +619,8 @@ export type QueueSummary = Partial<AdmissionStatus> & {
   readiness?: QueueReadiness
 }
 export type StaffEntry = {
+  /** Confirmed context for the current called/completed cycle, not a prediction. */
+  assignedSeating?: { spaceId: string; spaceName: string; seats: number } | null
   cancellationReason?: 'service_ended'
   displayName?: string | null
   receptionService?: 'check_in' | 'check_out' | 'other' | null

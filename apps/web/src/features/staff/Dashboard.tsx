@@ -1,4 +1,4 @@
-import { Checkbox } from '@/components/ui/checkbox'
+import { AssignmentOptions } from './AssignmentOptions'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { ServiceCard } from './ServiceCard'
 import { VenueLocationEditor } from './VenueLocationEditor'
@@ -14,8 +14,13 @@ import type {
   QueueCommand,
   EntryCommand,
   ServiceInput,
+  AssignmentSeating,
 } from '@noqueue/contracts/staff'
-import { roleCapabilities } from '@noqueue/contracts/staff'
+import {
+  roleCapabilities,
+  assignmentTableOptions,
+  defaultAssignmentSeating,
+} from '@noqueue/contracts/staff'
 import {
   Card,
   CardHeader,
@@ -161,6 +166,8 @@ export function Dashboard(props: DashboardProps) {
   const [commandError, setCommandError] = useState('')
   const [commandStale, setCommandStale] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
+  const [seating, setSeating] = useState<AssignmentSeating | null>(null)
+  const [commandUncertain, setCommandUncertain] = useState(false)
   const [arrivalMode, setArrivalMode] = useState<'notify' | 'present'>('notify')
   const [pending, setPending] = useState<{
     queueId: string
@@ -185,6 +192,21 @@ export function Dashboard(props: DashboardProps) {
     pending?.queueId === selected
       ? entries.find((entry) => entry.id === pending.entryId)
       : undefined
+  const restaurantAssignment =
+    pending?.action === 'call' && pendingQueue?.config.type === 'restaurant'
+  const seatingOptions =
+    restaurantAssignment && pendingEntry && pendingQueue
+      ? assignmentTableOptions(pendingQueue.config, pendingEntry.partySize)
+      : []
+  const validSeating =
+    !restaurantAssignment ||
+    !seatingOptions.length ||
+    (seating?.mode === 'confirmed' &&
+      seatingOptions.some(
+        (space) =>
+          space.spaceId === seating.spaceId &&
+          space.seats.includes(seating.seats),
+      ))
   const pendingActionAllowed =
     !!pendingEntry &&
     !!pending &&
@@ -211,6 +233,8 @@ export function Dashboard(props: DashboardProps) {
     setPending(null)
     setOverrideReason('')
     setArrivalMode('notify')
+    setCommandUncertain(false)
+    setSeating(null)
     setCommandError('')
     setCommandStale(false)
     commandRequest.current = null
@@ -422,6 +446,12 @@ export function Dashboard(props: DashboardProps) {
     setCommandStale(false)
     setOverrideReason('')
     setArrivalMode('notify')
+    setCommandUncertain(false)
+    setSeating(
+      action === 'call' && queue.config.type === 'restaurant'
+        ? defaultAssignmentSeating(queue.config, entry)
+        : null,
+    )
     if (action === 'complete') {
       void directCommand({
         action,
@@ -471,15 +501,18 @@ export function Dashboard(props: DashboardProps) {
     }
   }
   async function command() {
-    if (!pending || commandLock.current || commandStale) return
+    const retryRequest = commandUncertain ? commandRequest.current : null
+    if (!pending || commandLock.current || (commandStale && !retryRequest))
+      return
     const snapshot = pending
     const currentEntry = entriesRef.current.find(
       (entry) => entry.id === snapshot.entryId,
     )
     if (
-      selectedRef.current !== snapshot.queueId ||
-      !currentEntry ||
-      !allowsEntryAction(currentEntry, snapshot.queueId, snapshot.action)
+      !retryRequest &&
+      (selectedRef.current !== snapshot.queueId ||
+        !currentEntry ||
+        !allowsEntryAction(currentEntry, snapshot.queueId, snapshot.action))
     ) {
       setCommandStale(true)
       setCommandError(
@@ -488,10 +521,42 @@ export function Dashboard(props: DashboardProps) {
       return
     }
     if (
+      !retryRequest &&
       snapshot.action === 'call' &&
-      currentEntry.assignment?.available === false
+      currentEntry?.assignment?.available === false
     ) {
       setCommandError('El turno ya no permite esta acción. Actualiza la lista.')
+      return
+    }
+    const currentQueue = queuesRef.current.find(
+      (row) => row.id === snapshot.queueId,
+    )
+    const options =
+      snapshot.action === 'call' &&
+      currentQueue?.config.type === 'restaurant' &&
+      currentEntry
+        ? assignmentTableOptions(currentQueue.config, currentEntry.partySize)
+        : []
+    const selectedSeating =
+      snapshot.action === 'call' && currentQueue?.config.type === 'restaurant'
+        ? options.length
+          ? seating
+          : { mode: 'unspecified' as const }
+        : undefined
+    if (
+      !retryRequest &&
+      snapshot.action === 'call' &&
+      currentQueue?.config.type === 'restaurant' &&
+      (!selectedSeating ||
+        (selectedSeating.mode === 'confirmed' &&
+          !options.some(
+            (space) =>
+              space.spaceId === selectedSeating.spaceId &&
+              space.seats.includes(selectedSeating.seats),
+          )) ||
+        (selectedSeating.mode === 'unspecified' && options.length > 0))
+    ) {
+      setCommandError('Revisa el espacio y la capacidad antes de asignar.')
       return
     }
     commandLock.current = true
@@ -499,11 +564,15 @@ export function Dashboard(props: DashboardProps) {
     setCommandError('')
     const reason = overrideReason.trim()
     const input = {
-      entryId: currentEntry.id,
-      version: currentEntry.version,
+      entryId: currentEntry?.id ?? snapshot.entryId,
+      version: currentEntry?.version ?? 0,
       action: snapshot.action,
       ...(snapshot.action === 'call'
-        ? { arrivalMode, assignmentToken: currentEntry.assignment?.token }
+        ? {
+            arrivalMode,
+            assignmentToken: currentEntry?.assignment?.token,
+            ...(selectedSeating ? { seating: selectedSeating } : {}),
+          }
         : {}),
       ...(['call', 'restore'].includes(snapshot.action) && reason
         ? { overrideReason: reason }
@@ -512,14 +581,19 @@ export function Dashboard(props: DashboardProps) {
     const body = JSON.stringify(input)
     const intent = JSON.stringify({
       queueId: snapshot.queueId,
-      entryId: currentEntry.id,
+      entryId: currentEntry?.id ?? snapshot.entryId,
       action: snapshot.action,
-      ...(snapshot.action === 'call' ? { arrivalMode } : {}),
+      ...(snapshot.action === 'call'
+        ? {
+            arrivalMode,
+            ...(selectedSeating ? { seating: selectedSeating } : {}),
+          }
+        : {}),
       ...(['call', 'restore'].includes(snapshot.action) && reason
         ? { overrideReason: reason }
         : {}),
     })
-    if (commandRequest.current?.intent !== intent)
+    if (!retryRequest && commandRequest.current?.intent !== intent)
       commandRequest.current = {
         body,
         key: commandRequest.current ? crypto.randomUUID() : snapshot.key,
@@ -535,13 +609,24 @@ export function Dashboard(props: DashboardProps) {
         request.key,
       )
       setPending(null)
+      setCommandUncertain(false)
+      commandRequest.current = null
       setOverrideReason('')
       await refresh().catch((error) =>
         setError(`Acción guardada. ${errorMessage(error)}`),
       )
     } catch (e) {
+      const uncertain = !(e instanceof ApiError) || e.status >= 500
+      setCommandUncertain(uncertain)
+      if (!uncertain) commandRequest.current = null
       if (selectedRef.current === snapshot.queueId)
-        setCommandError(errorMessage(e))
+        setCommandError(
+          uncertain
+            ? `${errorMessage(
+                e,
+              )} Reintenta la misma acción para comprobar si se guardó; conservamos tu selección.`
+            : errorMessage(e),
+        )
       if (e instanceof ApiError && e.status === 409) {
         setCommandStale(true)
         commandRequest.current = null
@@ -906,7 +991,7 @@ export function Dashboard(props: DashboardProps) {
                     : ''}
                 </SheetDescription>
               </SheetHeader>
-              <div className="space-y-2 pb-12">
+              <div className="space-y-2 pb-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xl">
                     {pendingEntry?.displayName ||
@@ -920,7 +1005,8 @@ export function Dashboard(props: DashboardProps) {
                 {pendingQueue?.config.type === 'restaurant' && pendingEntry && (
                   <p className="flex items-center gap-1 text-xs text-muted-foreground">
                     <UsersIcon className="size-4" aria-hidden="true" />
-                    {pendingEntry.partySize} personas
+                    Grupo de {pendingEntry.partySize}{' '}
+                    {pendingEntry.partySize === 1 ? 'persona' : 'personas'}
                     {pendingEntry.space ? ` · ${pendingEntry.space.name}` : ''}
                   </p>
                 )}
@@ -943,18 +1029,34 @@ export function Dashboard(props: DashboardProps) {
                     Al asignar confirmas que puedes atender este turno. El
                     cliente tendrá el plazo configurado para presentarse.
                   </p>
-                  <div className="flex items-center gap-2">
-                    <Checkbox
-                      id="assignment-present"
-                      checked={arrivalMode === 'present'}
-                      disabled={busy}
-                      onCheckedChange={(checked) =>
-                        setArrivalMode(checked ? 'present' : 'notify')
-                      }
+                  {restaurantAssignment && pendingQueue && pendingEntry && (
+                    <AssignmentOptions
+                      config={pendingQueue.config}
+                      party={pendingEntry}
+                      seating={seating}
+                      onChange={setSeating}
+                      disabled={busy || commandUncertain}
                     />
-                    <label htmlFor="assignment-present">
-                      Cliente ya presente
-                    </label>
+                  )}
+                  <div role="group" aria-label="Cliente" className="space-y-1">
+                    <p className="text-sm font-medium">Cliente</p>
+                    <div className="flex flex-wrap gap-1">
+                      {(['notify', 'present'] as const).map((mode) => (
+                        <Button
+                          key={mode}
+                          type="button"
+                          className="min-h-11 min-w-11 rounded-full"
+                          variant={arrivalMode === mode ? 'default' : 'ghost'}
+                          aria-pressed={arrivalMode === mode}
+                          disabled={busy || commandUncertain}
+                          onClick={() => setArrivalMode(mode)}
+                        >
+                          {mode === 'notify'
+                            ? 'Avisar al cliente'
+                            : 'Ya está presente'}
+                        </Button>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -968,10 +1070,12 @@ export function Dashboard(props: DashboardProps) {
                   variant={pending?.action === 'cancel' ? 'outline' : 'default'}
                   disabled={
                     busy ||
-                    commandStale ||
-                    pendingActionUnavailable ||
-                    (pending?.action === 'call' &&
-                      pendingEntry?.assignment?.available === false)
+                    (!commandUncertain &&
+                      (commandStale ||
+                        pendingActionUnavailable ||
+                        !validSeating ||
+                        (pending?.action === 'call' &&
+                          pendingEntry?.assignment?.available === false)))
                   }
                   onClick={() => void command()}
                 >
@@ -979,6 +1083,12 @@ export function Dashboard(props: DashboardProps) {
                     ? 'Guardando…'
                     : pending?.action === 'cancel'
                     ? 'Cancelar turno'
+                    : pending?.action === 'call'
+                    ? restaurantAssignment &&
+                      !seatingOptions.length &&
+                      !commandUncertain
+                      ? 'Asignar sin especificar mesa'
+                      : 'Asignar turno'
                     : 'Confirmar'}
                 </Button>
                 <Button

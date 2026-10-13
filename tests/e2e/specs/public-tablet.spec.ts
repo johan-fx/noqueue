@@ -239,3 +239,53 @@ for (const viewport of viewports) {
     })
   })
 }
+
+// Real upload -> local R2 -> anonymous service context -> all three screens.
+// Only admission is stubbed: screenshots must not send WhatsApp messages.
+test('uploaded venue branding is shown on registration, thanks and QR', async ({ page, request, baseURL }, testInfo) => {
+  test.setTimeout(90_000)
+  const { queue, venueId, headers } = await setup(page, request, baseURL!)
+  const logo = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="192" height="111" viewBox="0 0 192 111"><rect x="34" y="12" width="124" height="87" rx="12" fill="#134e4a"/><circle cx="96" cy="35" r="12" fill="#fbbf24"/><path d="M55 80V58L73 46 91 58V80M105 80V58L123 46 141 58V80M47 87H149" fill="none" stroke="#fff" stroke-width="5" stroke-linejoin="round"/></svg>')
+  const upload = await request.put(`/api/v1/staff/venues/${venueId}/logo`, {
+    headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
+    multipart: { version: '0', file: { name: 'hotel-demo.svg', mimeType: 'image/svg+xml', buffer: logo } },
+  })
+  expect(upload.ok(), await upload.text()).toBeTruthy()
+  const { logo: stored } = await upload.json()
+  await page.route(`**/api/v1/public/services/${queue}/entries`, route => route.fulfill({ json: { recoveryToken: 'MUST-NOT-APPEAR' } }))
+  for (const width of [1024, 390]) {
+    await page.setViewportSize({ width, height: width === 1024 ? 1366 : 844 })
+    await page.goto(`/q/${queue}/kiosk?lang=es`)
+    const brand = page.getByRole('img', { name: 'Queue Verification', exact: true })
+    await expect(brand).toHaveAttribute('src', stored.url)
+    await expect.poll(() => brand.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true)
+    const box = (await brand.boundingBox())!
+    expect(box.width).toBe(192)
+    expect(box.height).toBe(111)
+    expect(box.x).toBe((await page.locator('form').boundingBox())!.x)
+    const screenshot = async (name: string) => {
+      const path = testInfo.outputPath(`logo-${name}-${width}.png`)
+      await page.screenshot({ path, fullPage: true })
+      await testInfo.attach(`logo-${name}-${width}`, { path, contentType: 'image/png' })
+    }
+    await screenshot('registration')
+    await fillKiosk(page, 'Comensal de prueba')
+    await page.getByRole('button', { name: 'Ponerme en lista' }).click()
+    await expect(page.getByRole('heading', { name: '¡Ya estás en la lista de espera!' })).toBeVisible()
+    await expect(brand).toBeVisible()
+    expect((await brand.boundingBox())!.x).toBe((await page.locator('section').boundingBox())!.x)
+    await screenshot('thanks')
+    await page.goto(`/q/${queue}/qr?lang=es`)
+    await expect(brand).toBeVisible()
+    await expectCentered(page, brand, 192)
+    await expect(page.getByRole('img', { name: 'QR para inscribirte en la lista' })).toBeVisible()
+    await screenshot('qr')
+  }
+  // The already-open QR view picks up deletion through its existing refresh.
+  const removed = await request.delete(`/api/v1/staff/venues/${venueId}/logo`, {
+    headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() }, data: { version: 1 },
+  })
+  expect(removed.ok(), await removed.text()).toBeTruthy()
+  await expect(page.getByRole('img', { name: 'Queue Verification', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('img', { name: 'QR para inscribirte en la lista' })).toBeVisible()
+})

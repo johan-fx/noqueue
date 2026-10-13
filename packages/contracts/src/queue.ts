@@ -46,6 +46,8 @@ export const publicServiceSchema = z.object({
   id: z.string(),
   name: z.string(),
   venueName: z.string(),
+  // Optional for older clients/fixtures; the API always returns URL or null.
+  venueLogoUrl: z.string().nullable().optional(),
   venueId: z.string().optional(),
   open: z.number(),
   averageWaitMinutes: z.number().nullable().optional(),

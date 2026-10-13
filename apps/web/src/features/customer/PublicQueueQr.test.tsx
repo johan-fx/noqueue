@@ -47,3 +47,12 @@ it('does not show a QR for an unavailable service', async () => {
   await screen.findByRole('alert')
   expect(screen.queryByRole('img')).toBeNull()
 })
+
+it('shows the public venue logo separately from the scannable QR', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ ...service, venueLogoUrl: '/api/v1/venue-logos/hotel/logo.png' })))
+  render(<MemoryRouter initialEntries={['/q/q/qr']}><Routes><Route path="/q/:queueId/qr" element={<PublicQueueQr />} /></Routes></MemoryRouter>)
+  const logo = await screen.findByRole('img', { name: 'Hotel' })
+  expect(logo).toHaveAttribute('src', '/api/v1/venue-logos/hotel/logo.png')
+  expect(logo.parentElement).toHaveClass('items-center', 'gap-10')
+  expect(screen.getByRole('img', { name: 'QR para inscribirte en la lista' }).tagName.toLowerCase()).toBe('svg')
+})

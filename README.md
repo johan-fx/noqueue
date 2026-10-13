@@ -44,6 +44,11 @@ phones; the shared display has no clickable link into that personal flow.
 Both displays use a centered, fluid column on mobile, portrait and landscape
 tablets, and desktop, with natural vertical scrolling. These pages use the
 public admission endpoints; no staff session or operator permissions are used.
+Registration, its thank-you state, and QR display the venue's uploaded logo in a
+192 × 111 px contain slot (left-aligned on registration/thanks, centered on QR).
+The public service context exposes only `venueLogoUrl`, not filenames or editing
+permissions. Existing polling refreshes replacements/deletions. Missing or failed
+images leave no empty slot; the registration and QR flows remain usable.
 Registration requires a name, valid phone number and explicit WhatsApp consent.
 After admission, personal fields are discarded and the screen resets after 10 seconds
 or when the next-registration button is pressed. Recovery tokens are never displayed

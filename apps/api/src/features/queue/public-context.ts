@@ -1,4 +1,5 @@
 import { cadenceFactor } from './adaptive-model'
+import { venueLogoUrl } from '../../lib/venue-logo'
 import type { PublicService } from '@noqueue/contracts/queue'
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { customerDeadlineSql, customerProvisionalSql, publicCustomerAverage } from './customer-estimate'
@@ -8,7 +9,7 @@ import { admissionState, publicAdmission, validWaitingSql, includesLegacyWaiting
 export async function publicService(env: CloudflareBindings, id: string): Promise<PublicService | null> {
   const now = Date.now()
   const row = await env.DB.prepare(
-    `SELECT q.id,q.name,q.open,q.config,v.id AS venueId,v.name AS venueName,v.timezone FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
+    `SELECT q.id,q.name,q.open,q.config,v.id AS venueId,v.name AS venueName,v.logo_key,v.timezone FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE q.id=? AND q.config IS NOT NULL AND t.status='active'`,
   )
     .bind(id)
     .first<{
@@ -18,6 +19,7 @@ export async function publicService(env: CloudflareBindings, id: string): Promis
       config: string
       venueId: string
       venueName: string
+      logo_key: string | null
       timezone: string
     }>()
   if (!row) return null
@@ -39,6 +41,7 @@ export async function publicService(env: CloudflareBindings, id: string): Promis
     name: row.name,
     venueId: row.venueId,
     venueName: row.venueName,
+    venueLogoUrl: venueLogoUrl(env, row.logo_key),
     open: Number(admission?.canJoin ?? false),
     type: config.type,
     receptionServices: config.receptionServices,

@@ -577,3 +577,30 @@ describe('venue logo API', () => {
     expect(await response.json()).toEqual({ error: 'request_too_large' })
   })
 })
+
+it('projects only the current logo URL publicly, scoped to the venue and active tenant', async () => {
+  const t = await tenant()
+  const other = await tenant()
+  const queueFor = async (venueId: string) => (await env.DB.prepare('SELECT id FROM queue WHERE venue_id=?').bind(venueId).first<{ id: string }>())!.id
+  const queue = await queueFor(t.venueId)
+  const otherQueue = await queueFor(other.venueId)
+  const read = () => request(`/public/services/${queue}`)
+  expect(await (await read()).json()).toMatchObject({ venueLogoUrl: null })
+  for (const version of [0, 1]) {
+    const uploaded = await uploadRequest(t.venueId, t.owner.cookie, uploadFile(pngBytes, 'private-filename.png', 'image/png'), version)
+    expect(uploaded.status).toBe(200)
+    const state = await uploaded.json() as LogoState
+    const response = await read()
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+    const body = await response.json() as Record<string, unknown>
+    expect(body.venueLogoUrl).toBe(state.logo!.url)
+    for (const field of ['logo', 'logo_key', 'logo_name', 'logo_size', 'logoVersion', 'canEditLogo']) expect(body).not.toHaveProperty(field)
+    expect(JSON.stringify(body)).not.toContain('private-filename')
+    expect(await (await request(`/public/services/${otherQueue}`)).json()).toMatchObject({ venueLogoUrl: null })
+  }
+  const removed = await request(logoPath(t.venueId), t.owner.cookie, 'DELETE', { version: 2 }, crypto.randomUUID())
+  expect(removed.status).toBe(200)
+  expect(await (await read()).json()).toMatchObject({ venueLogoUrl: null })
+  await env.DB.prepare("UPDATE tenant_account SET status='suspended' WHERE organization_id=(SELECT organization_id FROM venue WHERE id=?)").bind(t.venueId).run()
+  expect((await read()).status).toBe(404)
+})

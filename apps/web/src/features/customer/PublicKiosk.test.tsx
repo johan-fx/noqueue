@@ -107,3 +107,21 @@ it('does not postpone the reset when polling refreshes service availability', as
   await act(async () => vi.advanceTimersByTime(5000))
   expect(screen.getByLabelText('Name')).toHaveValue('')
 })
+
+it('shows the venue logo on registration and thanks and keeps it after reset', async () => {
+  vi.stubGlobal('fetch', vi.fn(async (_url, init) => init?.method === 'POST'
+    ? Response.json({ recoveryToken: 'PRIVATE-TOKEN' })
+    : Response.json({ ...service, venueLogoUrl: '/api/v1/venue-logos/hotel/logo.png' })))
+  render(<MemoryRouter initialEntries={['/q/q/kiosk?lang=en']}><Routes><Route path="/q/:queueId/kiosk" element={<PublicKiosk />} /></Routes></MemoryRouter>)
+  const logo = await screen.findByRole('img', { name: 'Hotel' })
+  expect(logo).toHaveAttribute('src', '/api/v1/venue-logos/hotel/logo.png')
+  expect(logo).toHaveAttribute('width', '192')
+  expect(logo).toHaveAttribute('height', '111')
+  expect(logo).toHaveClass('object-contain')
+  await fill()
+  fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
+  await screen.findByRole('heading', { name: "You're on the waiting list!" })
+  expect(screen.getByRole('img', { name: 'Hotel' })).toHaveAttribute('src', '/api/v1/venue-logos/hotel/logo.png')
+  fireEvent.click(screen.getByRole('button', { name: 'Join waiting list' }))
+  expect(screen.getByRole('img', { name: 'Hotel' })).toBeInTheDocument()
+})

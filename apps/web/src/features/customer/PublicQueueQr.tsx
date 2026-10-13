@@ -4,6 +4,7 @@ import { publicServiceSchema } from '@noqueue/contracts/queue'
 import { publicQueueUrl } from '@/lib/public-queue-links'
 import { CustomerShell, KioskContent, LoadError } from './shared'
 import { useLocale, usePublicResource } from './public-resource'
+import { PublicVenueLogo } from './PublicVenueLogo'
 
 const parse = (value: unknown) => publicServiceSchema.parse(value)
 export function PublicQueueQr() {
@@ -49,10 +50,16 @@ export function PublicQueueQr() {
           )}
           {service && !error && !originError && (
             <>
-              <h1 className="text-3xl font-semibold leading-10 sm:text-4xl">
-                {es ? 'Te damos la bienvenida a' : 'Welcome to'}{' '}
-                {service.venueName}
-              </h1>
+              <div className="flex flex-col items-center gap-10">
+                <PublicVenueLogo
+                  url={service.venueLogoUrl}
+                  venueName={service.venueName}
+                />
+                <h1 className="text-3xl font-semibold leading-10 sm:text-4xl">
+                  {es ? 'Te damos la bienvenida a' : 'Welcome to'}{' '}
+                  {service.venueName}
+                </h1>
+              </div>
               <p className="text-xl font-medium leading-8 sm:text-2xl">
                 {es
                   ? 'Escanea el QR para apuntarte a la lista de espera desde tu teléfono móvil.'

@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button'
 import { availabilityText } from './availability'
 import { RestaurantForm } from './RestaurantForm'
 import { ServiceForm } from './ServiceForm'
+import { PublicVenueLogo } from './PublicVenueLogo'
 import { CustomerShell, KioskContent, LoadError } from './shared'
 import { useLocale, usePublicResource } from './public-resource'
 
@@ -70,8 +71,14 @@ function KioskPage({ queueId }: { queueId: string }) {
             className="mx-auto w-full max-w-[500px] space-y-10"
             aria-live="polite"
           >
+            <PublicVenueLogo
+              url={service?.venueLogoUrl}
+              venueName={service?.venueName ?? ''}
+            />
             <div className="space-y-6 text-gray-800">
-              <p className="text-2xl font-semibold">{service?.venueName}</p>
+              {!service?.venueLogoUrl && (
+                <p className="text-2xl font-semibold">{service?.venueName}</p>
+              )}
               <h1 className="text-3xl font-semibold leading-10 sm:text-4xl">
                 {es
                   ? '¡Ya estás en la lista de espera!'
@@ -102,6 +109,10 @@ function KioskPage({ queueId }: { queueId: string }) {
             )}
             {service && (
               <>
+                <PublicVenueLogo
+                  url={service.venueLogoUrl}
+                  venueName={service.venueName}
+                />
                 <div className="space-y-6 text-gray-800">
                   <h1 className="text-3xl font-semibold leading-10 sm:text-4xl">
                     {es ? 'Te damos la bienvenida a' : 'Welcome to'}{' '}

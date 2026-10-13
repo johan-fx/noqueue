@@ -2,6 +2,7 @@ import { HTTPException } from 'hono/http-exception'
 import type { VenueLogoState } from '@noqueue/contracts/staff'
 import { isCommercial } from '../../auth/permissions'
 import { normalizeLogo } from './logo-image'
+import { venueLogoUrl } from '../../lib/venue-logo'
 
 export type LogoActor = { id: string; role: string }
 type LogoRow = {
@@ -61,12 +62,10 @@ export function venueLogoFields(
   >,
   canEditLogo: boolean,
 ): VenueLogoState {
-  const base =
-    env.VENUE_LOGOS_PUBLIC_BASE_URL?.replace(/\/$/, '') || '/api/v1/venue-logos'
   return {
     logo: row.logo_key
       ? {
-          url: `${base}/${row.logo_key}`,
+          url: venueLogoUrl(env, row.logo_key)!,
           name: row.logo_name!,
           type: row.logo_type!,
           size: row.logo_size!,

@@ -335,6 +335,23 @@ it('restores the switch after a committed close with a delayed refresh', async (
   await waitFor(() => expect(control).toHaveFocus())
 })
 
+it.each(['restaurant', 'reception', 'pool'] as const)(
+  'anchors the %s footer to the bottom regardless of optional content',
+  (type) => {
+    render(
+      <ServiceCard
+        {...props({ ...service, config: { ...service.config, type } })}
+      />,
+    )
+    const card = screen.getByRole('article')
+    expect(card).toHaveClass('flex', 'flex-col')
+    expect(card.querySelector('[data-slot="card-footer"]')).toHaveClass('mt-auto')
+    const hint = screen.queryByText('Actívala cuando el restaurante esté lleno.')
+    if (type === 'restaurant') expect(hint).toBeInTheDocument()
+    else expect(hint).not.toBeInTheDocument()
+  },
+)
+
 it('uses the Figma confirmation button foreground instead of inherited black text', () => {
   render(<ServiceCard {...props({ ...service, queueState: 'active' })} />)
   fireEvent.click(screen.getByRole('switch', { name: 'Cerrar lista' }))

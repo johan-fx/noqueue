@@ -300,7 +300,7 @@ export function ServiceCard({
           </Button>
         )}
       </CardContent>
-      <CardFooter className="justify-between gap-2">
+      <CardFooter className="mt-auto justify-between gap-2">
         {canOperate ? (
           <div className="flex min-w-0 items-center gap-2 text-sm">
             <Switch

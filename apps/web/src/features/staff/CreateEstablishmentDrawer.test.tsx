@@ -123,3 +123,11 @@ describe('create establishment drawer', () => {
     expect(password).toHaveAttribute('type', 'text')
   })
 })
+
+it('hides logo selection without blocking establishment creation when storage is disabled', async () => {
+  render(<CreateEstablishmentDrawer open logoUploadEnabled={false} onOpenChange={vi.fn()} onComplete={vi.fn()} />)
+  expect(document.querySelector('input[type="file"]')).toBeNull()
+  fillClient()
+  fireEvent.click(screen.getByRole('button', { name: 'Continuar' }))
+  expect(await screen.findByRole('dialog', { name: 'Configuración restaurante' })).toBeVisible()
+})

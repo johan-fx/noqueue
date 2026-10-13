@@ -23,6 +23,7 @@ type Me = {
   user: { id: string; email: string; username: string }
   platformAdmin: boolean
   commercial: boolean
+  features?: { venueLogos?: boolean }
   venues: VenueSummary[]
 }
 export function StaffApp() {
@@ -112,7 +113,9 @@ export function StaffApp() {
           ) : (
             <p role="alert">No tienes acceso a este establecimiento.</p>
           ))}
-        {me?.commercial && !detailId && <Commercial />}
+        {me?.commercial && !detailId && (
+          <Commercial logoUploadEnabled={me.features?.venueLogos === true} />
+        )}
         {!detailId && !!me?.venues.length && (
           <>
             {me.venues.length > 1 && (

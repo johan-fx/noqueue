@@ -191,7 +191,8 @@
         "WHATSAPP_QUEUE_V4_CANCELLED_UNKNOWN_TEMPLATE_EN": "noqueue_v4_cancelled_unknown_en_staging",
         "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_ES": "noqueue_v4_service_ended_es",
         "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_EN": "noqueue_v4_service_ended_en",
-        "VENUE_LOGOS_PUBLIC_BASE_URL": "https://assets-staging.noqueue-app.com"
+        "VENUE_LOGOS_PUBLIC_BASE_URL": "https://assets-staging.noqueue-app.com",
+        "VENUE_LOGOS_ENABLED": "true"
       },
       "d1_databases": [
         {
@@ -238,7 +239,8 @@
       "r2_buckets": [
         {
           "binding": "VENUE_LOGOS",
-          "bucket_name": "noqueue-venue-logos-staging"
+          "bucket_name": "noqueue-venue-logos-staging",
+          "jurisdiction": "eu"
         }
       ]
     }

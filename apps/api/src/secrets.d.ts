@@ -1,5 +1,7 @@
 interface CloudflareBindings {
   VENUE_LOGOS: R2Bucket
+  // Runtime bindings can be omitted for a deliberate partial rollout.
+  VENUE_LOGOS_ENABLED?: string
   VENUE_LOGOS_PUBLIC_BASE_URL?: string
   GEOAPIFY_API_KEY: string
   BETTER_AUTH_SECRET: string

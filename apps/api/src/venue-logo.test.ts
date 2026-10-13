@@ -604,3 +604,24 @@ it('projects only the current logo URL publicly, scoped to the venue and active 
   await env.DB.prepare("UPDATE tenant_account SET status='suspended' WHERE organization_id=(SELECT organization_id FROM venue WHERE id=?)").bind(t.venueId).run()
   expect((await read()).status).toBe(404)
 })
+
+it.each(['disabled', 'unbound'])('safely gates logo features when storage is %s', async (mode) => {
+  const t = await tenant()
+  const disabledEnv = { ...env, ...(mode === 'disabled' ? { VENUE_LOGOS_ENABLED: 'false' } : { VENUE_LOGOS: undefined }) } as unknown as CloudflareBindings
+  const call = (path: string, method = 'GET', cookie = t.owner.cookie) => app.request(`${origin}/api/v1${path}`, { method, headers: { Origin: origin, Cookie: cookie } }, disabledEnv)
+  expect(await (await call('/staff/me')).json()).toMatchObject({ features: { venueLogos: false }, venues: [{ logo: null, canEditLogo: false }] })
+  expect(await (await call(logoPath(t.venueId))).json()).toMatchObject({ logo: null, canEditLogo: false })
+  for (const method of ['PUT', 'DELETE']) {
+    const result = await call(logoPath(t.venueId), method)
+    expect(result.status).toBe(503)
+    expect(await result.json()).toEqual({ error: 'venue_logos_disabled' })
+    expect((await call(logoPath(t.venueId), method, '')).status).toBe(401)
+  }
+  const queue = await env.DB.prepare('SELECT id FROM queue WHERE venue_id=?').bind(t.venueId).first<{ id: string }>()
+  const publicResponse = await call(`/public/services/${queue!.id}`, 'GET', '')
+  expect(publicResponse.status).toBe(200)
+  expect(await publicResponse.json()).toMatchObject({ venueLogoUrl: null })
+  const before = await env.DB.prepare('SELECT * FROM venue_logo_object').all()
+  await cleanupVenueLogos(disabledEnv, Date.now() + 86400000)
+  expect(await env.DB.prepare('SELECT * FROM venue_logo_object').all()).toMatchObject({ results: before.results })
+})

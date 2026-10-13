@@ -2,7 +2,7 @@ import { HTTPException } from 'hono/http-exception'
 import type { VenueLogoState } from '@noqueue/contracts/staff'
 import { isCommercial } from '../../auth/permissions'
 import { normalizeLogo } from './logo-image'
-import { venueLogoUrl } from '../../lib/venue-logo'
+import { venueLogoUrl, venueLogosEnabled } from '../../lib/venue-logo'
 
 export type LogoActor = { id: string; role: string }
 type LogoRow = {
@@ -63,7 +63,7 @@ export function venueLogoFields(
   canEditLogo: boolean,
 ): VenueLogoState {
   return {
-    logo: row.logo_key
+    logo: venueLogosEnabled(env) && row.logo_key
       ? {
           url: venueLogoUrl(env, row.logo_key)!,
           name: row.logo_name!,
@@ -72,7 +72,7 @@ export function venueLogoFields(
         }
       : null,
     logoVersion: row.logo_version,
-    canEditLogo,
+    canEditLogo: canEditLogo && venueLogosEnabled(env),
   }
 }
 async function readRow(env: CloudflareBindings, venueId: string) {
@@ -126,6 +126,8 @@ export async function mutateVenueLogo(
   file: File | null,
 ): Promise<VenueLogoState> {
   const access = await venueLogoAccess(env, actor, venueId, true)
+  if (!venueLogosEnabled(env))
+    throw new HTTPException(503, { message: 'venue_logos_disabled' })
   const bytes = file ? new Uint8Array(await file.arrayBuffer()) : null
   const fingerprint = await digest(
     new TextEncoder().encode(
@@ -237,6 +239,8 @@ export async function cleanupVenueLogos(
   env: CloudflareBindings,
   now = Date.now(),
 ) {
+  // Do not claim or delete records while storage is unavailable/disabled.
+  if (!venueLogosEnabled(env)) return
   const claimed = await env.DB.prepare(
     `UPDATE venue_logo_object SET delete_after=0,cleanup_attempted_at=? WHERE id IN (
       SELECT o.id FROM venue_logo_object o WHERE o.delete_after<=?
@@ -273,7 +277,7 @@ export async function localVenueLogo(
   method: string,
 ) {
   if (
-    env.APP_ENV !== 'local' ||
+    env.APP_ENV !== 'local' || !venueLogosEnabled(env) ||
     !/^[\da-f-]{36}$/.test(venue) ||
     !/^[\da-f-]{36}\.(png|jpg)$/.test(object)
   )

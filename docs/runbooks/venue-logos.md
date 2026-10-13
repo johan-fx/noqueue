@@ -2,11 +2,44 @@
 
 ## Delivery status
 
-The repository configures local/test R2 plus **planned** sandbox/staging bindings.
-No bucket, DNS record, header rule, migration on a remote DB or deployment is
-created by this change. Remote activation is a separate, explicitly approved
-operation. There is no production environment in the current Wrangler config;
-do not treat its top-level local config as production.
+Local/test R2 and **staging** are active. Sandbox remains planned. Staging was
+explicitly approved and deployed on 2026-10-13 after the client enabled R2:
+
+- Worker version: `6a121d37-fb08-46a1-b681-7f0d6f620a1c` (isolated `d11797a`
+  plus the tested availability guard; concurrent public waiting-turn changes excluded).
+- Bucket: `noqueue-venue-logos-staging`, EU jurisdiction, Standard storage.
+- Public origin: `https://assets-staging.noqueue-app.com`, active custom domain,
+  minimum TLS 1.2; public `r2.dev` disabled.
+- Response-header rule: `a88c0238c5914a87a72a646084571dee`, scoped only to that
+  hostname, sets `nosniff` and the CSP documented below.
+- D1 migrations 0024/0025 applied. Pre-migration Time Travel bookmark:
+  `0000036a-000002a0-00005103-999812f06979772d385ebb705862d385`.
+- Previous Worker: `9afbd86d-2d3a-4f3d-945d-fdc03ea3af32`.
+
+The remote smoke passed original FIPAV PNG normalization, SVG conversion,
+replacement/deletion, upload/provision replay, rejected corrupt/malicious input,
+revision conflicts, manager/origin/auth denials and CDN MIME/security/immutable
+cache headers (HIT). No queue entry or WhatsApp message was created by these tests.
+
+There is no production environment in the current Wrangler config; do not treat
+its top-level local config as production. Preserve live variables and secrets on
+future deployments: `--keep-vars` alone does not protect a live value from a
+different value explicitly present in the deployment config.
+
+### Availability switch
+
+`VENUE_LOGOS_ENABLED=false`, or an absent `VENUE_LOGOS` binding, disables logos
+without breaking establishment creation. `/staff/me.features.venueLogos` hides
+the creation uploader; logo projections become null and `canEditLogo` becomes
+false. Authorized mutations return 503 `venue_logos_disabled` before parsing
+files, and cleanup does not claim/delete objects. Authentication and authorization
+still run. Staging is currently **true**, with its EU binding and public origin.
+Re-enabling requires the bucket, binding, domain and security rule to be ready;
+never substitute another environment's bucket. Local/test bindings remain local.
+
+Existing PWA tabs can retain the previous frontend until its safe update flow
+completes. Save work and close other No Queue tabs before selecting Update; do
+not bypass that protection or force-clear a user's storage during a deployment.
 
 ## Data and authorization
 

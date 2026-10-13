@@ -107,3 +107,14 @@ describe('commercial logo upload after provisioning', () => {
     )
   })
 })
+
+it('ignores a stale selected logo when disabled while still provisioning once', async () => {
+  vi.mocked(api).mockImplementation(async (path, method) => path === '/commercial/organizations' && method === 'POST'
+    ? { venueId: 'venue-1' }
+    : { items: [], hasMore: false })
+  render(<MemoryRouter><Commercial logoUploadEnabled={false} /></MemoryRouter>)
+  fireEvent.click(await screen.findByRole('button', { name: 'Simular alta' }))
+  await waitFor(() => expect(vi.mocked(api).mock.calls.filter(([, method]) => method === 'POST')).toHaveLength(1))
+  expect(putVenueLogo).not.toHaveBeenCalled()
+  expect(screen.queryByText(/El establecimiento ya está creado/)).toBeNull()
+})

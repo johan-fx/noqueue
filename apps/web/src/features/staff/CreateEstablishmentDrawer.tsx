@@ -67,6 +67,7 @@ export function CreateEstablishmentDrawer({
   open,
   saving = false,
   createDisabled = false,
+  logoUploadEnabled = true,
   error = '',
   onOpenChange,
   onComplete,
@@ -74,6 +75,7 @@ export function CreateEstablishmentDrawer({
   open: boolean
   saving?: boolean
   createDisabled?: boolean
+  logoUploadEnabled?: boolean
   error?: string
   onOpenChange: (open: boolean) => void
   onComplete: (
@@ -164,14 +166,16 @@ export function CreateEstablishmentDrawer({
                 <FieldError errors={[form.formState.errors[name]]} />
               </Field>
             ))}
-            <VenueLogoUpload
+            {logoUploadEnabled && (
+              <VenueLogoUpload
               key={resetKey}
               optional
               disabled={saving}
               onFileChange={setLogoFile}
               onRemove={() => setLogoFile(null)}
               onInvalidFile={() => setLogoFile(null)}
-            />
+              />
+            )}
             {fields.slice(2).map(([name, label]) => (
               <Field key={name}>
                 <FieldLabel htmlFor={`${prefix}-${name}`}>{label}</FieldLabel>
@@ -261,7 +265,7 @@ export function CreateEstablishmentDrawer({
           onClose={() => {
             if (!saving) setConfigOpen(false)
           }}
-          onSave={(service) => onComplete(form.getValues(), service, logoFile)}
+          onSave={(service) => onComplete(form.getValues(), service, logoUploadEnabled ? logoFile : null)}
         />
       </DrawerContent>
     </Drawer>

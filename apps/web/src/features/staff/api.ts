@@ -83,6 +83,8 @@ const messages: Record<string, string> = {
     'Ese usuario ya existe. Elige otro; no se modifica una cuenta existente.',
   logo_too_large: 'El logotipo supera el tamaño máximo de 5 MB.',
   invalid_logo: 'No se puede leer la imagen: el archivo está dañado o su contenido no coincide con el formato PNG, JPG o SVG.',
+  venue_logos_disabled:
+    'La subida de logotipos no está disponible temporalmente. El establecimiento se conserva y podrás añadir su logo más adelante.',
   logo_dimensions_exceeded:
     'La imagen supera el límite de 8 megapíxeles o 16.384 píxeles por lado. Reduce su resolución y vuelve a intentarlo.',
   logo_image_memory_limit:

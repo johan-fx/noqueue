@@ -1,4 +1,5 @@
 import { touchVenueConfiguration } from './configuration'
+import { venueLogosEnabled } from '../../lib/venue-logo'
 import { mutateVenueLogo, readVenueLogo, venueLogoAccess, venueLogoFields } from './logo'
 import { VENUE_LOGO_MAX_BYTES, venueLogoMutationSchema } from '@noqueue/contracts/staff'
 import {
@@ -198,6 +199,7 @@ staffRoutes.get('/venues/:id/logo', (c) =>
 staffRoutes.put('/venues/:id/logo', async (c) => {
   const actor = c.get('actor'), venueId = c.req.param('id')
   await venueLogoAccess(c.env, actor, venueId, true)
+  if (!venueLogosEnabled(c.env)) return c.json({ error: 'venue_logos_disabled' }, 503)
   const key = uuid(c.req.header('Idempotency-Key'))
   if (!c.req.header('Content-Type')?.startsWith('multipart/form-data;'))
     return c.json({ error: 'invalid_logo' }, 400)
@@ -217,6 +219,7 @@ staffRoutes.put('/venues/:id/logo', async (c) => {
 staffRoutes.delete('/venues/:id/logo', async (c) => {
   const actor = c.get('actor'), venueId = c.req.param('id')
   await venueLogoAccess(c.env, actor, venueId, true)
+  if (!venueLogosEnabled(c.env)) return c.json({ error: 'venue_logos_disabled' }, 503)
   const key = uuid(c.req.header('Idempotency-Key'))
   const parsed = venueLogoMutationSchema.safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_logo' }, 400)
@@ -233,6 +236,7 @@ staffRoutes.get('/me', async (c) => {
     user: { id: user.id, email: user.email, username: user.username },
     commercial: isCommercial(user.role),
     platformAdmin: user.role === 'platform_admin',
+    features: { venueLogos: venueLogosEnabled(c.env) },
     venues: venues.results.map((row) => ({
       id: row.id, name: row.name, organizationId: row.organizationId,
       organizationName: row.organizationName, role: row.role,

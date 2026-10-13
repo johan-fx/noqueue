@@ -77,7 +77,7 @@ function listParams(
   return next
 }
 
-export function Commercial() {
+export function Commercial({ logoUploadEnabled = true }: { logoUploadEnabled?: boolean }) {
   const [search, setSearch] = useSearchParams()
   const rawPage = search.get('page') ?? '1'
   const number = Number(rawPage)
@@ -284,7 +284,7 @@ export function Commercial() {
       setOpen(false)
       fingerprint.current = ''
       refresh()
-      if (logoFile && created.venueId) {
+      if (logoUploadEnabled && logoFile && created.venueId) {
         const logoIntent: PendingLogoUpload = {
           venueId: created.venueId,
           file: logoFile,
@@ -431,6 +431,7 @@ export function Commercial() {
               </ToggleGroup>
             </div>
             <CreateEstablishmentDrawer
+              logoUploadEnabled={logoUploadEnabled}
               open={open}
               saving={saving}
               createDisabled={!!pendingLogo}

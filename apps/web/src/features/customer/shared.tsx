@@ -11,6 +11,14 @@ import {
 } from '@/components/ui/select'
 
 export type Locale = 'es' | 'en'
+
+// Keep the shared-display header and content on the same responsive column.
+const kioskContainer = 'mx-auto w-full max-w-[960px] px-4 sm:px-6 lg:px-8'
+
+export function KioskContent({ children }: { children: ReactNode }) {
+  return <div className={`${kioskContainer} py-6 sm:py-10`}>{children}</div>
+}
+
 export function CustomerShell({
   title,
   back,
@@ -33,7 +41,11 @@ export function CustomerShell({
         presentation === 'kiosk' ? 'max-w-none' : 'max-w-xl'
       } flex-col bg-background text-gray-700`}
     >
-      <header className="flex h-11 shrink-0 items-center justify-between px-4">
+      <header
+        className={`flex h-11 shrink-0 items-center justify-between ${
+          presentation === 'kiosk' ? kioskContainer : 'px-4'
+        }`}
+      >
         {back ? (
           <Link
             className="flex h-11 w-13 items-center"

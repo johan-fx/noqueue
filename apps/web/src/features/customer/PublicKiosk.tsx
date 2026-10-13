@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { availabilityText } from './availability'
 import { RestaurantForm } from './RestaurantForm'
 import { ServiceForm } from './ServiceForm'
-import { CustomerShell, LoadError } from './shared'
+import { CustomerShell, KioskContent, LoadError } from './shared'
 import { useLocale, usePublicResource } from './public-resource'
 
 const parse = (value: unknown) => publicServiceSchema.parse(value)
@@ -64,10 +64,10 @@ function KioskPage({ queueId }: { queueId: string }) {
       locale={locale}
       setLocale={setLocale}
     >
-      <div className="mt-6 px-4 py-10 sm:px-10 lg:px-20">
+      <KioskContent>
         {success ? (
           <section
-            className="mx-auto max-w-[500px] space-y-10"
+            className="mx-auto w-full max-w-[500px] space-y-10"
             aria-live="polite"
           >
             <div className="space-y-6 text-gray-800">
@@ -93,7 +93,7 @@ function KioskPage({ queueId }: { queueId: string }) {
             </div>
           </section>
         ) : (
-          <section className="mx-auto max-w-[864px] space-y-10">
+          <section className="w-full space-y-10">
             {error && (
               <LoadError locale={locale} retry={() => void refresh()} />
             )}
@@ -168,7 +168,7 @@ function KioskPage({ queueId }: { queueId: string }) {
             )}
           </section>
         )}
-      </div>
+      </KioskContent>
     </CustomerShell>
   )
 }

@@ -13,11 +13,10 @@ import { publicQueueUrl, openPublicQueue } from '@/lib/public-queue-links'
 
 export function QueuePublicLinks({ queueId }: { queueId: string }) {
   const [error, setError] = useState('')
-  let urls: Record<'queue' | 'kiosk' | 'qr', string> | undefined
+  let urls: Record<'kiosk' | 'qr', string> | undefined
   let configError = ''
   try {
     urls = {
-      queue: publicQueueUrl(queueId),
       kiosk: publicQueueUrl(queueId, 'kiosk'),
       qr: publicQueueUrl(queueId, 'qr'),
     }
@@ -27,77 +26,46 @@ export function QueuePublicLinks({ queueId }: { queueId: string }) {
         ? error.message
         : 'Revisa la configuración del enlace público.'
   }
-  function open(event: MouseEvent, destination: 'queue' | 'kiosk' | 'qr') {
+  function open(event: MouseEvent, destination: 'kiosk' | 'qr') {
     if (!Capacitor.isNativePlatform()) return
     event.preventDefault()
     setError('')
     void openPublicQueue(queueId, destination).catch(() =>
       setError(
-        'No se pudo abrir el enlace público. Comprueba la configuración y vuelve a intentarlo.'
-      )
+        'No se pudo abrir el enlace público. Comprueba la configuración y vuelve a intentarlo.',
+      ),
     )
   }
   return (
     <div className="space-y-2">
-      <div className="inline-flex items-center">
-        <Button
-          variant="outline"
-          className="h-9 rounded-r-none px-3"
+      <DropdownMenu>
+        <DropdownMenuTrigger
           disabled={!urls}
-          nativeButton={!urls}
-          render={
-            urls ? (
-              <a
-                role="link"
-                href={urls.queue}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={(event) => open(event, 'queue')}
-              />
-            ) : undefined
-          }
+          render={<Button variant="outline" className="h-9 px-3" />}
         >
           <img src={externalLink} alt="" aria-hidden="true" />
           Abrir enlace público
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            disabled={!urls}
+          <img src={chevronDown} alt="" aria-hidden="true" />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-40">
+          <DropdownMenuItem
             render={
-              <Button
-                variant="outline"
-                size="icon"
-                className="-ml-px size-9 rounded-l-none"
-                aria-label="Opciones del enlace público"
-              />
+              <a href={urls?.kiosk} target="_blank" rel="noopener noreferrer" />
             }
+            onClick={(event) => open(event, 'kiosk')}
           >
-            <img src={chevronDown} alt="" aria-hidden="true" />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-40">
-            <DropdownMenuItem
-              render={
-                <a
-                  href={urls?.kiosk}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                />
-              }
-              onClick={(event) => open(event, 'kiosk')}
-            >
-              Inscripción
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              render={
-                <a href={urls?.qr} target="_blank" rel="noopener noreferrer" />
-              }
-              onClick={(event) => open(event, 'qr')}
-            >
-              QR
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+            Inscripción
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            render={
+              <a href={urls?.qr} target="_blank" rel="noopener noreferrer" />
+            }
+            onClick={(event) => open(event, 'qr')}
+          >
+            QR
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
       {(configError || error) && (
         <p role="alert" className="text-destructive">
           {configError || error}

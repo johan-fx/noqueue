@@ -33,7 +33,7 @@ it('decodes the real black/white SVG QR into the original absolute public URL', 
   }
   const canvas = { width, height: width, getContext: () => ({ getImageData: () => ({ data: pixels }) }) } as unknown as HTMLCanvasElement
   expect(new BrowserQRCodeReader().decodeFromCanvas(canvas).getText()).toBe('https://public.example/q/q?lang=en')
-  expect(screen.getByRole('link', { name: 'Open waiting list' })).toHaveAttribute('href', 'https://public.example/q/q?lang=en')
+  expect(screen.queryByRole('link')).toBeNull()
 })
 it('registers new routes only on the public web surface', () => {
   expect(webRoutes.map((route) => route.path)).toEqual(expect.arrayContaining(['/q/:queueId/kiosk', '/q/:queueId/qr']))

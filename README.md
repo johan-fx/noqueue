@@ -36,8 +36,13 @@ The original scaffold commands are recorded in [docs/development/bootstrap.md](d
 
 ## Public queue displays
 
-The staff queue drawer exposes the existing public queue, a shared-tablet registration
-page (`/q/:queueId/kiosk`), and a QR display (`/q/:queueId/qr`). These pages use the
+The staff queue drawer's “Abrir enlace público” button only opens a dropdown with
+two options: “Inscripción”, a shared-tablet registration page (`/q/:queueId/kiosk`),
+and “QR”, a QR display (`/q/:queueId/qr`). It never directly opens the personal
+queue flow. The QR encodes the public queue URL for guests to scan with their own
+phones; the shared display has no clickable link into that personal flow.
+Both displays use a centered, fluid column on mobile, portrait and landscape
+tablets, and desktop, with natural vertical scrolling. These pages use the
 public admission endpoints; no staff session or operator permissions are used.
 Registration requires a name, valid phone number and explicit WhatsApp consent.
 After admission, personal fields are discarded and the screen resets after 10 seconds

@@ -21,6 +21,7 @@ function renderList() {
           username: 'long.staff.username.withoutspace',
           role: 'venue_manager',
           active: 1,
+          queueIds: [],
           canEditDetails: true,
         },
         {
@@ -29,6 +30,7 @@ function renderList() {
           username: 'administrator.longusername',
           role: 'owner',
           active: 1,
+          queueIds: [],
           canEditDetails: false,
         },
       ]}
@@ -105,6 +107,7 @@ it('keeps badges and separate owner/staff help controls, without invoking member
     username: 'owner',
     role: 'owner' as const,
     active: 0,
+    queueIds: [],
     canEditDetails: false,
   }
   const { rerender } = render(

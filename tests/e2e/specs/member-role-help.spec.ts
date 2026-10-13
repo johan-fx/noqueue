@@ -70,6 +70,7 @@ async function openMembers(page: Page) {
               username: 'owner',
               role: 'owner',
               active: 1,
+              queueIds: [],
               canEditDetails: false,
             },
             {
@@ -78,6 +79,7 @@ async function openMembers(page: Page) {
               username: 'staff',
               role: 'queue_staff',
               active: 1,
+              queueIds: [],
               canEditDetails: true,
             },
             {
@@ -86,6 +88,7 @@ async function openMembers(page: Page) {
               username: 'viewer',
               role: 'viewer',
               active: 0,
+              queueIds: [],
               canEditDetails: true,
             },
           ],
@@ -96,7 +99,9 @@ async function openMembers(page: Page) {
       method: 'GET',
       path: '/api/v1/staff/venues/role-help/location',
       expectedHits: { min: 1 },
-      respond: () => ({ json: { version: 1, confirmedAt: null, location: null } }),
+      respond: () => ({
+        json: { version: 1, confirmedAt: null, location: null },
+      }),
     },
   ])
   await page.goto('/staff')

@@ -301,6 +301,11 @@ it('allows queue operators without configuration permission and deduplicates pro
   )
     .bind(t.actor)
     .run()
+  await env.DB.prepare(
+    'INSERT INTO staff_queue_assignment SELECT user_id,venue_id,? FROM venue_membership WHERE user_id=?',
+  )
+    .bind(t.queue, t.actor)
+    .run()
   const id = await entry(t.queue),
     ctx = await openingContext(env, t.queue),
     key = crypto.randomUUID()
@@ -745,6 +750,12 @@ it.each(['viewer', 'queue_staff'] as const)(
     await env.DB.prepare('UPDATE venue_membership SET role=? WHERE user_id=?')
       .bind(role, t.actor)
       .run()
+    if (role === 'queue_staff')
+      await env.DB.prepare(
+        'INSERT INTO staff_queue_assignment SELECT user_id,venue_id,? FROM venue_membership WHERE user_id=?',
+      )
+        .bind(t.queue, t.actor)
+        .run()
     const change = runLifecycleCommand(
       env,
       t.actor,

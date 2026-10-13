@@ -16,6 +16,12 @@ it('associates validation errors with their controls and clears associations aft
   const onSubmit = vi.fn(async () => undefined)
   render(
     <MemberActionDrawer
+      queueCatalog={{
+        queues: [{ id: 'q1', name: 'Restaurante' }],
+        loading: false,
+        error: '',
+        onRetry: vi.fn(),
+      }}
       action={{ kind: 'create' }}
       busy={false}
       error=""
@@ -48,6 +54,16 @@ it('associates validation errors with their controls and clears associations aft
     screen.getByLabelText('Contraseña inicial (mínimo 15 caracteres)'),
     { target: { value: 'valid-password-123456' } },
   )
+  fireEvent.click(
+    screen.getByRole('combobox', { name: 'Servicios a gestionar' }),
+  )
+  fireEvent.click(
+    await screen.findByRole('option', { name: 'Restaurante' }),
+  )
+  fireEvent.keyDown(
+    screen.getByRole('combobox', { name: 'Buscar servicios' }),
+    { key: 'Escape' },
+  )
   fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
   await waitFor(() => expect(onSubmit).toHaveBeenCalledOnce())
   for (const label of [
@@ -67,6 +83,12 @@ it('associates role validation errors and initializes nullable usernames as an e
     .mockImplementation(() => undefined)
   render(
     <MemberActionDrawer
+      queueCatalog={{
+        queues: [{ id: 'q1', name: 'Restaurante' }],
+        loading: false,
+        error: '',
+        onRetry: vi.fn(),
+      }}
       action={{
         kind: 'edit',
         member: {
@@ -75,6 +97,7 @@ it('associates role validation errors and initializes nullable usernames as an e
           username: null as unknown as string,
           role: 'legacy' as 'viewer',
           active: 1,
+          queueIds: [],
           canEditDetails: true,
         },
       }}
@@ -107,6 +130,12 @@ it('updates selected role summary, excludes owner and keeps help separate from f
     onClose = vi.fn()
   const { rerender } = render(
     <MemberActionDrawer
+      queueCatalog={{
+        queues: [{ id: 'q1', name: 'Restaurante' }],
+        loading: false,
+        error: '',
+        onRetry: vi.fn(),
+      }}
       action={{ kind: 'create' }}
       busy={false}
       error=""
@@ -119,7 +148,7 @@ it('updates selected role summary, excludes owner and keeps help separate from f
   const role = screen.getByRole('combobox', { name: 'Rol' })
   const summaryId = role.getAttribute('aria-describedby')!
   expect(document.getElementById(summaryId)).toHaveTextContent(
-    'Atiende las listas',
+    'Consulta y gestiona solo los servicios asignados',
   )
   fireEvent.click(role)
   expect(
@@ -151,6 +180,12 @@ it('updates selected role summary, excludes owner and keeps help separate from f
   )
   rerender(
     <MemberActionDrawer
+      queueCatalog={{
+        queues: [{ id: 'q1', name: 'Restaurante' }],
+        loading: false,
+        error: '',
+        onRetry: vi.fn(),
+      }}
       action={{ kind: 'create' }}
       busy
       error=""
@@ -170,6 +205,12 @@ it('updates selected role summary, excludes owner and keeps help separate from f
 it('does not show role help in password mode', () => {
   render(
     <MemberActionDrawer
+      queueCatalog={{
+        queues: [{ id: 'q1', name: 'Restaurante' }],
+        loading: false,
+        error: '',
+        onRetry: vi.fn(),
+      }}
       action={{
         kind: 'password',
         member: {
@@ -178,6 +219,7 @@ it('does not show role help in password mode', () => {
           username: 'ana',
           role: 'viewer',
           active: 1,
+          queueIds: [],
           canEditDetails: true,
         },
       }}
@@ -192,3 +234,88 @@ it('does not show role help in password mode', () => {
     screen.queryByRole('button', { name: /Ver permisos/ }),
   ).not.toBeInTheDocument()
 })
+
+it('preloads assignments in edit, removes chips and submits only explicit selected IDs', async () => {
+  const onSubmit = vi.fn(async () => undefined)
+  render(
+    <MemberActionDrawer
+      action={{
+        kind: 'edit',
+        member: {
+          id: 'm',
+          name: 'Ana',
+          username: 'ana.staff',
+          role: 'queue_staff',
+          queueIds: ['q1', 'q2'],
+          active: 1,
+          canEditDetails: true,
+        },
+      }}
+      queueCatalog={{
+        queues: [
+          { id: 'q1', name: 'Recepción' },
+          { id: 'q2', name: 'Bar' },
+        ],
+        loading: false,
+        error: '',
+        onRetry: vi.fn(),
+      }}
+      busy={false}
+      error=""
+      finalFocus={{ current: null }}
+      onClose={vi.fn()}
+      onSubmit={onSubmit}
+    />,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Quitar Bar' }))
+  expect(
+    screen.queryByRole('button', { name: 'Quitar Bar' }),
+  ).not.toBeInTheDocument()
+  fireEvent.submit(screen.getByRole('dialog').querySelector('form')!)
+  await waitFor(() =>
+    expect(onSubmit).toHaveBeenCalledWith({
+      name: 'Ana',
+      username: 'ana.staff',
+      role: 'queue_staff',
+      queueIds: ['q1'],
+    }),
+  )
+})
+
+it.each([
+  { loading: true, error: '', text: 'Cargando servicios…' },
+  {
+    loading: false,
+    error: 'No se pudieron cargar',
+    text: 'No se pudieron cargar',
+  },
+  {
+    loading: false,
+    error: '',
+    text: 'No hay servicios disponibles. Crea un servicio antes de asignar personal.',
+  },
+])(
+  'blocks saving staff when the catalogue is unavailable: $text',
+  ({ loading, error, text }) => {
+    const onRetry = vi.fn()
+    render(
+      <MemberActionDrawer
+        action={{ kind: 'create' }}
+        queueCatalog={{ queues: [], loading, error, onRetry }}
+        busy={false}
+        error=""
+        finalFocus={{ current: null }}
+        onClose={vi.fn()}
+        onSubmit={vi.fn()}
+      />,
+    )
+    expect(screen.getByText(text)).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Crear acceso' })).toBeDisabled()
+    if (!loading) {
+      fireEvent.click(
+        screen.getByRole('button', { name: 'Actualizar servicios' }),
+      )
+      expect(onRetry).toHaveBeenCalledOnce()
+    }
+  },
+)

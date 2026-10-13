@@ -6,7 +6,7 @@ import { VenueLogoEditor } from './VenueLogoEditor'
 import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
 import { entryActions, receptionLabels } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import type {
   Capability,
   QueueSummary,
@@ -234,33 +234,61 @@ export function Dashboard(props: DashboardProps) {
     allowsEntryAction(pendingEntry, pending.queueId, pending.action)
   const pendingActionUnavailable =
     !!pending && (!pendingEntry || !pendingActionAllowed)
-  function commitQueues(rows: QueueSummary[]) {
-    queuesRef.current = rows
-    setQueues(rows)
-  }
-  function commitEntries(rows: StaffEntry[]) {
+  const commitEntries = useCallback((rows: StaffEntry[]) => {
     entriesRef.current = rows
     setEntries(rows)
-  }
-  function selectQueue(queueId: string) {
-    const changed = selectedRef.current !== queueId
-    selectedRef.current = queueId
-    if (changed) {
-      refreshSequence.current++
-      queueRefreshSequence.current++
-      commitEntries([])
-      setLastSync('')
-    }
-    setPending(null)
-    setOverrideReason('')
-    setArrivalMode('notify')
-    setCommandUncertain(false)
-    setSeating(null)
-    setCommandError('')
-    setCommandStale(false)
-    commandRequest.current = null
-    setSelected(queueId)
-  }
+  }, [])
+  const selectQueue = useCallback(
+    (queueId: string) => {
+      const changed = selectedRef.current !== queueId
+      selectedRef.current = queueId
+      if (changed) {
+        refreshSequence.current++
+        queueRefreshSequence.current++
+        commitEntries([])
+        setLastSync('')
+      }
+      setPending(null)
+      setOverrideReason('')
+      setArrivalMode('notify')
+      setCommandUncertain(false)
+      setSeating(null)
+      setCommandError('')
+      setCommandStale(false)
+      commandRequest.current = null
+      setSelected(queueId)
+    },
+    [commitEntries],
+  )
+  const commitQueues = useCallback(
+    (rows: QueueSummary[]) => {
+      queuesRef.current = rows
+      setQueues(rows)
+      const allowed = new Set(rows.map((row) => row.id))
+      setWaitingCounts((counts) =>
+        Object.fromEntries(
+          Object.entries(counts).filter(([id]) => allowed.has(id)),
+        ),
+      )
+      setAdvanced((current) =>
+        current && !allowed.has(current.queueId) ? null : current,
+      )
+      setLifecycle((current) =>
+        current && !allowed.has(current.queueId) ? null : current,
+      )
+      setAdding((current) =>
+        current && !allowed.has(current.queue.id) ? null : current,
+      )
+      if (!allowed.has(selectedRef.current)) {
+        if (selectedRef.current)
+          setDrawer((current) =>
+            current === 'queue' || current === 'edit' ? null : current,
+          )
+        selectQueue(rows[0]?.id ?? '')
+      }
+    },
+    [selectQueue],
+  )
   function allowsEntryAction(
     entry: StaffEntry,
     queueId: string,
@@ -274,71 +302,68 @@ export function Dashboard(props: DashboardProps) {
   }
   useEffect(() => {
     let live = true
-    api<QueueSummary[]>(`/venues/${venue.id}/queues`)
-      .then((rows) => {
-        if (live) {
-          commitQueues(rows)
-          selectQueue(rows[0]?.id ?? '')
-        }
-      })
-      .catch((e) => {
-        if (live) setError(errorMessage(e))
-      })
-      .finally(() => {
-        if (live) setLoading(false)
-      })
-    return () => {
-      live = false
-    }
-  }, [venue.id])
-  useEffect(() => {
-    if (!selected || selectedRef.current !== selected) return
-    const queueId = selected
-    let live = true
     let timer: ReturnType<typeof setTimeout> | undefined
     let controller: AbortController | undefined
     async function poll(forced = false) {
       clearTimeout(timer)
       controller?.abort()
-      if (refreshPaused.current && !forced) {
-        timer = setTimeout(() => void poll().catch(() => undefined), 5000)
-        return
-      }
       const request = new AbortController()
       controller = request
       const sequence = ++refreshSequence.current
+      const catalogSequence = ++queueRefreshSequence.current
+      const queueId = selectedRef.current
       let deadline: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        deadline = setTimeout(() => {
+          reject(
+            new ApiError(
+              503,
+              'Servicio temporalmente no disponible. Inténtalo de nuevo.',
+              0,
+              'temporarily_unavailable',
+            ),
+          )
+          request.abort()
+        }, 15000)
+      })
+      let readingEntries = false
       try {
-        const [rows, summaries] = await Promise.race([
-          Promise.all([
-            api<StaffEntry[]>(
-              `/queues/${queueId}/entries`,
-              'GET',
-              undefined,
-              undefined,
-              request.signal,
-            ),
-            api<QueueSummary[]>(
-              `/venues/${venue.id}/queues`,
-              'GET',
-              undefined,
-              undefined,
-              request.signal,
-            ),
-          ]),
-          new Promise<never>((_, reject) => {
-            deadline = setTimeout(() => {
-              request.abort()
-              reject(
-                new ApiError(
-                  503,
-                  'Servicio temporalmente no disponible. Inténtalo de nuevo.',
-                  0,
-                  'temporarily_unavailable',
-                ),
-              )
-            }, 15000)
-          }),
+        // Commit the authorized catalogue independently: a revoked selected queue
+        // returning 404 must never leave its old entries visible in the dashboard.
+        const summaries = await Promise.race([
+          api<QueueSummary[]>(
+            `/venues/${venue.id}/queues`,
+            'GET',
+            undefined,
+            undefined,
+            request.signal,
+          ),
+          timeout,
+        ])
+        if (
+          !live ||
+          controller !== request ||
+          catalogSequence !== queueRefreshSequence.current
+        )
+          return
+        commitQueues(summaries)
+        if (
+          !queueId ||
+          selectedRef.current !== queueId ||
+          sequence !== refreshSequence.current
+        )
+          return
+        if (refreshPaused.current && !forced) return
+        readingEntries = true
+        const rows = await Promise.race([
+          api<StaffEntry[]>(
+            `/queues/${queueId}/entries`,
+            'GET',
+            undefined,
+            undefined,
+            request.signal,
+          ),
+          timeout,
         ])
         if (
           live &&
@@ -346,7 +371,6 @@ export function Dashboard(props: DashboardProps) {
           selectedRef.current === queueId
         ) {
           setWaitingCounts(waitingCountsFor(summaries, queueId, rows))
-          commitQueues(summaries)
           commitEntries(rows)
           setLastSync(new Date().toLocaleTimeString())
           setError('')
@@ -354,27 +378,48 @@ export function Dashboard(props: DashboardProps) {
       } catch (error) {
         if (
           live &&
-          sequence === refreshSequence.current &&
-          selectedRef.current === queueId
+          controller === request &&
+          sequence === refreshSequence.current
         ) {
+          if (
+            error instanceof ApiError &&
+            [401, 403, 404].includes(error.status)
+          ) {
+            commitQueues(
+              error.status === 401 || !readingEntries
+                ? []
+                : queuesRef.current.filter((row) => row.id !== queueId),
+            )
+            commitEntries([])
+          }
           setError(errorMessage(error))
           throw error
         }
       } finally {
         clearTimeout(deadline)
-        if (live && controller === request)
+        if (live && controller === request) {
+          setLoading(false)
           timer = setTimeout(() => void poll().catch(() => undefined), 5000)
+        }
       }
     }
     immediateRefresh.current = () => poll(true)
+    const onFocus = () => {
+      if (document.visibilityState !== 'hidden')
+        void poll(true).catch(() => undefined)
+    }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
     void poll().catch(() => undefined)
     return () => {
       live = false
       controller?.abort()
       clearTimeout(timer)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
       immediateRefresh.current = null
     }
-  }, [selected, venue.id])
+  }, [selected, venue.id, commitQueues, commitEntries])
   async function refresh() {
     await immediateRefresh.current?.()
   }
@@ -799,7 +844,12 @@ export function Dashboard(props: DashboardProps) {
               </div>
             ) : (
               <p className="py-10 text-center text-muted-foreground">
-                {loading ? 'Cargando servicios…' : 'Todavía no hay servicios.'}
+                {loading
+                  ? 'Cargando servicios…'
+                  : props.mode !== 'commercial' &&
+                    props.venue.role === 'queue_staff'
+                  ? 'No tienes servicios asignados'
+                  : 'Todavía no hay servicios.'}
               </p>
             )}
           </CardContent>

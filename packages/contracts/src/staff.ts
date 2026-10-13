@@ -476,13 +476,43 @@ export const provisionSchema = z.object({
   services: z.array(serviceSchema).min(1).max(10),
 })
 export type ProvisionInput = z.input<typeof provisionSchema>
-export const inviteSchema = z.object({
+const memberFields = z.object({
   name,
   username: usernameSchema,
-  password: passwordSchema,
   role: z.enum(['venue_manager', 'queue_staff', 'viewer']),
+  queueIds: z.array(z.string().min(1).max(100)).default([]),
 })
-export const memberDetailsSchema = inviteSchema.omit({ password: true })
+export function validQueueAssignment(input: {
+  role: string
+  queueIds: string[]
+}) {
+  return input.role === 'queue_staff'
+    ? input.queueIds.length > 0 &&
+        new Set(input.queueIds).size === input.queueIds.length
+    : input.queueIds.length === 0
+}
+function validateMemberAssignments(
+  input: { role: string; queueIds: string[] },
+  ctx: z.RefinementCtx,
+) {
+  if (!validQueueAssignment(input))
+    ctx.addIssue({
+      code: 'custom',
+      path: ['queueIds'],
+      message:
+        input.role !== 'queue_staff'
+          ? 'Solo Personal de lista puede tener servicios asignados'
+          : input.queueIds.length === 0
+          ? 'Selecciona al menos un servicio'
+          : 'No repitas servicios',
+    })
+}
+export const inviteSchema = memberFields
+  .extend({ password: passwordSchema })
+  .superRefine(validateMemberAssignments)
+export const memberDetailsSchema = memberFields.superRefine(
+  validateMemberAssignments,
+)
 export type MemberDetailsInput = z.infer<typeof memberDetailsSchema>
 export type StaffMember = {
   id: string
@@ -491,6 +521,7 @@ export type StaffMember = {
   role: StaffRole
   active: number
   canEditDetails: boolean
+  queueIds: string[]
 }
 /** Physical context confirmed by staff, never an inventory reservation. */
 export const assignmentSeatingSchema = z.discriminatedUnion('mode', [
@@ -592,6 +623,8 @@ export const queueSettingsSchema = z.intersection(
 export const membershipUpdateSchema = z.object({
   role: z.enum(['venue_manager', 'queue_staff', 'viewer']),
   active: z.boolean(),
+  // Omitted for an active-only change; resolved against the current membership.
+  queueIds: z.array(z.string().min(1).max(100)).optional(),
 })
 export const VENUE_LOGO_MAX_BYTES = 5 * 1024 * 1024
 export const venueLogoSchema = z.object({

@@ -118,9 +118,11 @@ export function RoleHelpPopover({
             )}
           </section>
           <p className="text-xs text-muted-foreground">
-            Los permisos se aplican solo a este establecimiento. La gestión de
-            usuarios mantiene las restricciones de las cuentas protegidas,
-            globales o compartidas.
+            {role === 'queue_staff'
+              ? 'Los permisos se aplican solo a los servicios asignados de este establecimiento.'
+              : 'Los permisos se aplican solo a este establecimiento.'}{' '}
+            La gestión de usuarios mantiene las restricciones de las cuentas
+            protegidas, globales o compartidas.
           </p>
           {revoked && (
             <p className="rounded-md bg-muted p-3 text-sm">

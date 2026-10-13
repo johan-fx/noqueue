@@ -6,6 +6,7 @@ export async function venueAccess(
   userId: string,
   venueId: string,
   permission: Capability,
+  queueId?: string,
 ) {
   const row = await env.DB.prepare(
     `SELECT vm.role,v.organization_id AS organizationId FROM venue_membership vm
@@ -21,6 +22,14 @@ export async function venueAccess(
     const commercial = await commercialVenue(env, userId, venueId, permission)
     if (commercial) return commercial
     throw new HTTPException(404, { message: 'not_found' })
+  }
+  if (row.role === 'queue_staff' && queueId !== undefined) {
+    const grant = await env.DB.prepare(
+      'SELECT 1 FROM staff_queue_assignment WHERE user_id=? AND venue_id=? AND queue_id=?',
+    )
+      .bind(userId, venueId, queueId)
+      .first()
+    if (!grant) throw new HTTPException(404, { message: 'not_found' })
   }
   if (!permits(row.role, permission))
     throw new HTTPException(403, { message: 'forbidden' })
@@ -73,8 +82,15 @@ export async function queueAccess(
     .bind(queueId)
     .first<{ venue_id: string }>()
   if (!queue) throw new HTTPException(404, { message: 'not_found' })
+  const access = await venueAccess(
+    env,
+    userId,
+    queue.venue_id,
+    permission,
+    queueId,
+  )
   return {
-    ...(await venueAccess(env, userId, queue.venue_id, permission)),
+    ...access,
     venueId: queue.venue_id,
   }
 }

@@ -28,6 +28,13 @@ import {
 } from '@/components/ui/select'
 import { memberRoleLabels, roleInformation } from './member-model'
 import { RoleHelpPopover } from './RoleHelpPopover'
+import { MemberQueuePicker, type MemberQueueOption } from './MemberQueuePicker'
+export type MemberQueueCatalog = {
+  queues: MemberQueueOption[]
+  loading: boolean
+  error: string
+  onRetry: () => void
+}
 export type MemberAction =
   | { kind: 'create' }
   | { kind: 'edit'; member: StaffMember }
@@ -44,8 +51,10 @@ export function MemberActionDrawer({
   finalFocus,
   onClose,
   onSubmit,
+  queueCatalog,
 }: {
   action: MemberAction
+  queueCatalog: MemberQueueCatalog
   busy: boolean
   error: string
   finalFocus: RefObject<HTMLElement | null>
@@ -56,6 +65,7 @@ export function MemberActionDrawer({
     name: action.kind === 'edit' ? action.member.name : '',
     username: action.kind === 'edit' ? action.member.username ?? '' : '',
     password: '',
+    queueIds: action.kind === 'edit' ? action.member.queueIds ?? [] : [],
     role:
       action.kind === 'edit'
         ? (action.member.role as MemberDetailsInput['role'])
@@ -63,6 +73,9 @@ export function MemberActionDrawer({
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
   const roleSummaryId = useId()
+  const needsQueues = action.kind !== 'password' && draft.role === 'queue_staff'
+  const unavailableCatalog =
+    queueCatalog.loading || !!queueCatalog.error || !queueCatalog.queues.length
   const selectedRoleInformation = roleInformation[draft.role]
   const errorAttributes = (field: string) => ({
     'aria-invalid': !!errors[field],
@@ -89,7 +102,10 @@ export function MemberActionDrawer({
         : action.kind === 'edit'
         ? memberDetailsSchema
         : passwordResetSchema
-    const parsed = schema.safeParse(draft)
+    const parsed = schema.safeParse({
+      ...draft,
+      queueIds: draft.role === 'queue_staff' ? draft.queueIds : [],
+    })
     if (!parsed.success) {
       setErrors(
         Object.fromEntries(
@@ -99,6 +115,18 @@ export function MemberActionDrawer({
           ]),
         ),
       )
+      return
+    }
+    if (
+      needsQueues &&
+      (unavailableCatalog ||
+        draft.queueIds.some(
+          (id) => !queueCatalog.queues.some((queue) => queue.id === id),
+        ))
+    ) {
+      setErrors({
+        queueIds: 'Actualiza los servicios disponibles y revisa la selección',
+      })
       return
     }
     setErrors({})
@@ -226,6 +254,56 @@ export function MemberActionDrawer({
                 </Field>
               </>
             )}
+            {needsQueues && (
+              <Field>
+                <FieldLabel htmlFor="member-queueIds">
+                  Servicios a gestionar
+                </FieldLabel>
+                <MemberQueuePicker
+                  queues={queueCatalog.queues}
+                  value={draft.queueIds}
+                  onChange={(queueIds) => {
+                    setDraft({ ...draft, queueIds })
+                    setErrors((previous) => ({ ...previous, queueIds: '' }))
+                  }}
+                  disabled={busy || unavailableCatalog}
+                  invalid={!!errors.queueIds}
+                  describedBy={
+                    errors.queueIds
+                      ? 'member-queueIds-error'
+                      : 'member-queueIds-status'
+                  }
+                />
+                <div
+                  id="member-queueIds-status"
+                  className="text-sm text-muted-foreground"
+                  role="status"
+                >
+                  {queueCatalog.loading
+                    ? 'Cargando servicios…'
+                    : queueCatalog.error
+                    ? queueCatalog.error
+                    : !queueCatalog.queues.length
+                    ? 'No hay servicios disponibles. Crea un servicio antes de asignar personal.'
+                    : ''}
+                </div>
+                {!queueCatalog.loading &&
+                  (queueCatalog.error || !queueCatalog.queues.length) && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={queueCatalog.onRetry}
+                    >
+                      Actualizar servicios
+                    </Button>
+                  )}
+                <FieldError
+                  id="member-queueIds-error"
+                  errors={errors.queueIds ? [{ message: errors.queueIds }] : []}
+                />
+              </Field>
+            )}
             {action.kind !== 'edit' && (
               <Field>
                 <FieldLabel htmlFor="member-password">
@@ -261,7 +339,11 @@ export function MemberActionDrawer({
           <Button variant="outline" disabled={busy} onClick={onClose}>
             Cancelar
           </Button>
-          <Button type="submit" form="member-action-form" disabled={busy}>
+          <Button
+            type="submit"
+            form="member-action-form"
+            disabled={busy || (needsQueues && unavailableCatalog)}
+          >
             {busy ? 'Guardando…' : submitLabel}
           </Button>
         </DrawerFooter>

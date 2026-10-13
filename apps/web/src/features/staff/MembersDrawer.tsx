@@ -23,6 +23,7 @@ import {
 } from './MemberActionDrawer'
 import { Members } from './Members'
 import { api, errorMessage } from './api'
+import type { MemberQueueOption } from './MemberQueuePicker'
 type Data = { members: StaffMember[] }
 type CommittedChange =
   | {
@@ -94,6 +95,34 @@ function MemberManagement({
     [busy, setBusy] = useState(false),
     [loading, setLoading] = useState(true),
     [needsReload, setNeedsReload] = useState(false)
+  const [queues, setQueues] = useState<MemberQueueOption[]>([])
+  const [queueLoading, setQueueLoading] = useState(true)
+  const [queueError, setQueueError] = useState('')
+  const [catalogRevision, setCatalogRevision] = useState(0)
+  useEffect(() => {
+    let live = true
+    const controller = new AbortController()
+    void api<MemberQueueOption[]>(
+      `/venues/${venueId}/queues`,
+      'GET',
+      undefined,
+      undefined,
+      controller.signal,
+    )
+      .then((rows) => {
+        if (live) setQueues(rows)
+      })
+      .catch((e) => {
+        if (live) setQueueError(errorMessage(e))
+      })
+      .finally(() => {
+        if (live) setQueueLoading(false)
+      })
+    return () => {
+      live = false
+      controller.abort()
+    }
+  }, [venueId, catalogRevision])
   const lock = useRef(false),
     generation = useRef(0),
     trigger = useRef<HTMLElement | null>(null),
@@ -168,6 +197,10 @@ function MemberManagement({
               ? {
                   ...member,
                   ...change.input,
+                  queueIds:
+                    change.input.role === 'queue_staff'
+                      ? change.input.queueIds ?? member.queueIds
+                      : [],
                   active: Number(change.input.active),
                 }
               : member,
@@ -323,6 +356,16 @@ function MemberManagement({
         <MemberActionDrawer
           key={`${action.kind}:${'member' in action ? action.member.id : ''}`}
           action={action}
+          queueCatalog={{
+            queues,
+            loading: queueLoading,
+            error: queueError,
+            onRetry: () => {
+              setQueueLoading(true)
+              setQueueError('')
+              setCatalogRevision((revision) => revision + 1)
+            },
+          }}
           busy={busy}
           error={error}
           finalFocus={trigger}

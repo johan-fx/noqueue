@@ -1,4 +1,5 @@
 import { touchVenueConfiguration } from './configuration'
+import { validateQueueIds, replaceQueueAssignments } from './queue-assignments'
 import { venueLogosEnabled } from '../../lib/venue-logo'
 import { mutateVenueLogo, readVenueLogo, venueLogoAccess, venueLogoFields } from './logo'
 import { VENUE_LOGO_MAX_BYTES, venueLogoMutationSchema } from '@noqueue/contracts/staff'
@@ -32,6 +33,7 @@ import { HTTPException } from 'hono/http-exception'
 import { z } from 'zod'
 import {
   inviteSchema,
+  validQueueAssignment,
   membershipUpdateSchema,
   memberDetailsSchema,
   provisionSchema,
@@ -325,6 +327,11 @@ async function canManage(c: Context<StaffEnv>, venueId: string) {
   }
   return venueAccess(c.env, actor.id, venueId, 'members.manage')
 }
+function memberActorAccessSql(role: string) {
+  return isCommercial(role)
+    ? `EXISTS (SELECT 1 FROM user manager JOIN venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE manager.id=? AND v.id=? AND manager.role IN ('commercial_operator','platform_admin') AND (t.created_by=manager.id OR manager.role='platform_admin') AND COALESCE(manager.banned,0)=0)`
+    : `EXISTS (SELECT 1 FROM venue_membership av JOIN venue v ON v.id=av.venue_id JOIN member am ON am.organizationId=v.organization_id AND am.userId=av.user_id JOIN user manager ON manager.id=av.user_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE av.user_id=? AND av.venue_id=? AND av.active=1 AND av.role='owner' AND t.status='active' AND COALESCE(manager.banned,0)=0)`
+}
 // Count all grants, including revoked ones: a shared identity is never venue-local.
 const editableMemberSql = `u.role='user' AND vm.role!='owner' AND u.id!=?
   AND (SELECT COUNT(*) FROM member WHERE userId=u.id)=1
@@ -339,14 +346,26 @@ staffRoutes.get('/venues/:id/members', async (c) => {
   )
     .bind(c.get('actor').id, c.req.param('id'))
     .all<
-      Omit<StaffMember, 'canEditDetails'> & {
+      Omit<StaffMember, 'canEditDetails' | 'queueIds'> & {
         email: string
         canEditDetails: number
       }
     >()
+  const grants = await c.env.DB.prepare(
+    'SELECT user_id,queue_id FROM staff_queue_assignment WHERE venue_id=? ORDER BY queue_id',
+  )
+    .bind(c.req.param('id'))
+    .all<{ user_id: string; queue_id: string }>()
+  const queueIds = new Map<string, string[]>()
+  for (const grant of grants.results) {
+    const ids = queueIds.get(grant.user_id) ?? []
+    ids.push(grant.queue_id)
+    queueIds.set(grant.user_id, ids)
+  }
   return c.json({
     members: rows.results.map((row) => ({
       ...row,
+      queueIds: row.role === 'queue_staff' ? queueIds.get(row.id) ?? [] : [],
       canEditDetails: !!row.canEditDetails,
     })),
   })
@@ -355,10 +374,28 @@ staffRoutes.post('/venues/:id/members', async (c) => {
   const access = await canManage(c, c.req.param('id'))
   const parsed = inviteSchema.safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_member' }, 400)
-  const { username, password, name, role } = parsed.data
+  const { username, password, name, role, queueIds } = parsed.data
+  await validateQueueIds(c.env, c.req.param('id'), queueIds)
+  const auditId = crypto.randomUUID()
   const id = crypto.randomUUID()
   try {
     await c.env.DB.batch([
+      // NULL target aborts the entire batch if authority was revoked after canManage.
+      c.env.DB.prepare(
+        `INSERT INTO staff_audit VALUES (?,?,?,?,?,CASE WHEN ${memberActorAccessSql(
+          c.get('actor').role,
+        )} THEN ? ELSE NULL END,?)`,
+      ).bind(
+        auditId,
+        c.get('actor').id,
+        access.organizationId,
+        c.req.param('id'),
+        'member.created',
+        c.get('actor').id,
+        c.req.param('id'),
+        id,
+        Date.now(),
+      ),
       ...(await credentialStatements(c.env, id, name, username, password)),
       ...membershipStatements(
         c.env,
@@ -367,13 +404,12 @@ staffRoutes.post('/venues/:id/members', async (c) => {
         c.req.param('id'),
         role,
       ),
-      audit(
+      ...replaceQueueAssignments(
         c.env,
-        c.get('actor').id,
-        access.organizationId,
-        c.req.param('id'),
-        'member.created',
         id,
+        c.req.param('id'),
+        queueIds,
+        auditId,
       ),
     ])
   } catch (error) {
@@ -448,15 +484,14 @@ staffRoutes.patch('/venues/:id/members/:userId/details', async (c) => {
     .first()
   if (!eligible)
     throw new HTTPException(403, { message: 'member_details_forbidden' })
-  const { name, username, role } = parsed.data
+  const { name, username, role, queueIds } = parsed.data
+  await validateQueueIds(c.env, venueId, queueIds)
   const auditId = crypto.randomUUID(),
     now = new Date().toISOString()
   // The audit row is the transaction-local eligibility gate. Every write depends
   // on it; D1 rolls the entire batch back on a uniqueness or database failure.
   // Recheck both target isolation and manager authority inside the transaction.
-  const actorAccess = isCommercial(actor.role)
-    ? `EXISTS (SELECT 1 FROM user manager JOIN venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE manager.id=? AND v.id=? AND manager.role IN ('commercial_operator','platform_admin') AND (t.created_by=manager.id OR manager.role='platform_admin') AND COALESCE(manager.banned,0)=0)`
-    : `EXISTS (SELECT 1 FROM venue_membership av JOIN venue v ON v.id=av.venue_id JOIN member am ON am.organizationId=v.organization_id AND am.userId=av.user_id JOIN user manager ON manager.id=av.user_id JOIN tenant_account t ON t.organization_id=v.organization_id WHERE av.user_id=? AND av.venue_id=? AND av.active=1 AND av.role='owner' AND t.status='active' AND COALESCE(manager.banned,0)=0)`
+  const actorAccess = memberActorAccessSql(actor.role)
   try {
     const results = await c.env.DB.batch([
       c.env.DB.prepare(
@@ -484,6 +519,7 @@ staffRoutes.patch('/venues/:id/members/:userId/details', async (c) => {
       c.env.DB.prepare(
         'UPDATE venue_membership SET role=? WHERE user_id=? AND venue_id=? AND EXISTS (SELECT 1 FROM staff_audit WHERE id=?)',
       ).bind(role, targetId, venueId, auditId),
+      ...replaceQueueAssignments(c.env, targetId, venueId, queueIds, auditId),
     ])
     if (!results[0]?.meta.changes)
       throw new HTTPException(403, { message: 'member_details_forbidden' })
@@ -512,35 +548,69 @@ staffRoutes.patch('/venues/:id/members/:userId', async (c) => {
     throw new HTTPException(403, {
       message: 'owner_or_self_change_forbidden',
     })
-  await c.env.DB.batch([
+  const { role, active, queueIds } = parsed.data
+  const replace = queueIds !== undefined || role !== target.role
+  const nextIds = queueIds ?? []
+  if (replace && !validQueueAssignment({ role, queueIds: nextIds }))
+    return c.json({ error: 'invalid_queue_assignments' }, 400)
+  if (replace) await validateQueueIds(c.env, c.req.param('id'), nextIds)
+  const auditId = crypto.randomUUID()
+  const results = await c.env.DB.batch([
     c.env.DB.prepare(
-      "UPDATE venue_membership SET role=?,active=? WHERE user_id=? AND venue_id=? AND role!='owner'",
+      `INSERT INTO staff_audit SELECT ?,?,?,?,?,?,? FROM venue_membership vm
+       WHERE vm.user_id=? AND vm.venue_id=? AND vm.role=? AND vm.role!='owner'
+       AND ${memberActorAccessSql(c.get('actor').role)}`,
     ).bind(
-      parsed.data.role,
-      Number(parsed.data.active),
-      c.req.param('userId'),
-      c.req.param('id'),
-    ),
-    audit(
-      c.env,
+      auditId,
       c.get('actor').id,
       access.organizationId,
       c.req.param('id'),
       'membership.updated',
       c.req.param('userId'),
+      Date.now(),
+      c.req.param('userId'),
+      c.req.param('id'),
+      target.role,
+      c.get('actor').id,
+      c.req.param('id'),
     ),
+    c.env.DB.prepare(
+      'UPDATE venue_membership SET role=?,active=? WHERE user_id=? AND venue_id=? AND EXISTS (SELECT 1 FROM staff_audit WHERE id=?)',
+    ).bind(
+      role,
+      Number(active),
+      c.req.param('userId'),
+      c.req.param('id'),
+      auditId,
+    ),
+    ...(replace
+      ? replaceQueueAssignments(
+          c.env,
+          c.req.param('userId'),
+          c.req.param('id'),
+          nextIds,
+          auditId,
+        )
+      : []),
   ])
+  if (!results[0]?.meta.changes)
+    throw new HTTPException(403, { message: 'forbidden' })
   return c.json({ ok: true })
 })
 staffRoutes.get('/venues/:id/queues', async (c) => {
-  await venueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  const access = await venueAccess(
+    c.env,
+    c.get('actor').id,
+    c.req.param('id'),
+    'queue.read',
+  )
   const venue = await c.env.DB.prepare('SELECT timezone FROM venue WHERE id=?')
     .bind(c.req.param('id'))
     .first<{ timezone: string }>()
   const rows = await c.env.DB.prepare(
-    "SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config,(SELECT COUNT(*) FROM queue_entry e WHERE e.queue_id=queue.id AND e.status='waiting') AS waitingCount FROM queue WHERE venue_id=?",
+    "SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config,(SELECT COUNT(*) FROM queue_entry e WHERE e.queue_id=queue.id AND e.status='waiting') AS waitingCount FROM queue WHERE venue_id=? AND (? != 'queue_staff' OR EXISTS (SELECT 1 FROM staff_queue_assignment a WHERE a.queue_id=queue.id AND a.venue_id=queue.venue_id AND a.user_id=?))",
   )
-    .bind(c.req.param('id'))
+    .bind(c.req.param('id'), access.role, c.get('actor').id)
     .all<{ id: string; config: string }>()
   return c.json(
     await Promise.all(

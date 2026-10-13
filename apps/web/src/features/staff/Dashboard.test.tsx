@@ -2061,3 +2061,105 @@ it('asks for review after a definitive conflict without silently choosing a repl
     seating: { mode: 'confirmed', spaceId: 'inside', seats: 4 },
   })
 })
+
+it('removes a revoked open queue and discovers assignments again from an empty catalogue', async () => {
+  vi.useFakeTimers()
+  let visible: QueueSummary[] = [service]
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues')) return visible
+    if (path.endsWith('/entries'))
+      return [
+        {
+          id: 'private',
+          code: 'PRIVATE-TURN',
+          partySize: 1,
+          status: 'waiting',
+          version: 0,
+          sequence: 1,
+          calledAt: null,
+        },
+      ]
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Org',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+  await act(async () => {
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Ver lista' }))
+  expect(screen.getByText('PRIVATE-TURN')).toBeVisible()
+  visible = []
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  expect(screen.queryByText('PRIVATE-TURN')).not.toBeInTheDocument()
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  expect(screen.getByText('No tienes servicios asignados')).toBeVisible()
+  visible = [{ ...service, id: 'new', name: 'Nuevo servicio' }]
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000)
+  })
+  expect(
+    screen.getByRole('article', { name: 'Servicio Nuevo servicio' }),
+  ).toBeVisible()
+  expect(
+    screen.queryByText('No tienes servicios asignados'),
+  ).not.toBeInTheDocument()
+})
+
+it('drops rows on a direct access denial and refreshes assignments on focus', async () => {
+  let visible = [service],
+    deny = false
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues')) return visible
+    if (path.endsWith('/entries')) {
+      if (deny) throw new ApiError(404, 'not_found')
+      return [
+        {
+          id: 'private',
+          code: 'REVOKED-TURN',
+          partySize: 1,
+          status: 'waiting',
+          version: 0,
+          sequence: 1,
+          calledAt: null,
+        },
+      ]
+    }
+    return []
+  })
+  render(
+    <Dashboard
+      venue={{
+        id: 'hotel',
+        name: 'Hotel',
+        organizationId: 'org',
+        organizationName: 'Org',
+        role: 'queue_staff',
+      }}
+    />,
+  )
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  expect(await screen.findByText('REVOKED-TURN')).toBeVisible()
+  deny = true
+  fireEvent.focus(window)
+  await waitFor(() =>
+    expect(screen.queryByText('REVOKED-TURN')).not.toBeInTheDocument(),
+  )
+  visible = [{ ...service, id: 'other', name: 'Otro servicio' }]
+  deny = false
+  fireEvent.focus(window)
+  expect(
+    await screen.findByRole('article', { name: 'Servicio Otro servicio' }),
+  ).toBeVisible()
+})

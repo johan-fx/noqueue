@@ -207,7 +207,20 @@ async function member(
     `/staff/venues/${venueId}/members`,
     ownerCookie,
     'POST',
-    { name: 'Logo Test Member', username: name, password, role },
+    {
+      name: 'Logo Test Member',
+      username: name,
+      password,
+      role,
+      queueIds:
+        role === 'queue_staff'
+          ? (
+              await env.DB.prepare('SELECT id FROM queue WHERE venue_id=?')
+                .bind(venueId)
+                .all<{ id: string }>()
+            ).results.map((row) => row.id)
+          : [],
+    },
   )
   expect(response.status, await response.clone().text()).toBe(201)
   const result = (await response.json()) as { id: string }

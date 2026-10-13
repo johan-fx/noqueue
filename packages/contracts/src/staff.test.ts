@@ -237,12 +237,38 @@ describe('member details', () => {
         username: ' New.Staff ',
         role: 'viewer',
       }),
-    ).toEqual({ name: 'Staff', username: 'new.staff', role: 'viewer' })
+    ).toEqual({
+      name: 'Staff',
+      username: 'new.staff',
+      role: 'viewer',
+      queueIds: [],
+    })
     for (const input of [
       { name: '', username: 'validuser', role: 'viewer' },
       { name: 'Staff', username: 'a', role: 'viewer' },
       { name: 'Staff', username: 'validuser', role: 'owner' },
     ])
       expect(memberDetailsSchema.safeParse(input).success).toBe(false)
+  })
+})
+
+describe('explicit member queue assignments', () => {
+  const details = { name: 'Staff', username: 'staff.user', role: 'queue_staff' }
+  it('requires explicit nonempty unique queue IDs on creation and details', () => {
+    for (const schema of [inviteSchema, memberDetailsSchema]) {
+      const input = { ...details, password: 'secure-password-12345' }
+      for (const queueIds of [undefined, [], ['q', 'q'], ['']])
+        expect(schema.safeParse({ ...input, queueIds }).success).toBe(false)
+      expect(
+        schema.safeParse({ ...input, queueIds: ['q', 'q2'] }).success,
+      ).toBe(true)
+      expect(
+        schema.safeParse({ ...input, role: 'viewer', queueIds: ['q'] }).success,
+      ).toBe(false)
+      expect(
+        schema.safeParse({ ...input, role: 'venue_manager', queueIds: [] })
+          .success,
+      ).toBe(true)
+    }
   })
 })

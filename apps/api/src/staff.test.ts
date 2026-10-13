@@ -162,7 +162,13 @@ async function member(
     `/staff/venues/${t.venueId}/members`,
     t.owner.cookie,
     'POST',
-    { name: 'Staff', username: name, password, role },
+    {
+      name: 'Staff',
+      username: name,
+      password,
+      role,
+      ...(role === 'queue_staff' ? { queueIds: [t.queueId] } : {}),
+    },
   )
   expect(r.status).toBe(201)
   const { id } = (await r.json()) as { id: string }
@@ -2562,7 +2568,12 @@ describe('member detail transactions', () => {
           `/staff/venues/${t.venueId}/members/${staff.id}/details`,
           t.owner.cookie,
           'PATCH',
-          { name: 'Changed', username: username(), role: 'queue_staff' },
+          {
+            name: 'Changed',
+            username: username(),
+            role: 'queue_staff',
+            queueIds: [t.queueId],
+          },
         )
       ).status,
     ).toBe(403)
@@ -2645,7 +2656,12 @@ it('revokes sessions when assigning the first username to eligible staff', async
         `/staff/venues/${t.venueId}/members/${staff.id}/details`,
         t.owner.cookie,
         'PATCH',
-        { name: 'Staff', username: next, role: 'queue_staff' },
+        {
+          name: 'Staff',
+          username: next,
+          role: 'queue_staff',
+          queueIds: [t.queueId],
+        },
       )
     ).status,
   ).toBe(200)
@@ -2661,6 +2677,9 @@ it('rejects an exclusive venue grant whose organization membership belongs to an
   const t = await tenant(),
     staff = await member(t),
     other = await tenant()
+  await env.DB.prepare('DELETE FROM staff_queue_assignment WHERE user_id=?')
+    .bind(staff.id)
+    .run()
   await env.DB.prepare(
     'UPDATE venue_membership SET venue_id=? WHERE user_id=? AND venue_id=?',
   )
@@ -3074,7 +3093,7 @@ it('keeps staff summary refreshes read-only at 10x queue count and counts 501 wa
       cost.sql.includes('AS waitingCount'),
     )!
     const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${summary.sql}`)
-      .bind(t.venueId)
+      .bind(t.venueId, 'owner', t.owner.id)
       .all<{ detail: string }>()
     expect(
       plan.results.some((row) => row.detail.includes('queue_venue_lookup')),
@@ -3353,5 +3372,244 @@ describe('auth initialization reuse without cached authorization', () => {
       .run()
     expect((await read(measured.env, staff.cookie)).status).toBe(401)
     expect(sessionReads(measured.costs).length).toBeGreaterThan(1)
+  })
+})
+
+describe('explicit queue-scoped staff access', () => {
+  async function extraQueue(t: Awaited<ReturnType<typeof tenant>>) {
+    const id = crypto.randomUUID()
+    await env.DB.prepare(
+      'INSERT INTO queue(id,venue_id,name,capacity,average_minutes,open,version,config) SELECT ?,venue_id,?,capacity,average_minutes,0,0,config FROM queue WHERE id=?',
+    )
+      .bind(id, 'Unassigned service', t.queueId)
+      .run()
+    return id
+  }
+  async function assigned(t: Awaited<ReturnType<typeof tenant>>, id: string) {
+    const response = await request(
+      `/staff/venues/${t.venueId}/members`,
+      t.owner.cookie,
+    )
+    const data = (await response.json()) as {
+      members: { id: string; queueIds: string[] }[]
+    }
+    return data.members.find((row) => row.id === id)!.queueIds
+  }
+  it('filters queues and blocks every direct read/operation; newly created queues are not assigned', async () => {
+    const t = await tenant(),
+      staff = await member(t),
+      otherId = await extraQueue(t)
+    const list = await request(
+      `/staff/venues/${t.venueId}/queues`,
+      staff.cookie,
+    )
+    expect(
+      ((await list.json()) as { id: string }[]).map((row) => row.id),
+    ).toEqual([t.queueId])
+    for (const [suffix, method] of [
+      ['entries', 'GET'],
+      ['delivery-trace', 'GET'],
+      ['opening-context', 'GET'],
+      ['entries', 'POST'],
+      ['commands', 'POST'],
+      ['lifecycle', 'POST'],
+    ]) {
+      const result = await request(
+        `/staff/queues/${otherId}/${suffix}`,
+        staff.cookie,
+        method,
+        method === 'POST' ? {} : undefined,
+      )
+      expect(result.status, `${method} ${suffix}`).toBe(404)
+    }
+    expect(
+      (await request(`/staff/queues/${otherId}`, staff.cookie, 'PATCH', {}))
+        .status,
+    ).toBe(404)
+    expect(
+      (await request(`/staff/queues/${t.queueId}/entries`, staff.cookie))
+        .status,
+    ).toBe(200)
+    expect(await assigned(t, staff.id)).toEqual([t.queueId])
+    for (const role of ['viewer', 'venue_manager']) {
+      const user = await member(t, role)
+      expect(
+        (
+          (await (
+            await request(`/staff/venues/${t.venueId}/queues`, user.cookie)
+          ).json()) as unknown[]
+        ).length,
+      ).toBe(2)
+    }
+  })
+  it('rejects missing, duplicate, unknown and cross-venue grants without creating identities', async () => {
+    const t = await tenant(),
+      other = await tenant()
+    for (const queueIds of [
+      undefined,
+      [],
+      [t.queueId, t.queueId],
+      ['missing'],
+      [other.queueId],
+    ]) {
+      const name = username()
+      const response = await request(
+        `/staff/venues/${t.venueId}/members`,
+        t.owner.cookie,
+        'POST',
+        {
+          name: 'New staff',
+          username: name,
+          password,
+          role: 'queue_staff',
+          queueIds,
+        },
+      )
+      expect(response.status).toBe(400)
+      expect(
+        await env.DB.prepare('SELECT id FROM user WHERE username=?')
+          .bind(name)
+          .first(),
+      ).toBeNull()
+    }
+    const staff = await member(t)
+    await expect(
+      env.DB.prepare('INSERT INTO staff_queue_assignment VALUES (?,?,?)')
+        .bind(staff.id, t.venueId, other.queueId)
+        .run(),
+    ).rejects.toThrow()
+  })
+  it('edits grants live, preserves them on active-only changes and clears them on either role endpoint', async () => {
+    const t = await tenant(),
+      staff = await member(t),
+      nextQueue = await extraQueue(t)
+    const base = `/staff/venues/${t.venueId}/members/${staff.id}`
+    const details = {
+      name: 'Staff',
+      username: staff.username,
+      role: 'queue_staff',
+      queueIds: [nextQueue],
+    }
+    expect(
+      (await request(`${base}/details`, t.owner.cookie, 'PATCH', details))
+        .status,
+    ).toBe(200)
+    expect(await assigned(t, staff.id)).toEqual([nextQueue])
+    expect(
+      (await request(`/staff/queues/${t.queueId}/entries`, staff.cookie))
+        .status,
+    ).toBe(404)
+    expect(
+      (await request(`/staff/queues/${nextQueue}/entries`, staff.cookie))
+        .status,
+    ).toBe(200)
+    for (const active of [false, true]) {
+      expect(
+        (
+          await request(base, t.owner.cookie, 'PATCH', {
+            role: 'queue_staff',
+            active,
+          })
+        ).status,
+      ).toBe(200)
+      expect(await assigned(t, staff.id)).toEqual([nextQueue])
+    }
+    expect(
+      (
+        await request(`${base}/details`, t.owner.cookie, 'PATCH', {
+          ...details,
+          role: 'viewer',
+          queueIds: [],
+        })
+      ).status,
+    ).toBe(200)
+    expect(await assigned(t, staff.id)).toEqual([])
+    expect(
+      (
+        await request(base, t.owner.cookie, 'PATCH', {
+          role: 'queue_staff',
+          active: true,
+        })
+      ).status,
+    ).toBe(400)
+    expect(
+      (
+        await request(base, t.owner.cookie, 'PATCH', {
+          role: 'queue_staff',
+          active: true,
+          queueIds: [nextQueue],
+        })
+      ).status,
+    ).toBe(200)
+    expect(
+      (
+        await request(base, t.owner.cookie, 'PATCH', {
+          role: 'viewer',
+          active: true,
+        })
+      ).status,
+    ).toBe(200)
+    expect(await assigned(t, staff.id)).toEqual([])
+  })
+  it('rolls back identity, grants, sessions and audit if assignment persistence fails', async () => {
+    const t = await tenant(),
+      staff = await member(t),
+      nextQueue = await extraQueue(t),
+      nextName = username()
+    await env.DB.prepare(
+      "CREATE TRIGGER reject_staff_queue BEFORE INSERT ON staff_queue_assignment BEGIN SELECT RAISE(ABORT,'fixture assignment failure'); END",
+    ).run()
+    try {
+      const response = await request(
+        `/staff/venues/${t.venueId}/members/${staff.id}/details`,
+        t.owner.cookie,
+        'PATCH',
+        {
+          name: 'Changed',
+          username: nextName,
+          role: 'queue_staff',
+          queueIds: [nextQueue],
+        },
+      )
+      expect(response.status).toBe(503)
+      expect(await assigned(t, staff.id)).toEqual([t.queueId])
+      expect(
+        await env.DB.prepare('SELECT name,username FROM user WHERE id=?')
+          .bind(staff.id)
+          .first(),
+      ).toEqual({ name: 'Staff', username: staff.username })
+      expect((await request('/staff/me', staff.cookie)).status).toBe(200)
+      expect(
+        await env.DB.prepare(
+          "SELECT id FROM staff_audit WHERE target_id=? AND action='member.details_updated'",
+        )
+          .bind(staff.id)
+          .first(),
+      ).toBeNull()
+      const name = username()
+      expect(
+        (
+          await request(
+            `/staff/venues/${t.venueId}/members`,
+            t.owner.cookie,
+            'POST',
+            {
+              name: 'New staff',
+              username: name,
+              password,
+              role: 'queue_staff',
+              queueIds: [t.queueId],
+            },
+          )
+        ).status,
+      ).toBe(503)
+      expect(
+        await env.DB.prepare('SELECT id FROM user WHERE username=?')
+          .bind(name)
+          .first(),
+      ).toBeNull()
+    } finally {
+      await env.DB.prepare('DROP TRIGGER reject_staff_queue').run()
+    }
   })
 })

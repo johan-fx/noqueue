@@ -71,9 +71,12 @@ const messages: Record<string, string> = {
     'Inicializa los recursos desde la cuenta del establecimiento después de crear el servicio.',
   legacy_arrival_deadline:
     'Resuelve los turnos asignados antiguos antes de cambiar el plazo de llegada. Puedes guardar los demás ajustes.',
-  assignment_context_changed: 'El turno ha cambiado. Revisa los datos antes de asignar.',
-  assignment_seating_changed: 'El espacio o la capacidad ya no son válidos. Revisa la selección.',
-  invalid_assignment_seating: 'La selección de mesa solo está disponible al asignar un turno de restaurante.',
+  assignment_context_changed:
+    'El turno ha cambiado. Revisa los datos antes de asignar.',
+  assignment_seating_changed:
+    'El espacio o la capacidad ya no son válidos. Revisa la selección.',
+  invalid_assignment_seating:
+    'La selección de mesa solo está disponible al asignar un turno de restaurante.',
   unsupported_action:
     'Esta acción no está disponible para este servicio y estado.',
   queue_empty: 'No hay personas en espera.',
@@ -82,7 +85,8 @@ const messages: Record<string, string> = {
   username_unavailable:
     'Ese usuario ya existe. Elige otro; no se modifica una cuenta existente.',
   logo_too_large: 'El logotipo supera el tamaño máximo de 5 MB.',
-  invalid_logo: 'No se puede leer la imagen: el archivo está dañado o su contenido no coincide con el formato PNG, JPG o SVG.',
+  invalid_logo:
+    'No se puede leer la imagen: el archivo está dañado o su contenido no coincide con el formato PNG, JPG o SVG.',
   venue_logos_disabled:
     'La subida de logotipos no está disponible temporalmente. El establecimiento se conserva y podrás añadir su logo más adelante.',
   logo_dimensions_exceeded:
@@ -104,6 +108,8 @@ const messages: Record<string, string> = {
   member_details_forbidden:
     'No puedes editar esta cuenta. Contacta con NoQueue.',
   invalid_member: 'Revisa los datos del usuario.',
+  invalid_queue_assignments:
+    'Revisa los servicios asignados: deben pertenecer a este establecimiento y no estar repetidos.',
   password_reset_forbidden:
     'No puedes restablecer esta cuenta. Contacta con NoQueue.',
   slug_unavailable: 'Ese identificador ya está en uso.',

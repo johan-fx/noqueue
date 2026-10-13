@@ -4,10 +4,7 @@ import {
   type StaffRole,
 } from '@noqueue/contracts/staff'
 
-export const roleInformation: Record<
-  StaffRole,
-  { label: string; summary: string }
-> = {
+export const roleInformation: Record<StaffRole, { label: string; summary: string }> = {
   owner: {
     label: 'Administrador',
     summary:
@@ -20,7 +17,7 @@ export const roleInformation: Record<
   queue_staff: {
     label: 'Personal de lista',
     summary:
-      'Atiende las listas y gestiona los turnos, sin cambiar la configuración.',
+      'Consulta y gestiona solo los servicios asignados, sin cambiar la configuración.',
   },
   viewer: {
     label: 'Solo lectura',

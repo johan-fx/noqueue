@@ -20,6 +20,7 @@ afterEach(() => {
 })
 const member = {
   id: 'staff',
+  queueIds: ['q1'],
   name: 'Ana',
   username: 'ana.staff',
   role: 'queue_staff',
@@ -27,7 +28,11 @@ const member = {
   canEditDetails: true,
 }
 function setup(open = true) {
-  vi.mocked(api).mockResolvedValue({ members: [member] })
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [{ id: 'q1', name: 'Restaurante' }]
+      : { members: [member] },
+  )
   const onClose = vi.fn()
   const result = render(
     <MembersDrawer
@@ -38,6 +43,18 @@ function setup(open = true) {
     />,
   )
   return { ...result, onClose }
+}
+async function selectService() {
+  fireEvent.click(
+    screen.getByRole('combobox', { name: 'Servicios a gestionar' }),
+  )
+  fireEvent.click(
+    await screen.findByRole('option', { name: 'Restaurante' }),
+  )
+  fireEvent.keyDown(
+    screen.getByRole('combobox', { name: 'Buscar servicios' }),
+    { key: 'Escape' },
+  )
 }
 describe('nested member management', () => {
   it('loads only when open and moves creation out of the listing', async () => {
@@ -85,7 +102,12 @@ describe('nested member management', () => {
       expect(api).toHaveBeenCalledWith(
         '/venues/hotel/members/staff/details',
         'PATCH',
-        { name: 'Ana Nueva', username: 'ana.staff', role: 'queue_staff' },
+        {
+          name: 'Ana Nueva',
+          username: 'ana.staff',
+          role: 'queue_staff',
+          queueIds: ['q1'],
+        },
       ),
     )
     expect(
@@ -120,6 +142,7 @@ describe('member action lifecycle', () => {
       ),
       { target: { value: 'secure-password-123456' } },
     )
+    await selectService()
     let resolve!: (result: unknown) => void
     vi.mocked(api).mockImplementationOnce(
       () =>
@@ -147,6 +170,7 @@ describe('member action lifecycle', () => {
       username: 'nuevo.staff',
       password: 'secure-password-123456',
       role: 'queue_staff',
+      queueIds: ['q1'],
     })
     await waitFor(() => expect(add).toHaveFocus())
     expect(screen.getByRole('status')).toHaveTextContent('Operación guardada')
@@ -172,6 +196,7 @@ describe('member action lifecycle', () => {
       ),
       { target: { value: 'secure-password-123456' } },
     )
+    await selectService()
     vi.mocked(api)
       .mockResolvedValueOnce({ ok: true })
       .mockRejectedValueOnce(new Error('Error de lectura'))
@@ -236,9 +261,11 @@ describe('member action lifecycle', () => {
     )
   })
   it('guards protected editing and revocation, dismisses only the nested drawer with Escape', async () => {
-    vi.mocked(api).mockResolvedValue({
-      members: [{ ...member, role: 'owner', canEditDetails: false }],
-    })
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.endsWith('/queues')
+        ? []
+        : { members: [{ ...member, role: 'owner', canEditDetails: false }] },
+    )
     const onClose = vi.fn()
     render(
       <MembersDrawer open venueId="hotel" name="Hotel" onClose={onClose} />,
@@ -266,6 +293,11 @@ describe('member action lifecycle', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
   it('drops late results on venue changes and reopens with a clean draft and fresh list', async () => {
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.endsWith('/queues')
+        ? [{ id: 'q1', name: 'Restaurante' }]
+        : { members: [member] },
+    )
     let resolve!: (value: unknown) => void
     vi.mocked(api).mockImplementationOnce(
       () =>
@@ -277,7 +309,11 @@ describe('member action lifecycle', () => {
       { rerender } = render(
         <MembersDrawer open venueId="old" name="Old" onClose={onClose} />,
       )
-    vi.mocked(api).mockResolvedValue({ members: [member] })
+    vi.mocked(api).mockImplementation(async (path) =>
+      path.endsWith('/queues')
+        ? [{ id: 'q1', name: 'Restaurante' }]
+        : { members: [member] },
+    )
     rerender(
       <MembersDrawer open venueId="hotel" name="Hotel" onClose={onClose} />,
     )
@@ -313,7 +349,11 @@ describe('member action lifecycle', () => {
 })
 
 it('restores row action focus after cancelling an edit and the original parent trigger on close', async () => {
-  vi.mocked(api).mockResolvedValue({ members: [member] })
+  vi.mocked(api).mockImplementation(async (path) =>
+    path.endsWith('/queues')
+      ? [{ id: 'q1', name: 'Restaurante' }]
+      : { members: [member] },
+  )
   const finalFocus = { current: null as HTMLElement | null },
     onClose = vi.fn()
   const view = render(
@@ -427,7 +467,7 @@ it('never opens a stale edit after a committed edit with failed refresh', async 
   expect(api).toHaveBeenCalledWith(
     '/venues/hotel/members/staff/details',
     'PATCH',
-    { name: 'Nueva Ana', username: 'nueva.ana', role: 'viewer' },
+    { name: 'Nueva Ana', username: 'nueva.ana', role: 'viewer', queueIds: [] },
   )
   fireEvent.click(screen.getByRole('button', { name: 'Acciones de Nueva Ana' }))
   fireEvent.click(
@@ -468,6 +508,7 @@ it('makes creation refresh failures recoverable without actionable stale rows an
     within(drawer).getByLabelText('Contraseña inicial (mínimo 15 caracteres)'),
     { target: { value: 'secure-password-123456' } },
   )
+  await selectService()
   vi.mocked(api)
     .mockResolvedValueOnce({ id: 'new-staff', username: 'new.staff' })
     .mockRejectedValueOnce(new Error('Refresh failed'))

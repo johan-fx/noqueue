@@ -1,4 +1,5 @@
 import { discoveryRoutes } from './features/discovery/routes'
+import { localVenueLogo } from './features/staff/logo'
 import { customerRoutes } from './features/queue/customer-routes'
 import { publicServices } from './features/staff/public'
 import { createAuth } from './auth/server'
@@ -114,6 +115,9 @@ app.get('/health', (context) => {
 
   return context.json(response)
 })
+app.get('/venue-logos/:venue/:object', (c) =>
+  localVenueLogo(c.env, c.req.param('venue'), c.req.param('object'), c.req.method),
+)
 
 export type AppType = typeof app
 

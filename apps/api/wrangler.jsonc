@@ -77,7 +77,8 @@
     "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
     "STAGING_CONSENT_APPROVED": "false",
     "APP_ENV": "local",
-    "D360DIALOG_PHONE_NUMBER_ID": ""
+    "D360DIALOG_PHONE_NUMBER_ID": "",
+    "VENUE_LOGOS_PUBLIC_BASE_URL": "/api/v1/venue-logos"
   },
   "env": {
     "sandbox": {
@@ -96,7 +97,8 @@
         "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
         "STAGING_CONSENT_APPROVED": "false",
         "APP_ENV": "sandbox",
-        "D360DIALOG_PHONE_NUMBER_ID": ""
+        "D360DIALOG_PHONE_NUMBER_ID": "",
+        "VENUE_LOGOS_PUBLIC_BASE_URL": "https://assets-sandbox.noqueue-app.com"
       },
       "d1_databases": [
         {
@@ -138,6 +140,12 @@
         {
           "pattern": "sandbox.noqueue-app.com",
           "custom_domain": true
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "VENUE_LOGOS",
+          "bucket_name": "noqueue-venue-logos-sandbox"
         }
       ]
     },
@@ -182,7 +190,8 @@
         "WHATSAPP_QUEUE_V4_CANCELLED_UNKNOWN_TEMPLATE_ES": "noqueue_v4_cancelled_unknown_es_staging",
         "WHATSAPP_QUEUE_V4_CANCELLED_UNKNOWN_TEMPLATE_EN": "noqueue_v4_cancelled_unknown_en_staging",
         "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_ES": "noqueue_v4_service_ended_es",
-        "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_EN": "noqueue_v4_service_ended_en"
+        "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_EN": "noqueue_v4_service_ended_en",
+        "VENUE_LOGOS_PUBLIC_BASE_URL": "https://assets-staging.noqueue-app.com"
       },
       "d1_databases": [
         {
@@ -225,8 +234,20 @@
           "pattern": "staging.noqueue-app.com",
           "custom_domain": true
         }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "VENUE_LOGOS",
+          "bucket_name": "noqueue-venue-logos-staging"
+        }
       ]
     }
   },
-  "account_id": "fa5fab4df1b0f12c946a3ea47fab96eb"
+  "account_id": "fa5fab4df1b0f12c946a3ea47fab96eb",
+  "r2_buckets": [
+    {
+      "binding": "VENUE_LOGOS",
+      "bucket_name": "noqueue-venue-logos-local"
+    }
+  ]
 }

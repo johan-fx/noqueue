@@ -2,6 +2,7 @@ import { AssignmentOptions } from './AssignmentOptions'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { ServiceCard } from './ServiceCard'
 import { VenueLocationEditor } from './VenueLocationEditor'
+import { VenueLogoEditor } from './VenueLogoEditor'
 import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
 import { entryActions, receptionLabels } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
@@ -15,6 +16,7 @@ import type {
   EntryCommand,
   ServiceInput,
   AssignmentSeating,
+  VenueLogoState,
 } from '@noqueue/contracts/staff'
 import {
   roleCapabilities,
@@ -60,9 +62,20 @@ import { MembersDrawer } from './MembersDrawer'
 import { QueueView } from './QueueView'
 import { queueActionLabels as actionLabels } from './queue-labels'
 
+type DashboardVenue = Omit<VenueSummary, 'logo' | 'logoVersion' | 'canEditLogo'> &
+  Partial<VenueLogoState>
+
 type DashboardProps =
-  | { venue: VenueSummary; mode?: 'membership' }
-  | { venue: Omit<VenueSummary, 'role'>; mode: 'commercial' }
+  | {
+      venue: DashboardVenue
+      mode?: 'membership'
+      onVenueLogoStateChange?: (state: VenueLogoState) => void
+    }
+  | {
+      venue: Omit<DashboardVenue, 'role'>
+      mode: 'commercial'
+      onVenueLogoStateChange?: (state: VenueLogoState) => void
+    }
 
 function waitingCountsFor(
   summaries: QueueSummary[],
@@ -82,6 +95,11 @@ function waitingCountsFor(
 }
 export function Dashboard(props: DashboardProps) {
   const { venue } = props
+  const logoState: VenueLogoState = {
+    logo: venue.logo ?? null,
+    logoVersion: venue.logoVersion ?? 0,
+    canEditLogo: venue.canEditLogo ?? false,
+  }
   const creationRequest = useRef<{ payload: string; key: string } | null>(null)
   const [drawer, setDrawer] = useState<
     'create' | 'edit' | 'members' | 'queue' | null
@@ -168,6 +186,9 @@ export function Dashboard(props: DashboardProps) {
   const [overrideReason, setOverrideReason] = useState('')
   const [seating, setSeating] = useState<AssignmentSeating | null>(null)
   const [commandUncertain, setCommandUncertain] = useState(false)
+  function updateLogoState(next: VenueLogoState) {
+    props.onVenueLogoStateChange?.(next)
+  }
   const [arrivalMode, setArrivalMode] = useState<'notify' | 'present'>('notify')
   const [pending, setPending] = useState<{
     queueId: string
@@ -682,14 +703,22 @@ export function Dashboard(props: DashboardProps) {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">{venue.name}</h1>
-          <p className="text-sm text-muted-foreground">
-            {venue.organizationName} ·{' '}
-            {props.mode === 'commercial'
-              ? 'Administración comercial'
-              : props.venue.role}
-          </p>
+        <div className="flex min-w-0 items-center gap-3">
+          <VenueLogoEditor
+            venueId={venue.id}
+            venueName={venue.name}
+            state={logoState}
+            onStateChange={updateLogoState}
+          />
+          <div className="min-w-0">
+            <h1 className="text-2xl font-semibold">{venue.name}</h1>
+            <p className="text-sm text-muted-foreground">
+              {venue.organizationName} ·{' '}
+              {props.mode === 'commercial'
+                ? 'Administración comercial'
+                : props.venue.role}
+            </p>
+          </div>
         </div>
         {permissions.includes('members.manage') && (
           <Button

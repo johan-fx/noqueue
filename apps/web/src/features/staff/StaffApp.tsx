@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams, useLocation } from 'react-router'
-import type { VenueSummary } from '@noqueue/contracts/staff'
+import type { VenueLogoState, VenueSummary } from '@noqueue/contracts/staff'
 import { LogOut, Settings, User } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -32,6 +32,18 @@ export function StaffApp() {
   const navigate = useNavigate()
   const { venueId: detailId } = useParams()
   const location = useLocation()
+  function updateVenueLogo(venueId: string, state: VenueLogoState) {
+    setMe((current) =>
+      current
+        ? {
+            ...current,
+            venues: current.venues.map((venue) =>
+              venue.id === venueId ? { ...venue, ...state } : venue,
+            ),
+          }
+        : current,
+    )
+  }
   useEffect(() => {
     api<Me>('/me')
       .then((data) => {
@@ -119,6 +131,9 @@ export function StaffApp() {
               <Dashboard
                 key={venueId}
                 venue={me.venues.find((v) => v.id === venueId)!}
+                onVenueLogoStateChange={(state) =>
+                  updateVenueLogo(venueId, state)
+                }
               />
             )}
           </>

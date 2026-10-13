@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
+import { VenueLogoUpload } from './VenueLogoUpload'
 
 const clientSchema = provisionSchema.omit({ services: true })
 export type ClientInput = Omit<ProvisionInput, 'services'>
@@ -65,17 +66,20 @@ const confirmLabel = 'Confirmar contraseña'
 export function CreateEstablishmentDrawer({
   open,
   saving = false,
+  createDisabled = false,
   error = '',
   onOpenChange,
   onComplete,
 }: {
   open: boolean
   saving?: boolean
+  createDisabled?: boolean
   error?: string
   onOpenChange: (open: boolean) => void
   onComplete: (
     client: ClientInput,
     service: ServiceInput,
+    logoFile: File | null,
   ) => void | Promise<void>
 }) {
   const [configOpen, setConfigOpen] = useState(false)
@@ -84,6 +88,7 @@ export function CreateEstablishmentDrawer({
   const [confirmError, setConfirmError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
+  const [logoFile, setLogoFile] = useState<File | null>(null)
   const prefix = useId()
   const formId = `${prefix}-client`
   const form = useForm<ClientInput>({
@@ -102,6 +107,7 @@ export function CreateEstablishmentDrawer({
       setConfirmError('')
       setShowPassword(false)
       setShowConfirm(false)
+      setLogoFile(null)
       setConfigOpen(false)
       setResetKey((value) => value + 1)
     }
@@ -110,7 +116,7 @@ export function CreateEstablishmentDrawer({
 
   return (
     <Drawer open={open} onOpenChange={changeOpen} swipeDirection="right">
-      <DrawerTrigger render={<Button />}>
+      <DrawerTrigger render={<Button disabled={createDisabled} />}>
         <img src={plusIcon} alt="" />
         Crear nuevo
       </DrawerTrigger>
@@ -145,7 +151,7 @@ export function CreateEstablishmentDrawer({
               })(event)
             }}
           >
-            {fields.map(([name, label]) => (
+            {fields.slice(0, 2).map(([name, label]) => (
               <Field key={name}>
                 <FieldLabel htmlFor={`${prefix}-${name}`}>{label}</FieldLabel>
                 <Input
@@ -158,7 +164,28 @@ export function CreateEstablishmentDrawer({
                 <FieldError errors={[form.formState.errors[name]]} />
               </Field>
             ))}
-            
+            <VenueLogoUpload
+              key={resetKey}
+              optional
+              disabled={saving}
+              onFileChange={setLogoFile}
+              onRemove={() => setLogoFile(null)}
+              onInvalidFile={() => setLogoFile(null)}
+            />
+            {fields.slice(2).map(([name, label]) => (
+              <Field key={name}>
+                <FieldLabel htmlFor={`${prefix}-${name}`}>{label}</FieldLabel>
+                <Input
+                  id={`${prefix}-${name}`}
+                  autoComplete="off"
+                  type="text"
+                  {...form.register(name)}
+                  aria-invalid={!!form.formState.errors[name]}
+                />
+                <FieldError errors={[form.formState.errors[name]]} />
+              </Field>
+            ))}
+
             <PasswordField
               id={`${prefix}-ownerPassword`}
               label={passwordLabel}
@@ -234,7 +261,7 @@ export function CreateEstablishmentDrawer({
           onClose={() => {
             if (!saving) setConfigOpen(false)
           }}
-          onSave={(service) => onComplete(form.getValues(), service)}
+          onSave={(service) => onComplete(form.getValues(), service, logoFile)}
         />
       </DrawerContent>
     </Drawer>

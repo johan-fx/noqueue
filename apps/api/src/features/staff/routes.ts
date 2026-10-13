@@ -1,4 +1,6 @@
 import { touchVenueConfiguration } from './configuration'
+import { mutateVenueLogo, readVenueLogo, venueLogoAccess, venueLogoFields } from './logo'
+import { VENUE_LOGO_MAX_BYTES, venueLogoMutationSchema } from '@noqueue/contracts/staff'
 import {
   deliveryRetentionMs,
   notificationDeliverySummary,
@@ -65,13 +67,13 @@ staffRoutes.use('*', async (c, next) => {
   c.header('Referrer-Policy', 'no-referrer')
   await next()
 })
-staffRoutes.use(
-  '*',
-  bodyLimit({
-    maxSize: 65536,
-    onError: (c) => c.json({ error: 'request_too_large' }, 413),
-  }),
-)
+staffRoutes.use('*', (c, next) => {
+  const upload = c.req.method === 'PUT' && /\/venues\/[^/]+\/logo$/.test(c.req.path)
+  return bodyLimit({
+    maxSize: upload ? VENUE_LOGO_MAX_BYTES + 65536 : 65536,
+    onError: (ctx) => ctx.json({ error: upload ? 'logo_too_large' : 'request_too_large' }, 413),
+  })(c, next)
+})
 staffRoutes.onError((error, c) => {
   c.header('Cache-Control', 'no-store')
   c.header('Referrer-Policy', 'no-referrer')
@@ -190,18 +192,53 @@ staffRoutes.patch('/venues/:id', async (c) => {
     ),
   )
 })
+staffRoutes.get('/venues/:id/logo', (c) =>
+  readVenueLogo(c.env, c.get('actor'), c.req.param('id')).then((state) => c.json(state)),
+)
+staffRoutes.put('/venues/:id/logo', async (c) => {
+  const actor = c.get('actor'), venueId = c.req.param('id')
+  await venueLogoAccess(c.env, actor, venueId, true)
+  const key = uuid(c.req.header('Idempotency-Key'))
+  if (!c.req.header('Content-Type')?.startsWith('multipart/form-data;'))
+    return c.json({ error: 'invalid_logo' }, 400)
+  let data: FormData
+  try { data = await c.req.raw.formData() } catch { return c.json({ error: 'invalid_logo' }, 400) }
+  const file = data.get('file'), rawVersion = data.get('version')
+  if (!(file instanceof File) || data.getAll('file').length !== 1 ||
+    data.getAll('version').length !== 1 || typeof rawVersion !== 'string' ||
+    !/^(0|[1-9]\d*)$/.test(rawVersion) ||
+    [...data.keys()].some((key) => key !== 'file' && key !== 'version'))
+    return c.json({ error: 'invalid_logo' }, 400)
+  if (file.size > VENUE_LOGO_MAX_BYTES) return c.json({ error: 'logo_too_large' }, 413)
+  const parsed = venueLogoMutationSchema.safeParse({ version: Number(rawVersion) })
+  if (!parsed.success) return c.json({ error: 'invalid_logo' }, 400)
+  return c.json(await mutateVenueLogo(c.env, actor, venueId, parsed.data.version, key, file))
+})
+staffRoutes.delete('/venues/:id/logo', async (c) => {
+  const actor = c.get('actor'), venueId = c.req.param('id')
+  await venueLogoAccess(c.env, actor, venueId, true)
+  const key = uuid(c.req.header('Idempotency-Key'))
+  const parsed = venueLogoMutationSchema.safeParse(await c.req.json())
+  if (!parsed.success) return c.json({ error: 'invalid_logo' }, 400)
+  return c.json(await mutateVenueLogo(c.env, actor, venueId, parsed.data.version, key, null))
+})
 staffRoutes.get('/me', async (c) => {
   const user = c.get('actor')
   const venues = await c.env.DB.prepare(
-    `SELECT v.id,v.name,v.organization_id AS organizationId,o.name AS organizationName,vm.role FROM venue v JOIN organization o ON o.id=v.organization_id JOIN tenant_account t ON t.organization_id=o.id JOIN venue_membership vm ON vm.venue_id=v.id JOIN member m ON m.organizationId=o.id AND m.userId=vm.user_id WHERE vm.user_id=? AND vm.active=1 AND t.status='active' ORDER BY v.name`,
+    `SELECT v.id,v.name,v.organization_id AS organizationId,o.name AS organizationName,vm.role,v.logo_key,v.logo_name,v.logo_type,v.logo_size,v.logo_version,t.created_by FROM venue v JOIN organization o ON o.id=v.organization_id JOIN tenant_account t ON t.organization_id=o.id JOIN venue_membership vm ON vm.venue_id=v.id JOIN member m ON m.organizationId=o.id AND m.userId=vm.user_id WHERE vm.user_id=? AND vm.active=1 AND t.status='active' ORDER BY v.name`,
   )
     .bind(user.id)
-    .all()
+    .all<{ id: string; name: string; organizationId: string; organizationName: string; role: string; created_by: string; logo_key: string | null; logo_name: string | null; logo_type: 'image/png' | 'image/jpeg' | null; logo_size: number | null; logo_version: number }>()
   return c.json({
     user: { id: user.id, email: user.email, username: user.username },
     commercial: isCommercial(user.role),
     platformAdmin: user.role === 'platform_admin',
-    venues: venues.results,
+    venues: venues.results.map((row) => ({
+      id: row.id, name: row.name, organizationId: row.organizationId,
+      organizationName: row.organizationName, role: row.role,
+      ...venueLogoFields(c.env, row, row.role === 'owner' || user.role === 'platform_admin' ||
+        (user.role === 'commercial_operator' && row.created_by === user.id)),
+    })),
   })
 })
 staffRoutes.post('/commercial/organizations', async (c) => {
@@ -269,7 +306,7 @@ staffRoutes.get('/commercial/venues/:id', async (c) => {
     .bind(c.req.param('id'), actor.id, actor.role)
     .first()
   if (!venue) throw new HTTPException(404, { message: 'not_found' })
-  return c.json(venue)
+  return c.json({ ...venue, ...await readVenueLogo(c.env, actor, c.req.param('id')) })
 })
 async function canManage(c: Context<StaffEnv>, venueId: string) {
   const actor = c.get('actor')

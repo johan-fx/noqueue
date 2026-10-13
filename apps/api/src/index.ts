@@ -1,4 +1,5 @@
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
+import { cleanupVenueLogos } from './features/staff/logo'
 import {
   runCustomerCommand,
   runWhatsAppAction,
@@ -295,5 +296,7 @@ export default {
         new Date().toISOString(),
       ),
     ])
+    // Low-priority asset maintenance must not delay queue expiry/notifications.
+    try { await cleanupVenueLogos(env) } catch { console.error('venue_logo_cleanup_failed') }
   },
 } satisfies ExportedHandler<CloudflareBindings>

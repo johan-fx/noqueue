@@ -1,4 +1,6 @@
 interface CloudflareBindings {
+  VENUE_LOGOS: R2Bucket
+  VENUE_LOGOS_PUBLIC_BASE_URL?: string
   GEOAPIFY_API_KEY: string
   BETTER_AUTH_SECRET: string
   AUTH_EMAIL_API_KEY: string

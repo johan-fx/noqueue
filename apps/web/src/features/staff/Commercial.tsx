@@ -49,7 +49,16 @@ import {
   CreateEstablishmentDrawer,
   type ClientInput,
 } from './CreateEstablishmentDrawer'
-import { api, errorMessage } from './api'
+import { ApiError, api, errorMessage } from './api'
+import { getVenueLogo, putVenueLogo } from './logo-api'
+import type { VenueLogoState } from '@noqueue/contracts/staff'
+
+type PendingLogoUpload = {
+  venueId: string
+  file: File
+  requestKey: string
+  version: number
+}
 
 function listParams(
   current: URLSearchParams,
@@ -106,7 +115,15 @@ export function Commercial() {
   const [open, setOpen] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [saving, setSaving] = useState(false)
+  const [pendingLogo, setPendingLogo] = useState<PendingLogoUpload | null>(null)
+  const [logoUploadError, setLogoUploadError] = useState('')
+  const [logoUploadConflict, setLogoUploadConflict] = useState(false)
+  const [logoConflictState, setLogoConflictState] =
+    useState<VenueLogoState | null>(null)
+  const [logoUploading, setLogoUploading] = useState(false)
   const pending = useRef(false)
+  const logoUploadPending = useRef(false)
+  const pendingLogoIntent = useRef(false)
   const requestKey = useRef(crypto.randomUUID())
   const fingerprint = useRef('')
   const [target, setTarget] = useState<CommercialEstablishmentSummary | null>(
@@ -196,15 +213,58 @@ export function Commercial() {
     setRevision((value) => value + 1)
   }
   function changeOpen(next: boolean) {
-    if (pending.current) return
+    if (pending.current || (next && pendingLogoIntent.current)) return
     setOpen(next)
     if (next) setMessage('')
     setSaveError('')
     fingerprint.current = ''
     requestKey.current = crypto.randomUUID()
   }
-  async function complete(client: ClientInput, service: ServiceInput) {
-    if (pending.current) return
+  async function uploadPendingLogo(intent: PendingLogoUpload) {
+    if (logoUploadPending.current) return
+    logoUploadPending.current = true
+    setLogoUploading(true)
+    setLogoUploadError('')
+    setLogoUploadConflict(false)
+    setLogoConflictState(null)
+    try {
+      await putVenueLogo(
+        intent.venueId,
+        intent.file,
+        intent.version,
+        intent.requestKey,
+      )
+      setPendingLogo((current) =>
+        current?.requestKey === intent.requestKey ? null : current,
+      )
+      pendingLogoIntent.current = false
+      setMessage(
+        'Establecimiento creado y logotipo guardado. Entrega las credenciales al administrador por un canal seguro. El servicio se ha creado cerrado.',
+      )
+      refresh()
+    } catch (cause) {
+      setLogoUploadError(errorMessage(cause))
+      if (cause instanceof ApiError && cause.code === 'logo_version_conflict') {
+        setLogoUploadConflict(true)
+        try {
+          setLogoConflictState(await getVenueLogo(intent.venueId))
+        } catch {
+          // The conflict is still actionable: opening the Dashboard fetches the current state.
+        }
+      }
+      setMessage('El establecimiento se ha creado; el logotipo queda pendiente.')
+    } finally {
+      logoUploadPending.current = false
+      setLogoUploading(false)
+    }
+  }
+
+  async function complete(
+    client: ClientInput,
+    service: ServiceInput,
+    logoFile: File | null,
+  ) {
+    if (pending.current || pendingLogoIntent.current) return
     pending.current = true
     setSaving(true)
     setSaveError('')
@@ -215,13 +275,31 @@ export function Commercial() {
       fingerprint.current = next
     }
     try {
-      await api('/commercial/organizations', 'POST', input, requestKey.current)
+      const created = await api<{ venueId: string }>(
+        '/commercial/organizations',
+        'POST',
+        input,
+        requestKey.current,
+      )
       setOpen(false)
       fingerprint.current = ''
-      setMessage(
-        'Establecimiento creado. Entrega las credenciales al administrador por un canal seguro. El servicio se ha creado cerrado.',
-      )
       refresh()
+      if (logoFile && created.venueId) {
+        const logoIntent: PendingLogoUpload = {
+          venueId: created.venueId,
+          file: logoFile,
+          requestKey: crypto.randomUUID(),
+          version: 0,
+        }
+        pendingLogoIntent.current = true
+        setPendingLogo(logoIntent)
+        setMessage('Establecimiento creado. Guardando logotipo…')
+        await uploadPendingLogo(logoIntent)
+      } else {
+        setMessage(
+          'Establecimiento creado. Entrega las credenciales al administrador por un canal seguro. El servicio se ha creado cerrado.',
+        )
+      }
     } catch (cause) {
       setSaveError(errorMessage(cause))
     } finally {
@@ -355,11 +433,88 @@ export function Commercial() {
             <CreateEstablishmentDrawer
               open={open}
               saving={saving}
+              createDisabled={!!pendingLogo}
               error={saveError}
               onOpenChange={changeOpen}
               onComplete={complete}
             />
           </div>
+          {pendingLogo && (
+            <div
+              role={logoUploadConflict ? 'alert' : 'status'}
+              className="mt-4 flex flex-col gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+            >
+              <div>
+                <p className="font-medium">
+                  El establecimiento ya está creado, pero el logotipo no se ha
+                  guardado.
+                </p>
+                {logoUploadError && (
+                  <p className="mt-1" role="alert">
+                    {logoUploadError}
+                  </p>
+                )}
+                {logoUploadConflict && (
+                  <div className="mt-2 flex items-center gap-3">
+                    {logoConflictState?.logo && (
+                      <img
+                        src={logoConflictState.logo.url}
+                        alt={`Logotipo actual de ${pendingLogo.venueId}`}
+                        className="size-10 rounded border bg-background object-contain p-1"
+                      />
+                    )}
+                    <p>
+                      Otra persona ha actualizado el logotipo. Revisa el estado
+                      actual antes de elegir si quieres sustituirlo.
+                    </p>
+                  </div>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {!logoUploadConflict && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={logoUploading}
+                    aria-label="Reintentar subida del logotipo"
+                    onClick={() => void uploadPendingLogo(pendingLogo)}
+                  >
+                    {logoUploading ? 'Subiendo…' : 'Reintentar subida'}
+                  </Button>
+                )}
+                {logoUploadConflict && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    nativeButton={false}
+                    role="link"
+                    render={
+                      <Link to={`/staff/establishments/${pendingLogo.venueId}`} />
+                    }
+                  >
+                    Revisar establecimiento
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={logoUploading}
+                  onClick={() => {
+                    pendingLogoIntent.current = false
+                    setPendingLogo(null)
+                    setLogoUploadError('')
+                    setLogoUploadConflict(false)
+                    setLogoConflictState(null)
+                    setMessage(
+                      'Establecimiento creado. Se conserva el estado actual; puedes gestionar el logotipo desde el Dashboard.',
+                    )
+                  }}
+                >
+                  Continuar sin logo
+                </Button>
+              </div>
+            </div>
+          )}
           {error && (
             <div className="space-y-2">
               <p role="alert" className="text-destructive">

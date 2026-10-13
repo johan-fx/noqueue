@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router'
-import type { VenueSummary } from '@noqueue/contracts/staff'
+import type { VenueLogoState, VenueSummary } from '@noqueue/contracts/staff'
 import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api, errorMessage } from './api'
@@ -68,7 +68,14 @@ export function CommercialEstablishment({
           </Button>
         </div>
       ) : venue ? (
-        <Dashboard key={venue.id} venue={venue} mode="commercial" />
+        <Dashboard
+          key={venue.id}
+          venue={venue}
+          mode="commercial"
+          onVenueLogoStateChange={(state: VenueLogoState) =>
+            setVenue((current) => (current ? { ...current, ...state } : current))
+          }
+        />
       ) : (
         <p role="status">Cargando establecimiento…</p>
       )}

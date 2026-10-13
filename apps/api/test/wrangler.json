@@ -67,6 +67,13 @@
     "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
     "STAGING_CONSENT_APPROVED": "false",
     "APP_ENV": "local",
-    "D360DIALOG_PHONE_NUMBER_ID": "123456789012345"
-  }
+    "D360DIALOG_PHONE_NUMBER_ID": "123456789012345",
+    "VENUE_LOGOS_PUBLIC_BASE_URL": "/api/v1/venue-logos"
+  },
+  "r2_buckets": [
+    {
+      "binding": "VENUE_LOGOS",
+      "bucket_name": "noqueue-venue-logos-local"
+    }
+  ]
 }

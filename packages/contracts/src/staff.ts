@@ -593,7 +593,24 @@ export const membershipUpdateSchema = z.object({
   role: z.enum(['venue_manager', 'queue_staff', 'viewer']),
   active: z.boolean(),
 })
-export type VenueSummary = {
+export const VENUE_LOGO_MAX_BYTES = 5 * 1024 * 1024
+export const venueLogoSchema = z.object({
+  url: z.string().min(1),
+  name: z.string().min(1).max(180),
+  type: z.enum(['image/png', 'image/jpeg']),
+  size: z.number().int().positive(),
+})
+export type VenueLogo = z.infer<typeof venueLogoSchema>
+export const venueLogoStateSchema = z.object({
+  logo: venueLogoSchema.nullable(),
+  logoVersion: z.number().int().nonnegative(),
+  canEditLogo: z.boolean(),
+})
+export type VenueLogoState = z.infer<typeof venueLogoStateSchema>
+export const venueLogoMutationSchema = z.object({
+  version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
+}).strict()
+export type VenueSummary = VenueLogoState & {
   id: string
   name: string
   organizationId: string

@@ -81,6 +81,24 @@ const messages: Record<string, string> = {
   rate_limited: 'Demasiados intentos. Espera un minuto.',
   username_unavailable:
     'Ese usuario ya existe. Elige otro; no se modifica una cuenta existente.',
+  logo_too_large: 'El logotipo supera el tamaño máximo de 5 MB.',
+  invalid_logo: 'No se puede leer la imagen: el archivo está dañado o su contenido no coincide con el formato PNG, JPG o SVG.',
+  logo_dimensions_exceeded:
+    'La imagen supera el límite de 8 megapíxeles o 16.384 píxeles por lado. Reduce su resolución y vuelve a intentarlo.',
+  logo_image_memory_limit:
+    'La imagen necesita demasiada memoria para procesarla con seguridad. Exporta una copia de menor resolución o de 8 bits e inténtalo de nuevo.',
+  logo_image_complexity_limit:
+    'El PNG contiene demasiados bloques de datos o metadatos. Exporta una nueva copia en PNG o JPG y vuelve a intentarlo.',
+  logo_image_unsupported:
+    'Esta variante de PNG no es compatible. Exporta un PNG estático de 8 bits, sin entrelazado ni metadatos de texto comprimidos, o un JPG.',
+  logo_processing_busy:
+    'Se está procesando otra imagen. Espera unos segundos y vuelve a guardar; el logotipo anterior no ha cambiado.',
+  logo_svg_text_requires_paths:
+    'Convierte el texto del SVG a trazados o sube un PNG/JPG.',
+  logo_version_conflict:
+    'El logotipo cambió mientras lo editabas. Revisa la versión actual antes de volver a guardar.',
+  idempotency_conflict:
+    'La operación no coincide con el intento anterior. Actualiza el estado antes de volver a intentarlo.',
   member_details_forbidden:
     'No puedes editar esta cuenta. Contacta con NoQueue.',
   invalid_member: 'Revisa los datos del usuario.',
@@ -101,16 +119,20 @@ export async function api<T>(
   key?: string,
   signal?: AbortSignal,
 ): Promise<T> {
+  const isFormData =
+    typeof FormData !== 'undefined' && body instanceof FormData
   const response = await fetch(`/api/v1/staff${path}`, {
     method,
     ...(signal ? { signal } : {}),
     credentials: 'include',
     cache: 'no-store',
     headers: {
-      'Content-Type': 'application/json',
+      ...(!isFormData ? { 'Content-Type': 'application/json' } : {}),
       ...(key ? { 'Idempotency-Key': key } : {}),
     },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    ...(body === undefined
+      ? {}
+      : { body: isFormData ? body : JSON.stringify(body) }),
   })
   let data: Record<string, unknown>
   try {

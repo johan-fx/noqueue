@@ -1,8 +1,10 @@
+import { ClosedServiceCard } from './ClosedServiceCard'
+import { PublicWaitingTurns } from './PublicWaitingTurns'
 import { useLocale, usePublicResource } from './public-resource'
-import { availabilityText, visualWaitingPeople } from './availability'
+import { availabilityText, publicWaitText } from './availability'
 import { Link, useParams } from 'react-router'
-import { ArrowRight, Clock, Users } from 'lucide-react'
-import { publicVenueSchema } from '@noqueue/contracts/queue'
+import { ArrowRight, Clock } from 'lucide-react'
+import { isVisibleVenueService, publicVenueSchema } from '@noqueue/contracts/queue'
 import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => publicVenueSchema.parse(value)
 export function PublicVenue() {
@@ -12,8 +14,10 @@ export function PublicVenue() {
   const {
     data: venue,
     error,
+    updatedAt,
     refresh,
   } = usePublicResource(`/api/v1/public/venues/${venueId}/services`, parse)
+  const services = venue?.services.filter(isVisibleVenueService) ?? []
   return (
     <CustomerShell title="No Queue" locale={locale} setLocale={setLocale}>
       {error && <LoadError locale={locale} retry={() => void refresh()} />}
@@ -53,37 +57,39 @@ export function PublicVenue() {
                 : 'Choose an option to begin'}
             </h2>
             <div className="space-y-2">
-              {venue.services.map((service) => (
+              {services.map((service) => service.serviceOpen === false && service.nextOpening ? (
+                <ClosedServiceCard key={service.id} name={service.name} opening={service.nextOpening} receivedAt={updatedAt!} locale={locale} />
+              ) : (
                 <Link
                   key={service.id}
-                  className="block space-y-2 rounded-lg border border-gray-300 p-4 focus-visible:ring-2"
+                  className="block space-y-2 rounded-lg border border-gray-300 p-[15px] focus-visible:ring-2"
                   to={`/q/${service.id}?lang=${locale}`}
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <h3 className="text-lg font-semibold text-gray-800">
+                    <h3 className="min-w-0 truncate text-lg leading-7 font-semibold text-gray-800" title={service.name}>
                       {service.name}
                     </h3>
-                    <ArrowRight className="size-5" />
+                    <ArrowRight aria-hidden="true" className="size-6 shrink-0 text-gray-800" />
                   </div>
-                  <p className="flex items-center gap-2 text-xs">
-                    <Users className="size-4" />
-                    {visualWaitingPeople(service)}{' '}
-                    {visualWaitingPeople(service) === 1
-              ? es ? 'persona en lista de espera' : 'person waiting'
-              : es ? 'personas en lista de espera' : 'people waiting'}
-                  </p>
-                  <p className="flex items-center gap-2 text-xs">
-                    <Clock className="size-4" />
-                    {availabilityText(
-                      service,
-                      locale,
-                      service.averageWaitMinutes,
-                    )}
+                  <PublicWaitingTurns
+                    service={service}
+                    locale={locale}
+                    className="flex items-center gap-2 text-xs leading-none font-medium text-gray-500"
+                    showIcon
+                  />
+                  <p
+                    className="flex items-center gap-2 text-xs leading-none font-medium text-gray-500"
+                    title={availabilityText(service, locale, service.averageWaitMinutes)}
+                  >
+                    <Clock aria-hidden="true" className="size-4 shrink-0" />
+                    {service.canJoin === false
+                      ? availabilityText(service, locale)
+                      : publicWaitText(service.averageWaitMinutes, locale)}
                   </p>
                 </Link>
               ))}
             </div>
-            {!venue.services.length && (
+            {!services.length && (
               <p>
                 {es
                   ? 'No hay servicios disponibles.'

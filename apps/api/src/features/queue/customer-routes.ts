@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
 import { z } from 'zod'
-import { customerCommandSchema } from '@noqueue/contracts/queue'
+import { customerCommandSchema, isVisibleVenueService } from '@noqueue/contracts/queue'
 import { hash, hmac } from './crypto'
 import { publicService } from './public-context'
 
@@ -44,7 +44,7 @@ customerRoutes.get('/venues/:id/services', async (c) => {
   for (const queue of queues.results) {
     await coordinator(c.env, queue.id).refresh(queue.id)
     const service = await publicService(c.env, queue.id)
-    if (!service) continue
+    if (!service || !isVisibleVenueService(service)) continue
     services.push({ ...service, waitingPeople: service.waitingPeople ?? 0, averageWaitMinutes: service.averageWaitMinutes ?? null })
   }
   return c.json({ ...venue, services })

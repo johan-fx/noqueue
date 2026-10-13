@@ -1,17 +1,42 @@
 import { visibleWaitingCount, type AdmissionStatus } from '@noqueue/contracts/queue'
 import type { Locale } from './shared'
 
-type PresentationStatus = { averageWaitQuality?: 'estimated' | 'provisional' | 'unknown' | undefined } & {
-
+export type PresentationStatus = {
+  averageWaitQuality?: 'estimated' | 'provisional' | 'unknown' | undefined
+} & {
   [K in keyof AdmissionStatus]?: AdmissionStatus[K] | undefined
 }
-export function visualWaitingPeople(service: PresentationStatus) {
-  const real = service.waitingPeople ?? 0
-  return real > 0
-    ? real
-    : service.serviceOpen && service.queueState === 'active'
+export function visualWaitingTurns(service: PresentationStatus): number | null {
+  const real = service.waitingTurns
+  // An older response has no turn count: people are not a substitute for turns.
+  if (real === undefined) return null
+  if (real > 0) return real
+  return service.serviceOpen &&
+    service.queueState === 'active' &&
+    service.canJoin === true &&
+    service.blockReason === null
     ? visibleWaitingCount(real)
-    : 0
+    : null
+}
+
+export function waitingTurnsText(
+  service: PresentationStatus,
+  locale: Locale,
+): string | null {
+  const count = visualWaitingTurns(service)
+  if (count === null) return null
+  return locale === 'es'
+    ? `${count} ${count === 1 ? 'turno' : 'turnos'} en lista de espera`
+    : `${count} ${count === 1 ? 'turn' : 'turns'} waiting`
+}
+
+/** Navigation copy stays compact; detailed state/quality can label the estimate. */
+export function publicWaitText(estimate: number | null, locale: Locale, compact = false) {
+  if (estimate === null) return compact ? '—' : locale === 'es' ? 'Sin estimación disponible' : 'No estimate available'
+  if (compact) return `${estimate}min`
+  return locale === 'es'
+    ? `Ahora, media de espera ${estimate} ${estimate === 1 ? 'minuto' : 'minutos'}`
+    : `Current average wait ${estimate} ${estimate === 1 ? 'minute' : 'minutes'}`
 }
 export function availabilityText(
   service: PresentationStatus,

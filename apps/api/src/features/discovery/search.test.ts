@@ -137,10 +137,10 @@ describe('D1 service discovery', () => {
     expect((await search({ text: `${f.prefix} avila` })).items).toHaveLength(2)
     expect((await search({ text: '" OR * : ( )' })).items).toHaveLength(0)
   })
-  it('excludes incomplete, suspended and unconfigured records but preserves closed services', async () => {
+  it('excludes incomplete, suspended and unconfigured records and paused services', async () => {
     const f = await fixture(),
       id = await f.service('Closed', 10, false)
-    expect((await search({ recentIds: [id] })).items[0]?.open).toBe(false)
+    expect((await search({ recentIds: [id] })).items).toHaveLength(0)
     await env.DB.prepare(
       "UPDATE tenant_account SET status='suspended' WHERE organization_id=?",
     )
@@ -165,7 +165,7 @@ describe('D1 service discovery', () => {
     expect(result.items.find(i => i.id === known)).toMatchObject({ waitMinutes: 7, averageWaitQuality: 'estimated' })
     expect(result.items.find(i => i.id === empty)).toMatchObject({ waitMinutes: 30, averageWaitQuality: 'provisional' })
     expect(result.items.find(i => i.id === stale)).toMatchObject({ waitMinutes: null, averageWaitQuality: 'unknown' })
-    expect(result.items.find(i => i.id === closed)).toMatchObject({ open: false, waitMinutes: null })
+    expect(result.items.find(i => i.id === closed)).toBeUndefined()
   })
   it('computes exact Haversine including coincident points before radius filtering and pagination', async () => {
     const far = await fixture(40.5, -3.704),
@@ -286,6 +286,7 @@ it('bounds anonymous request origin and rate, sends no-cache headers and no inte
         'canJoin',
         'blockReason',
         'waitingPeople',
+        'waitingTurns',
         'initialWaitingMarker',
         'address',
         'attribution',
@@ -331,12 +332,7 @@ it('resolves discovery with physical opening, direct access, marker and automati
     .bind(restaurant, pool)
     .run()
   const result = await search({ text: f.prefix })
-  expect(result.items.find((i) => i.id === restaurant)).toMatchObject({
-    serviceOpen: true,
-    queueState: 'inactive',
-    canJoin: false,
-    waitMinutes: 0,
-  })
+  expect(result.items.find((i) => i.id === restaurant)).toBeUndefined()
   expect(result.items.find((i) => i.id === pool)).toMatchObject({
     serviceOpen: true,
     queueState: 'active',
@@ -346,4 +342,49 @@ it('resolves discovery with physical opening, direct access, marker and automati
     waitMinutes: 30,
     averageWaitQuality: 'provisional',
   })
+})
+
+it.each([[4], [3, 3], [1, 1, 1, 1]])('publishes real turns independently of group sizes %j', async (...sizes: number[]) => {
+  const f = await fixture()
+  const queueId = await f.service('Groups')
+  for (const [index, partySize] of sizes.entries()) {
+    const id = crypto.randomUUID()
+    await env.DB.prepare(
+      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence)
+       VALUES (?,?,?,?,?,?,?,'es',?,?)`,
+    ).bind(id, queueId, id, 'hash', id, id, partySize, now, index + 1).run()
+  }
+  const result = await search({ recentIds: [queueId] })
+  expect(result.items).toHaveLength(1)
+  expect(result.items[0]).toMatchObject({
+    waitingPeople: sizes.reduce((sum, size) => sum + size, 0),
+    waitingTurns: sizes.length,
+  })
+  // Calling one group removes exactly one turn, not partySize turns.
+  await env.DB.prepare("UPDATE queue_entry SET status='called' WHERE queue_id=? AND sequence=1").bind(queueId).run()
+  const after = await search({ recentIds: [queueId] })
+  expect(after.items[0]).toMatchObject({
+    waitingPeople: sizes.slice(1).reduce((sum, size) => sum + size, 0),
+    waitingTurns: sizes.length - 1,
+  })
+})
+
+it('filters inactive, paused and physically closed services before pagination in all discovery modes', async () => {
+  const f = await fixture()
+  const active = await f.service('Active')
+  const paused = await f.service('Paused with turns', 8, false)
+  const inactive = await f.service('Direct')
+  const closed = await f.service('Closed with turns', 4)
+  await env.DB.prepare('DELETE FROM queue_admission WHERE queue_id=?').bind(inactive).run()
+  await env.DB.prepare("UPDATE queue SET config=json_set(config,'$.twentyFourHours',json('false'),'$.schedules',json('[]')) WHERE id=?").bind(closed).run()
+  for (const mode of [
+    { text: f.prefix },
+    { recentIds: [paused, inactive, active] },
+    { recentIds: [closed, active] },
+    { scope: 'nearby', coordinates: { latitude: 40.416, longitude: -3.704 }, text: f.prefix },
+  ]) {
+    const result = await search({ ...mode, pageSize: 1 })
+    expect(result.items.map((item) => item.id)).toEqual([active])
+    expect(result.hasMore).toBe(false)
+  }
 })

@@ -1,5 +1,4 @@
 import { useLocale, usePublicResource } from './public-resource'
-import { availabilityText, visualWaitingPeople } from './availability'
 import { useEffect, useState } from 'react'
 import { visitService } from './discovery-state'
 import { useLocation, useNavigate, useParams } from 'react-router'
@@ -48,22 +47,12 @@ export function PublicQueue() {
           {locale === 'es' ? 'Cargando…' : 'Loading…'}
         </p>
       )}
-      {service && (
-        <div className="space-y-2 px-4 pt-4">
-          <p role="status">
-            {availabilityText(
-              service,
-              locale,
-              service.averageWaitMinutes ?? null,
-            )}
-          </p>
-          <p>
-            {visualWaitingPeople(service)}{' '}
-            {visualWaitingPeople(service) === 1
-              ? locale === 'es' ? 'persona en lista de espera' : 'person waiting'
-              : locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
-          </p>
-        </div>
+      {service?.canJoin === false && (
+        <p className="px-4 pt-4" role="status">
+          {locale === 'es'
+            ? 'No se admiten inscripciones en este momento.'
+            : 'Registrations are not available right now.'}
+        </p>
       )}
       {service &&
         (service.queueState !== 'inactive' || attemptedQueue === queueId) && (

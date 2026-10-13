@@ -80,7 +80,7 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
     }
     await client.goto(`/v/${t.venueId}`)
     await expect(
-      client.getByText('16 personas en lista de espera'),
+      client.getByText('4 turnos en lista de espera'),
     ).toBeVisible()
     await client.getByRole('link', { name: /Restaurant/ }).click()
     await client.getByLabel('Nombre', { exact: true }).fill('María Cliente')
@@ -297,13 +297,14 @@ test.describe('visual customer states', () => {
           id: 'venue',
           name: 'Hotel Miramar',
           services: [
-            { ...service, waitingPeople: 6, averageWaitMinutes: 30 },
+            { ...service, waitingPeople: 6, waitingTurns: 2, averageWaitMinutes: 30 },
             {
               ...service,
               id: 'reception',
               name: 'Recepción',
               type: 'reception',
               waitingPeople: 4,
+              waitingTurns: 2,
               averageWaitMinutes: 8,
             },
             {
@@ -312,6 +313,7 @@ test.describe('visual customer states', () => {
               name: 'Bar Piscina',
               type: 'pool',
               waitingPeople: 5,
+              waitingTurns: 5,
               averageWaitMinutes: 20,
             },
           ],
@@ -380,7 +382,7 @@ test.describe('visual customer states', () => {
       })
     }
     await page.goto('/v/venue')
-    await expect(page.getByText('6 personas en lista de espera')).toBeVisible()
+    await expect(page.getByText('2 turnos en lista de espera')).toHaveCount(2)
     await capture('selector')
     await page.goto('/q/restaurant')
     await page.getByLabel('Nombre', { exact: true }).fill('María López')

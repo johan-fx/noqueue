@@ -52,6 +52,8 @@ it('searches per service, toggles one type off and renders ChevronLeft back', as
           type: 'restaurant',
           address: 'Calle Mayor 1',
           open: true,
+          serviceOpen: true,
+          queueState: 'active',
           waitMinutes: 10,
           distanceMeters: null,
           attribution: [{ text: 'Geoapify', url: 'https://www.geoapify.com/' }],

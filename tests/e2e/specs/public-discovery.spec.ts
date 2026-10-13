@@ -75,15 +75,26 @@ async function catalogue(request: APIRequestContext, origin: string) {
   const { venueId } = await response.json()
   expect(
     (
-      await request.post('/api/v1/experiments/local/staff/legacy-open', {
-        headers: pilot,
-        data: { venueId },
+      await request.post('/api/v1/auth/sign-in/username', {
+        headers: { Origin: origin },
+        data: { username: 'o_' + suffix, password },
       })
     ).ok(),
   ).toBeTruthy()
   const queues = (await (
     await request.get(`/api/v1/staff/venues/${venueId}/queues`)
   ).json()) as { id: string; name: string }[]
+  // Legacy queue.open is not the effective admission state. Activate the
+  // restaurant through its real lifecycle so the catalogue contains 3 active lists.
+  const restaurant = queues.find((queue) => queue.name.startsWith('Restaurante'))!
+  const initialized = await request.get(`/api/v1/staff/queues/${restaurant.id}/entries`)
+  expect(initialized.ok(), await initialized.text()).toBeTruthy()
+  const context = await (await request.get(`/api/v1/staff/queues/${restaurant.id}/opening-context`)).json()
+  const activated = await request.post(`/api/v1/staff/queues/${restaurant.id}/lifecycle`, {
+    headers: { Origin: origin, 'Idempotency-Key': crypto.randomUUID() },
+    data: { action: 'declare_full', contextToken: context.contextToken },
+  })
+  expect(activated.ok(), await activated.text()).toBeTruthy()
   expect(
     (
       await request.post(

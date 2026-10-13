@@ -1,6 +1,5 @@
 import { usePublicResource } from '../customer/public-resource'
 
-import { availabilityText, visualWaitingPeople } from '../customer/availability'
 import { useNavigate, useParams } from 'react-router'
 import {
   joinedEntrySchema,
@@ -66,22 +65,12 @@ export function PublicQueue({
             }}
           />
         )}
-        {service && (
-          <div className="mt-4 space-y-2">
-            <p role="status">
-              {availabilityText(
-                service,
-                locale,
-                service.averageWaitMinutes ?? null,
-              )}
-            </p>
-            <p>
-              {visualWaitingPeople(service)}{' '}
-              {locale === 'es'
-                ? 'personas en lista de espera'
-                : 'people waiting'}
-            </p>
-          </div>
+        {service?.canJoin === false && (
+          <p className="mt-4" role="status">
+            {locale === 'es'
+              ? 'No se admiten inscripciones en este momento.'
+              : 'Registrations are not available right now.'}
+          </p>
         )}
         {error && (
           <button onClick={() => void refresh()}>

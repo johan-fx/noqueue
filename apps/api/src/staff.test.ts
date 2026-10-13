@@ -1730,9 +1730,12 @@ it('serves anonymous venue aggregates and protects token-bound commands, retries
   const venueResponse = await request(`/public/venues/${t.venueId}/services`)
   expect(venueResponse.headers.get('Cache-Control')).toBe('no-store')
   const venue = (await venueResponse.json()) as {
-    services: { waitingPeople: number; averageWaitMinutes: number | null }[]
+    services: { waitingPeople: number; waitingTurns: number; averageWaitMinutes: number | null }[]
   }
   expect(venue.services[0]?.waitingPeople).toBe(3)
+  expect(venue.services[0]?.waitingTurns).toBe(1)
+  const service = await (await request(`/public/services/${t.queueId}`)).json()
+  expect(service).toMatchObject({ waitingPeople: 3, waitingTurns: 1 })
   expect(venue.services[0]?.averageWaitMinutes).toBe(30)
   expect(JSON.stringify(venue)).not.toContain('Private Guest')
   expect(JSON.stringify(venue)).not.toContain(entry.recoveryToken)

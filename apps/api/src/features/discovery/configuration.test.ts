@@ -193,13 +193,8 @@ it('stores normalized schema semantics without rewriting source bytes', async ()
     spaces: [{ id: 'legacy-0', tableTypes: [{ averageMinutes: 30 }] }],
   })
   expect(JSON.parse(row!.normalized_config)).not.toHaveProperty('ignored')
-  expect((await search({ recentIds: [id] })).body.items[0]).toMatchObject({
-    id,
-    open: false,
-    serviceOpen: true,
-    queueState: 'inactive',
-    canJoin: false,
-  })
+  // Valid configuration is still indexed, but inactive lists are not discoverable.
+  expect((await search({ recentIds: [id] })).body.items).toEqual([])
 })
 it('scheduled compatibility backfill is bounded and invalid markers prevent starvation', async () => {
   const f = await fixture()

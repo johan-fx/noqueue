@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest'
-import { availabilityText, visualWaitingPeople } from './availability'
+import { availabilityText, publicWaitText, visualWaitingTurns, waitingTurnsText } from './availability'
 it('separates public service closure, direct access, pause, cutoff, capacity and unknown ETA', () => {
   const service = {
     serviceOpen: true,
@@ -7,14 +7,15 @@ it('separates public service closure, direct access, pause, cutoff, capacity and
     canJoin: true,
     blockReason: null,
     waitingPeople: 0,
+    waitingTurns: 0,
     initialWaitingMarker: true,
     open: 1,
   }
-  expect(visualWaitingPeople(service)).toBe(1)
+  expect(visualWaitingTurns(service)).toBe(1)
   expect(availabilityText(service, 'es', null)).toBe(
     'Lista activa · Sin estimación',
   )
-  expect(visualWaitingPeople({ ...service, waitingPeople: 3 })).toBe(3)
+  expect(visualWaitingTurns({ ...service, waitingPeople: 9, waitingTurns: 3 })).toBe(3)
   expect(
     availabilityText(
       { ...service, queueState: 'inactive', canJoin: false },
@@ -47,6 +48,49 @@ it('separates public service closure, direct access, pause, cutoff, capacity and
     'Servicio cerrado',
   )
 })
+
+const active = { serviceOpen: true, queueState: 'active' as const, canJoin: true, blockReason: null }
+const states = [
+  { ...active, serviceOpen: false, blockReason: 'closed' as const },
+  { ...active, queueState: 'inactive' as const, blockReason: 'inactive' as const },
+  { ...active, queueState: 'paused' as const, blockReason: 'paused' as const },
+  { ...active, blockReason: 'cutoff' as const },
+  { ...active, blockReason: 'capacity' as const },
+  { ...active, queueState: 'paused' as const, blockReason: 'cutoff' as const },
+].map((state) => ({ ...state, canJoin: false }))
+
+it.each(states)('hides zero but preserves real turns in blocked state %j', (state) => {
+  expect(visualWaitingTurns({ ...state, waitingTurns: 0 })).toBeNull()
+  expect(waitingTurnsText({ ...state, waitingTurns: 0 }, 'es')).toBeNull()
+  for (const waitingTurns of [1, 2, 4]) {
+    expect(visualWaitingTurns({ ...state, waitingTurns })).toBe(waitingTurns)
+  }
+})
+it.each([[0, 1], [1, 1], [2, 2]])('floors %i real turns as %i only with explicit admission', (real, visible) => {
+  expect(visualWaitingTurns({ ...active, waitingTurns: real, waitingPeople: 20 })).toBe(visible)
+})
+it('never infers turns from people or missing admission data', () => {
+  expect(visualWaitingTurns({ ...active, waitingPeople: 4 })).toBeNull()
+  expect(visualWaitingTurns({ waitingTurns: 0 })).toBeNull()
+  expect(visualWaitingTurns({ ...active, canJoin: undefined, waitingTurns: 0 })).toBeNull()
+  expect(visualWaitingTurns({ ...active, blockReason: undefined, waitingTurns: 0 })).toBeNull()
+  expect(visualWaitingTurns({ waitingTurns: 2, waitingPeople: 8 })).toBe(2)
+})
+it.each(['es', 'en'] as const)('formats singular/plural in %s without counting group members', (locale) => {
+  expect(waitingTurnsText({ ...active, waitingTurns: 1, waitingPeople: 4 }, locale)).toBe(
+    locale === 'es' ? '1 turno en lista de espera' : '1 turn waiting',
+  )
+  expect(waitingTurnsText({ ...active, waitingTurns: 2, waitingPeople: 6 }, locale)).toBe(
+    locale === 'es' ? '2 turnos en lista de espera' : '2 turns waiting',
+  )
+})
 it('labels configured fallback as provisional on public surfaces', () => {
   expect(availabilityText({ serviceOpen: true, queueState: 'active', averageWaitQuality: 'provisional' }, 'es', 4)).toBe('Lista activa · 4 min · Estimación provisional')
+})
+
+it('formats navigation ETA without expanding the Figma row', () => {
+  expect(publicWaitText(25, 'es', true)).toBe('25min')
+  expect(publicWaitText(null, 'en', true)).toBe('—')
+  expect(publicWaitText(30, 'es')).toBe('Ahora, media de espera 30 minutos')
+  expect(publicWaitText(1, 'en')).toBe('Current average wait 1 minute')
 })

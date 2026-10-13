@@ -1,4 +1,5 @@
 import { useLocale } from './public-resource'
+import { isActivePublicList } from '@noqueue/contracts/queue'
 import { useCallback, useEffect, useState } from 'react'
 import { useLocation, useNavigate, useSearchParams } from 'react-router'
 import { ArrowRight, Clock, MapPin, QrCode, Search } from 'lucide-react'
@@ -153,7 +154,7 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
         if (!controller.signal.aborted) {
           setLoaded({
             key: bodyKey,
-            items: result.items,
+            items: result.items.filter(isActivePublicList),
             hasMore: result.hasMore,
           })
           setFailure(null)

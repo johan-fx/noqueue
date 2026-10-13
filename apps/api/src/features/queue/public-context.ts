@@ -4,7 +4,7 @@ import type { PublicService } from '@noqueue/contracts/queue'
 import { storedServiceSchema as serviceSchema } from '@noqueue/contracts/staff'
 import { customerDeadlineSql, customerProvisionalSql, publicCustomerAverage } from './customer-estimate'
 import { normalizeConfig } from './projection'
-import { admissionState, publicAdmission, validWaitingSql, includesLegacyWaiting } from '../staff/availability'
+import { nextServiceOpening, admissionState, publicAdmission, validWaitingSql, includesLegacyWaiting } from '../staff/availability'
 
 export async function publicService(env: CloudflareBindings, id: string): Promise<PublicService | null> {
   const now = Date.now()
@@ -34,7 +34,14 @@ export async function publicService(env: CloudflareBindings, id: string): Promis
     'SELECT ratio FROM queue_assignment_observation WHERE queue_id=? AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30',
   ).bind(id).all<{ratio:number}>()).results.reverse().map(r => r.ratio) : []
   const initialMinutes = config.estimatorVersion === 2 ? Math.max(0.25,config.averageMinutes*cadenceFactor(ratios)) : config.averageMinutes
+  const nextAt = admission?.serviceOpen === false ? nextServiceOpening(config, row.timezone, new Date(now)) : null
+  const nextOpening = nextAt === null ? null : {
+    at: nextAt,
+    serverNow: now,
+    localTime: new Intl.DateTimeFormat('en-GB', { timeZone: row.timezone, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(new Date(nextAt)),
+  }
   return {
+    nextOpening,
     ...publicCustomerAverage({ sum: estimate?.sum ?? 0, count: estimate?.count ?? 0, provisional: !!estimate?.provisional, waiting: admission?.waitingPeople ?? 0, active: !!admission?.serviceOpen && admission.queueState === 'active', configuredMinutes: initialMinutes, adaptive:config.estimatorVersion === 2 }),
     ...(admission ? publicAdmission(admission) : {}),
     id: row.id,

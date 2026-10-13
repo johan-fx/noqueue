@@ -38,8 +38,8 @@ it('records a verified direct service visit as an ID-only recent', async () => {
     'direct-service',
   ])
 })
-it.each(['reception', 'pool'] as const)(
-  'shows the existing counter for joinable %s',
+it.each(['restaurant', 'reception', 'pool'] as const)(
+  'shows the %s form without wait information',
   async (type) => {
     vi.stubGlobal(
       'fetch',
@@ -56,6 +56,8 @@ it.each(['reception', 'pool'] as const)(
             serviceOpen: true,
             queueState: 'active',
             canJoin: true,
+            blockReason: null,
+            waitingTurns: 0,
             waitingPeople: 0,
             spaces: [],
             receptionServices: [],
@@ -69,8 +71,8 @@ it.each(['reception', 'pool'] as const)(
         </Routes>
       </MemoryRouter>,
     )
-    expect(
-      await screen.findByText('1 persona en lista de espera'),
-    ).toBeVisible()
+    expect(await screen.findByRole('heading', { name: 'Introduce tus datos' })).toBeVisible()
+    expect(screen.queryByTestId('public-waiting-turns')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Lista activa|estimación|minutos|turnos? en lista/)).not.toBeInTheDocument()
   },
 )

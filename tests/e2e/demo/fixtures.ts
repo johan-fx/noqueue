@@ -128,6 +128,14 @@ export async function fixture(
   ).json()) as QueueSummary[];
   expect(queue!.config.approachTurns ?? 2).toBe(2);
   expect(queue!.config.approachMinutes ?? 10).toBe(options?.approach ?? 10);
+  // The heading appears before the dashboard's initial entries read completes.
+  // That read lazily activates the estimator and increments the queue version.
+  // Finish it through the real coordinator before taking any lifecycle snapshot,
+  // otherwise a concurrent dashboard read can correctly invalidate that snapshot.
+  const initialized = await page.request.get(
+    `/api/v1/staff/queues/${queue!.id}/entries`
+  );
+  expect(initialized.ok(), await initialized.text()).toBeTruthy();
   if (options?.leaveInactive)
     return { queue: queue!.id, venueId, venueName, headers, graceMinutes };
   if (type === "restaurant") {

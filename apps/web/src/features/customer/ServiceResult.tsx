@@ -1,4 +1,5 @@
-import { availabilityText, visualWaitingPeople } from './availability'
+import { availabilityText, publicWaitText } from './availability'
+import { isActivePublicList } from '@noqueue/contracts/queue'
 import { Link } from 'react-router'
 import { ConciergeBell, Utensils, Martini, Clock, MapPin } from 'lucide-react'
 import type { PublicSearchResult } from '@noqueue/contracts/discovery'
@@ -19,7 +20,8 @@ export function ServiceResult({
       : service.type === 'reception'
       ? ConciergeBell
       : Martini
-  const wait = availabilityText(service, locale, service.waitMinutes)
+  if (!isActivePublicList(service)) return null
+  const wait = publicWaitText(service.waitMinutes, locale, true)
   const distance =
     service.distanceMeters === null
       ? null
@@ -46,26 +48,20 @@ export function ServiceResult({
           >
             {service.name}
           </span>
-          <span className="flex max-w-[55%] flex-wrap items-center justify-end gap-2 text-right text-xs">
-            <span className="flex items-center gap-1 text-black">
-              <Clock aria-hidden="true" className="size-3" />
+          <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-xs">
+            <span className="flex items-center gap-1 font-medium text-black" title={availabilityText(service, locale, service.waitMinutes)}>
+              <Clock aria-hidden="true" className="size-3 shrink-0" />
               {wait}
             </span>
             {distance && (
               <span className="flex items-center gap-1 text-slate-500">
-                <MapPin aria-hidden="true" className="size-3" />
+                <MapPin aria-hidden="true" className="size-3 shrink-0" />
                 {distance}
               </span>
             )}
           </span>
         </span>
         <span className="block text-xs text-gray-600">{service.address}</span>
-        <span className="block text-xs text-gray-600">
-          {visualWaitingPeople(service)}{' '}
-          {visualWaitingPeople(service) === 1
-              ? locale === 'es' ? 'persona en lista de espera' : 'person waiting'
-              : locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
-        </span>
       </span>
     </Link>
   )

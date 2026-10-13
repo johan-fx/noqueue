@@ -1,4 +1,5 @@
 import { cadenceFactor } from '../queue/adaptive-model'
+import { isActivePublicList } from '@noqueue/contracts/queue'
 import {
   customerDeadlineSql,
   customerProvisionalSql,
@@ -251,7 +252,7 @@ export async function searchServices(
         ? average.averageWaitMinutes
         : null,
     }
-  })
+  }).filter(isActivePublicList)
   const rank = (i: (typeof items)[number]) =>
     !i.serviceOpen || i.queueState === 'paused'
       ? 2

@@ -5,49 +5,25 @@ import { afterEach, expect, it } from 'vitest'
 import type { PublicSearchResult } from '@noqueue/contracts/discovery'
 import { ServiceResult } from './ServiceResult'
 afterEach(cleanup)
-it.each(['restaurant', 'reception', 'pool'] as const)(
-  'shows public-only floor for active empty %s without inflating real counts',
-  (type) => {
-    const service = {
-      id: 'q',
-      venueId: 'v',
-      name: 'Service',
-      venueName: 'Venue',
-      type,
-      address: 'Street',
-      open: true,
-      serviceOpen: true,
-      queueState: 'active',
-      waitingPeople: 0,
-      waitMinutes: null,
-      distanceMeters: null,
-      attribution: [],
-    } as PublicSearchResult
-    const view = render(
-      <MemoryRouter>
-        <ServiceResult service={service} locale="en" returnTo="/search" />
-      </MemoryRouter>,
-    )
-    expect(screen.getByText('1 person waiting')).toBeVisible()
-    view.rerender(
-      <MemoryRouter>
-        <ServiceResult
-          service={{ ...service, waitingPeople: 1 }}
-          locale="en"
-          returnTo="/search"
-        />
-      </MemoryRouter>,
-    )
-    expect(screen.getByText('1 person waiting')).toBeVisible()
-    view.rerender(
-      <MemoryRouter>
-        <ServiceResult
-          service={{ ...service, waitingPeople: 0, queueState: 'inactive' }}
-          locale="en"
-          returnTo="/search"
-        />
-      </MemoryRouter>,
-    )
-    expect(screen.getByText('0 people waiting')).toBeVisible()
-  },
-)
+const service: PublicSearchResult = {
+  id: 'q', venueId: 'v', name: 'Restaurante PlayaSol', venueName: 'Venue', type: 'restaurant',
+  address: 'Calle del Mero 28, Málaga', open: true, serviceOpen: true, queueState: 'active',
+  canJoin: true, blockReason: null, waitingTurns: 2, waitingPeople: 6,
+  waitMinutes: 25, distanceMeters: 350, attribution: [],
+}
+it.each(['restaurant', 'reception', 'pool'] as const)('keeps the compact Figma row without a counter (%s)', (type) => {
+  const { container } = render(<MemoryRouter><ServiceResult service={{ ...service, type }} locale="es" returnTo="/search" /></MemoryRouter>)
+  expect(screen.getByText('25min')).toBeVisible()
+  expect(screen.getByText('350m')).toBeVisible()
+  expect(screen.getByText(service.address)).toBeVisible()
+  expect(screen.queryByTestId('public-waiting-turns')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Lista activa|personas|turnos/)).not.toBeInTheDocument()
+  expect(container.querySelector('.lucide-clock')).toHaveAttribute('aria-hidden', 'true')
+})
+it.each([
+  { serviceOpen: false }, { queueState: 'paused' as const }, { queueState: 'inactive' as const },
+  { serviceOpen: undefined },
+])('does not render an unavailable or unknown service %j', (state) => {
+  render(<MemoryRouter><ServiceResult service={{ ...service, ...state }} locale="en" returnTo="/search" /></MemoryRouter>)
+  expect(screen.queryByRole('link')).not.toBeInTheDocument()
+})

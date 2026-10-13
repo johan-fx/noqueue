@@ -31,6 +31,8 @@ export const admissionFields = {
     .nullable()
     .optional(),
   waitingPeople: z.number().nonnegative().optional(),
+  // Real queue entries, not the sum of group members. Optional for older servers.
+  waitingTurns: z.number().int().nonnegative().optional(),
   initialWaitingMarker: z.boolean().optional(),
 }
 export type AdmissionStatus = {
@@ -39,10 +41,25 @@ export type AdmissionStatus = {
   canJoin: boolean
   blockReason: 'closed' | 'inactive' | 'paused' | 'cutoff' | 'capacity' | null
   waitingPeople: number
+  waitingTurns: number
   initialWaitingMarker: boolean
+}
+/** Public discovery lists only physically open services with an active list. */
+export function isActivePublicList(service: {
+  serviceOpen?: boolean | undefined
+  queueState?: AdmissionStatus['queueState'] | undefined
+}): boolean {
+  return service.serviceOpen === true && service.queueState === 'active'
 }
 export const publicServiceSchema = z.object({
   ...admissionFields,
+  // Additive projection: absent on older API versions. Venue-local time is
+  // formatted on the server; the countdown uses server time, not device time.
+  nextOpening: z.object({
+    at: z.number().int().nonnegative(),
+    serverNow: z.number().int().nonnegative(),
+    localTime: z.string().regex(/^\d{2}:\d{2}$/),
+  }).nullable().optional(),
   id: z.string(),
   name: z.string(),
   venueName: z.string(),
@@ -59,6 +76,10 @@ export const publicServiceSchema = z.object({
   ),
 })
 export type PublicService = z.infer<typeof publicServiceSchema>
+/** Only venue selection includes scheduled-closed service cards. */
+export function isVisibleVenueService(service: PublicService): boolean {
+  return isActivePublicList(service) || (service.serviceOpen === false && service.nextOpening != null)
+}
 export const joinQueueSchema = serviceJoinSchema.extend({
   partySize: z.number().int().min(1).max(20),
   locale: z.enum(['es', 'en']),

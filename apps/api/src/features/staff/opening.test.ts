@@ -107,6 +107,30 @@ it('opens without an occupancy survey and lets queue progress proceed without re
   ).toBe('waiting')
   expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
 })
+it('invalidates pre-initialization context once, then keeps it stable across dashboard refreshes', async () => {
+  const t = await setup()
+  const initial = await openingContext(env, t.queue)
+
+  // The first dashboard entries read activates the estimator lazily.
+  await recalculateQueue(env, t.queue)
+  const initialized = await openingContext(env, t.queue)
+  expect(initialized.version).toBe(initial.version + 1)
+  expect(initialized.contextToken).not.toBe(initial.contextToken)
+  await expect(
+    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      action: 'declare_full', contextToken: initial.contextToken,
+    }),
+  ).rejects.toThrow('version_conflict')
+
+  // Once initialized, polling alone must not invalidate a fresh lifecycle intent.
+  await recalculateQueue(env, t.queue)
+  expect((await openingContext(env, t.queue)).contextToken).toBe(initialized.contextToken)
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'declare_full', contextToken: initialized.contextToken,
+  })
+  expect((await openingContext(env, t.queue)).queueState).toBe('active')
+})
+
 it('accepts legacy opening aliases and preserves stale-context/idempotent lifecycle guards', async () => {
   const t = await setup(),
     context = await openingContext(env, t.queue)

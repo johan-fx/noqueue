@@ -265,6 +265,52 @@ export function serviceDeadline(
   return endsAt === undefined ? null : { windowId: window.windowId, endsAt }
 }
 
+const openingCache = new Map<string, { from: number; at: number }>()
+/** Next physical opening, independent of queue activation and admission cutoff. */
+export function nextServiceOpening(config: ServiceInput, timezone: string, now = new Date()): number | null {
+  if (serviceWindow(config, timezone, now).serviceOpen) return null
+  const calendar = weeklySchedule(config)
+  if (!calendar.allDayDays.length && !calendar.schedules.length) return null
+  const key = JSON.stringify([timezone, calendar])
+  const cached = openingCache.get(key)
+  if (cached && now.getTime() >= cached.from && now.getTime() < cached.at) return cached.at
+  const isOpen = (clock: ReturnType<typeof zonedClock>) =>
+    calendar.allDayDays.includes(clock.day) || calendar.schedules.some(slot =>
+      slot.day === clock.day && clock.minute >= minutes(slot.from) && clock.minute < minutes(slot.to))
+  const remember = (at: number) => {
+    if (openingCache.size >= 32) openingCache.clear()
+    openingCache.set(key, { from: now.getTime(), at })
+    return at
+  }
+  // Hour-sized steps avoid scanning every minute of a week. Only a DST change
+  // needs minute resolution, including skipped starts and repeated local hours.
+  const start = (Math.floor(now.getTime() / 60000) + 1) * 60000
+  for (let cursor = start; cursor < start + 15 * 86400000; cursor += 3600000) {
+    const end = cursor + 3600000
+    const clock = zonedClock(timezone, new Date(cursor))
+    if (isOpen(clock)) return remember(cursor)
+    if (clock.offset !== zonedClock(timezone, new Date(end)).offset) {
+      for (let at = cursor + 60000; at < end; at += 60000)
+        if (isOpen(zonedClock(timezone, new Date(at)))) return remember(at)
+      continue
+    }
+    const midnight = Date.parse(`${clock.date}T00:00:00Z`) - clock.offset
+    const candidates: number[] = []
+    // A UTC hour may cross local midnight (including non-hour timezones).
+    for (const distance of [0, 1]) {
+      const day = (clock.day + distance) % 7
+      const base = midnight + distance * 86400000
+      if (calendar.allDayDays.includes(day)) candidates.push(base)
+      for (const slot of calendar.schedules)
+        if (slot.day === day) candidates.push(base + minutes(slot.from) * 60000)
+    }
+    const at = candidates.filter(t => t >= cursor && t < end).sort((a, b) => a - b)[0]
+    if (at !== undefined) return remember(at)
+  }
+  // Two weeks cover a weekly interval entirely skipped by a spring DST jump.
+  return null
+}
+
 /** Safe SQL literals are derived only from the server clock and validated schedule. */
 export function validWaitingSql(
   now: number,
@@ -357,6 +403,7 @@ export function resolveAdmission(
     canJoin: blockReason === null,
     blockReason,
     waitingPeople,
+    waitingTurns: waitingCount,
     initialWaitingMarker:
       window.serviceOpen && queueState === 'active' && waitingPeople === 0,
     windowId: window.windowId,
@@ -418,6 +465,7 @@ export function publicAdmission(
     canJoin,
     blockReason,
     waitingPeople,
+    waitingTurns,
     initialWaitingMarker,
   } = state
   return {
@@ -426,6 +474,7 @@ export function publicAdmission(
     canJoin,
     blockReason,
     waitingPeople,
+    waitingTurns,
     initialWaitingMarker,
   }
 }

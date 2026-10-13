@@ -36,3 +36,4 @@ queue-reports/
 
 # Private raw recordings and evidence for opt-in demos
 queue-demo-output/
+reports/*

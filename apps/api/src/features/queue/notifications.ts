@@ -161,7 +161,7 @@ export async function dispatchNotificationSerialized(
   const row = await env.DB.prepare(
     `SELECT n.status,n.attempts,n.kind,n.position,n.payload_version,n.payload_snapshot,n.revision,n.call_cycle,n.accepted_at,
     e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,v.id AS venue_id,
-    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.estimator_version,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta,p.operational_forecast_delta_ms AS current_operational_delta,p.customer_minimum_at,p.updated_at AS projection_updated_at,p.customer_operational_at,
+    c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.position AS current_position,p.estimator_version,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta,p.operational_forecast_delta_ms AS current_operational_delta,p.customer_minimum_at,p.updated_at AS projection_updated_at,p.customer_operational_at,
     ap.predicted_at AS adaptive_predicted_at,ap.quality AS adaptive_quality,ap.approach_episode AS adaptive_approach_episode,ap.correction_reason AS adaptive_correction_reason,ap.safety_revision AS adaptive_safety_revision,ap.notice_baseline_at AS adaptive_notice_baseline_at
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
     LEFT JOIN queue_confirmation f ON f.entry_id=e.id
@@ -195,6 +195,7 @@ export async function dispatchNotificationSerialized(
       venue: string
       queue_config: string | null
       projection_revision: number | null
+      current_position: number | null
       estimator_version: number | null
       current_predicted_at: number | null
       current_quality: 'estimated' | 'provisional' | 'unknown' | null
@@ -304,43 +305,68 @@ export async function dispatchNotificationSerialized(
   const customerOperationalAt = adaptiveProjection
     ? row.adaptive_predicted_at
     : stableOperationalAt(row.current_predicted_at, row.customer_operational_at)
-  const effective = customerEstimate({
-    predictedAt: customerOperationalAt,
-    quality: (adaptiveProjection ? row.adaptive_quality : row.current_quality) ?? 'unknown',
-  }, adaptiveProjection ? null : row.customer_minimum_at, dispatchNow)
-  const projectionFresh = row.projection_updated_at != null &&
+  const effective = customerEstimate(
+    {
+      predictedAt: customerOperationalAt,
+      quality:
+        (adaptiveProjection ? row.adaptive_quality : row.current_quality) ??
+        'unknown',
+    },
+    adaptiveProjection ? null : row.customer_minimum_at,
+    dispatchNow,
+  )
+  const projectionFresh =
+    row.projection_updated_at != null &&
     row.projection_updated_at >= dispatchNow - 120000 &&
     row.projection_updated_at <= dispatchNow
-  const adaptiveRevisionMatches = !!snapshot &&
+  const adaptiveRevisionMatches =
+    !!snapshot &&
     snapshot.estimatorVersion === 2 &&
     snapshot.estimationRevision === row.projection_revision &&
     row.revision === row.projection_revision
-  const adaptiveApproachEpisodeMatches = adaptiveRevisionMatches &&
+  const adaptiveApproachEpisodeMatches =
+    adaptiveRevisionMatches &&
     snapshot?.approachEpisode !== undefined &&
     snapshot.approachEpisode === row.adaptive_approach_episode
   let approaching = true
   if (row.kind === 'approaching') {
-    let config: { approachMinutes?: number; estimatorVersion?: number } | null = null
+    let config: { approachMinutes?: number; estimatorVersion?: number } | null =
+      null
     try {
       config = JSON.parse(row.queue_config ?? 'null')
-    } catch { /* Fail closed. */ }
+    } catch {
+      /* Fail closed. */
+    }
     const adaptiveAdmission = adaptiveProjection
       ? await admissionState(env, row.queue_id, new Date(dispatchNow))
       : null
-    const adaptiveNoticeActive = !adaptiveProjection || (
-      snapshot?.estimatorVersion === 2 &&
-      config?.estimatorVersion !== 1 &&
-      adaptiveApproachEpisodeMatches &&
-      adaptiveAdmission?.serviceOpen === true &&
-      adaptiveAdmission.queueState === 'active'
-    )
-    approaching = projectionFresh && !!config && adaptiveNoticeActive &&
+    const adaptiveNoticeActive =
+      !adaptiveProjection ||
+      (snapshot?.estimatorVersion === 2 &&
+        adaptiveApproachEpisodeMatches &&
+        adaptiveAdmission?.serviceOpen === true &&
+        adaptiveAdmission.queueState === 'active')
+    approaching =
+      projectionFresh &&
+      !!config &&
+      adaptiveNoticeActive &&
       effective.estimateQuality !== 'unknown' &&
       effective.predictedAt !== null &&
-      effective.predictedAt - dispatchNow <= (config.approachMinutes ?? 10) * 60000 &&
-      (adaptiveProjection
-        ? true
-        : snapshot?.estimatorVersion !== 2)
+      effective.predictedAt - dispatchNow <=
+        (config.approachMinutes ?? 10) * 60000 &&
+      (adaptiveProjection ? true : snapshot?.estimatorVersion !== 2)
+  }
+  const extensionNotice = row.kind === 'delayed' && snapshot?.extensionSequence !== undefined
+  let extensionCurrent = false
+  if (extensionNotice && adaptiveProjection) {
+    const event = await env.DB.prepare(
+      `SELECT previous_at FROM queue_wait_extension WHERE entry_id=? AND call_cycle=? AND extension_sequence=?`,
+    ).bind(row.id, row.call_cycle, snapshot!.extensionSequence!).first<{ previous_at: number }>()
+    const admission = await admissionState(env, row.queue_id, new Date(dispatchNow))
+    extensionCurrent = !!event && effective.predictedAt !== null &&
+      effective.predictedAt > event.previous_at && snapshot?.estimatorVersion === 2 &&
+      row.call_cycle === row.entry_call_cycle && projectionFresh &&
+      admission?.serviceOpen === true && admission.queueState === 'active'
   }
   let correctionIsCurrent = true
   if (row.kind === 'delayed' || row.kind === 'improved') {
@@ -355,7 +381,8 @@ export async function dispatchNotificationSerialized(
         last_accepted_customer_minimum_at: number | null
         last_accepted_safety_revision: number | null
       }>()
-    if (adaptiveProjection) {
+    if (extensionNotice) correctionIsCurrent = extensionCurrent
+    else if (adaptiveProjection) {
       const reason = snapshot?.correctionReason
       correctionIsCurrent =
         projectionFresh &&
@@ -373,10 +400,12 @@ export async function dispatchNotificationSerialized(
           thresholdMinutes: (() => {
             try {
               return (
-                JSON.parse(row.queue_config ?? '{}') as {
-                  etaChangeThresholdMinutes?: number
-                }
-              ).etaChangeThresholdMinutes ?? 5
+                (
+                  JSON.parse(row.queue_config ?? '{}') as {
+                    etaChangeThresholdMinutes?: number
+                  }
+                ).etaChangeThresholdMinutes ?? 5
+              )
             } catch {
               return 5
             }
@@ -384,10 +413,12 @@ export async function dispatchNotificationSerialized(
           cooldownMinutes: (() => {
             try {
               return (
-                JSON.parse(row.queue_config ?? '{}') as {
-                  notificationCooldownMinutes?: number
-                }
-              ).notificationCooldownMinutes ?? 10
+                (
+                  JSON.parse(row.queue_config ?? '{}') as {
+                    notificationCooldownMinutes?: number
+                  }
+                ).notificationCooldownMinutes ?? 10
+              )
             } catch {
               return 10
             }
@@ -407,74 +438,82 @@ export async function dispatchNotificationSerialized(
         snapshot.operationalForecastDeltaMs !== undefined &&
         snapshot.operationalForecastDeltaMs === row.current_operational_delta &&
         evaluateEstimateNotice({
-        previousAcceptedOperationalDeltaMs:
-          baseline?.last_accepted_operational_delta_ms ?? null,
-        currentOperationalDeltaMs: row.current_operational_delta ?? 0,
-        previousAcceptedAt: baseline?.last_accepted_predicted_at ?? null,
-        currentPredictedAt: effective.predictedAt,
-        previousAcceptedMinimumAt: baseline?.last_accepted_customer_minimum_at ?? null,
-        currentMinimumAt: row.customer_minimum_at ?? undefined,
-        currentOperationalPredictedAt: customerOperationalAt,
-        quality: effective.estimateQuality ?? 'unknown',
-        lastCorrectionAcceptedAt:
-          baseline?.last_correction_accepted_at ?? null,
-        thresholdMinutes: (() => {
-          try {
-            return (
-              JSON.parse(row.queue_config ?? '{}') as {
-                etaChangeThresholdMinutes?: number
-              }
-            ).etaChangeThresholdMinutes ?? 5
-          } catch {
-            return 5
-          }
-        })(),
-        cooldownMinutes: (() => {
-          try {
-            return (
-              JSON.parse(row.queue_config ?? '{}') as {
-                notificationCooldownMinutes?: number
-              }
-            ).notificationCooldownMinutes ?? 10
-          } catch {
-            return 10
-          }
-        })(),
-        now: dispatchNow,
-      }) === row.kind
+          previousAcceptedOperationalDeltaMs:
+            baseline?.last_accepted_operational_delta_ms ?? null,
+          currentOperationalDeltaMs: row.current_operational_delta ?? 0,
+          previousAcceptedAt: baseline?.last_accepted_predicted_at ?? null,
+          currentPredictedAt: effective.predictedAt,
+          previousAcceptedMinimumAt:
+            baseline?.last_accepted_customer_minimum_at ?? null,
+          currentMinimumAt: row.customer_minimum_at ?? undefined,
+          currentOperationalPredictedAt: customerOperationalAt,
+          quality: effective.estimateQuality ?? 'unknown',
+          lastCorrectionAcceptedAt:
+            baseline?.last_correction_accepted_at ?? null,
+          thresholdMinutes: (() => {
+            try {
+              return (
+                (
+                  JSON.parse(row.queue_config ?? '{}') as {
+                    etaChangeThresholdMinutes?: number
+                  }
+                ).etaChangeThresholdMinutes ?? 5
+              )
+            } catch {
+              return 5
+            }
+          })(),
+          cooldownMinutes: (() => {
+            try {
+              return (
+                (
+                  JSON.parse(row.queue_config ?? '{}') as {
+                    notificationCooldownMinutes?: number
+                  }
+                ).notificationCooldownMinutes ?? 10
+              )
+            } catch {
+              return 10
+            }
+          })(),
+          now: dispatchNow,
+        }) === row.kind
   }
   if (
     notice &&
-    (row.payload_version === 2 && !snapshot ||
+    ((row.payload_version === 2 && !snapshot) ||
       (row.payload_version === 2 &&
         snapshot?.copyVersion === 4 &&
         snapshot.actionContext !== undefined &&
         snapshot.actionContext.expiresAt <= Date.now()) ||
       (row.kind === 'ready' &&
-      (row.entry_status !== 'called' ||
-        (row.arrival_deadline_at ?? 0) <= Date.now() ||
-        row.call_cycle !== row.entry_call_cycle)) ||
+        (row.entry_status !== 'called' ||
+          (row.arrival_deadline_at ?? 0) <= Date.now() ||
+          row.call_cycle !== row.entry_call_cycle)) ||
       (row.kind === 'queue_joined' &&
         (row.entry_status !== 'waiting' ||
           (row.payload_version === 2 &&
             row.revision !== row.projection_revision))) ||
       (row.kind === 'approaching' &&
-        (row.entry_status !== 'waiting' || !approaching ||
-          (row.payload_version === 2 && row.revision !== row.projection_revision))) ||
+        (row.entry_status !== 'waiting' ||
+          !approaching ||
+          (row.payload_version === 2 &&
+            row.revision !== row.projection_revision))) ||
       ((row.kind === 'delayed' || row.kind === 'improved') &&
         (row.entry_status !== 'waiting' ||
-      effective.estimateQuality === 'unknown' ||
-      effective.predictedAt === null ||
-          row.revision !== row.projection_revision ||
+          effective.estimateQuality === 'unknown' ||
+          effective.predictedAt === null ||
+          (!extensionNotice && row.revision !== row.projection_revision) ||
           !correctionIsCurrent)) ||
       (row.kind === 'expired' && row.entry_status !== 'expired') ||
       (row.kind === 'cancelled' && row.entry_status !== 'cancelled') ||
       (row.kind === 'service_ended' &&
         (row.entry_status !== 'cancelled' ||
-          !(await env.DB.prepare("SELECT 1 FROM queue_event WHERE entry_id=? AND kind='service_ended' LIMIT 1")
+          !(await env.DB.prepare(
+            "SELECT 1 FROM queue_event WHERE entry_id=? AND kind='service_ended' LIMIT 1",
+          )
             .bind(row.id)
-            .first())))
-    )
+            .first()))))
   ) {
     await env.DB.batch([
       env.DB.prepare(
@@ -483,6 +522,29 @@ export async function dispatchNotificationSerialized(
       deliveryTraceStatement(env, { notificationId: id, event: 'obsolete' }),
     ])
     return
+  }
+  // Keep distinct extensions in event order. A pending/sending predecessor
+  // is reconciled by the existing outbox machinery, never blindly resent.
+  // An unknown outcome is not retried, but must not silence distinct later events.
+  if (extensionNotice && await env.DB.prepare(
+    `SELECT 1 FROM notification_outbox WHERE entry_id=? AND call_cycle=? AND kind='delayed'
+      AND status IN ('pending','sending')
+      AND json_extract(payload_snapshot,'$.extensionSequence')<? LIMIT 1`,
+  ).bind(row.id, row.call_cycle, snapshot!.extensionSequence!).first()) return
+  // Refresh only before the first attempt. Retries/callbacks retain the exact
+  // attempted payload, while the original increase remains in the event table.
+  if (extensionNotice && snapshot && row.attempts === 0) {
+    snapshot = {
+      ...snapshot,
+      ahead: row.current_position === null ? null : Math.max(0, row.current_position - 1),
+      predictedAt: effective.predictedAt,
+      etaMinutes: effective.predictedAt === null ? null : Math.max(0, Math.ceil((effective.predictedAt - dispatchNow) / 60000)),
+      estimateQuality: effective.estimateQuality ?? 'unknown',
+      estimationRevision: row.projection_revision ?? row.revision,
+    }
+    await env.DB.prepare(
+      "UPDATE notification_outbox SET payload_snapshot=? WHERE id=? AND status='pending' AND attempts=0",
+    ).bind(JSON.stringify(snapshot), id).run()
   }
   if (
     row.kind === 'confirmation' &&
@@ -614,9 +676,7 @@ export async function dispatchNotificationSerialized(
           estimateQuality: snapshot?.estimateQuality ?? 'unknown',
           resourceName: snapshot?.resourceName ?? null,
           arrivalDeadlineAt: snapshot?.arrivalDeadlineAt ?? null,
-          ...(snapshot?.reason
-            ? { cancellationReason: snapshot.reason }
-            : {}),
+          ...(snapshot?.reason ? { cancellationReason: snapshot.reason } : {}),
           ...(snapshot?.actionContext
             ? {
                 actionPayloads: {
@@ -785,7 +845,10 @@ export async function processWebhook(env: CloudflareBindings, id: string) {
       .first<{ queue_id: string }>()
     // The provider callback may arrive before the original send response is durable.
     if (!target) return
-    await queueCoordinator(env, target.queue_id).whatsappAction(target.queue_id, id)
+    await queueCoordinator(env, target.queue_id).whatsappAction(
+      target.queue_id,
+      id,
+    )
     return
   }
   if (event.kind === 'confirmation') {

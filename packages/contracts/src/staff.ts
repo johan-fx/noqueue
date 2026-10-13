@@ -492,22 +492,27 @@ export type StaffMember = {
   active: number
   canEditDetails: boolean
 }
-export const entryCommandSchema = z.object({
-  entryId: z.string().uuid(),
-  version: z.number().int().min(0),
-  action: z.enum([
-    'call',
-    'complete',
-    'release',
-    'cancel',
-    'no_show',
-    'skip',
-    'restore',
-  ]),
-  overrideReason: z.string().trim().min(3).max(300).optional(),
-  arrivalMode: z.enum(['notify', 'present']).optional(),
-  assignmentToken: z.string().optional(),
-})
+export const entryCommandSchema = z
+  .object({
+    entryId: z.string().uuid(),
+    version: z.number().int().min(0),
+    action: z.enum([
+      'call',
+      'complete',
+      'release',
+      'cancel',
+      'no_show',
+      'skip',
+      'restore',
+    ]),
+    overrideReason: z.string().trim().min(3).max(300).optional(),
+    arrivalMode: z.enum(['notify', 'present']).optional(),
+    assignmentToken: z.string().optional(),
+  })
+  .refine((input) => input.action !== 'release', {
+    message: 'operation_retired',
+    path: ['action'],
+  })
 export const queueCommandSchema = z.union([
   z.object({ action: z.literal('assign_next') }).strict(),
   entryCommandSchema,
@@ -526,7 +531,6 @@ export function allowedEntryActions(
   if (status === 'waiting')
     return type === 'restaurant' ? ['call', 'cancel'] : ['cancel']
   if (status === 'called') return ['complete', 'cancel']
-  if (status === 'completed' && type === 'restaurant') return ['release']
   return []
 }
 export const queueSettingsSchema = z.intersection(
@@ -636,7 +640,7 @@ export const queueLifecycleSchema = z
     z.object({
       action: z.literal('open'),
       contextToken: z.string().min(1).max(200),
-      groups: z.array(occupancyAnswerSchema).max(600),
+      groups: z.array(occupancyAnswerSchema).max(600).default([]),
     }),
     z.object({
       action: z.literal('confirm_inventory'),
@@ -664,7 +668,15 @@ export const queueLifecycleSchema = z
   ])
   .superRefine((input, ctx) => {
     if (
-      (input.action === 'open' || input.action === 'confirm_inventory') &&
+      ['release_unit', 'occupancy', 'confirm_inventory'].includes(input.action)
+    )
+      ctx.addIssue({
+        code: 'custom',
+        path: ['action'],
+        message: 'operation_retired',
+      })
+    if (
+      input.action === 'confirm_inventory' &&
       new Set(input.groups.map((g) => JSON.stringify([g.spaceId, g.seats])))
         .size !== input.groups.length
     )
@@ -674,7 +686,7 @@ export const queueLifecycleSchema = z
         message: 'Duplicate group answer',
       })
   })
-export type QueueLifecycleCommand = z.infer<typeof queueLifecycleSchema>
+export type QueueLifecycleCommand = z.input<typeof queueLifecycleSchema>
 export type QueueReadiness = {
   state: 'active' | 'pending' | 'disabled'
   reasons: (

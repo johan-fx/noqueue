@@ -28,7 +28,7 @@ it.each(['restaurant', 'reception', 'pool'] as const)(
         <ServiceResult service={service} locale="en" returnTo="/search" />
       </MemoryRouter>,
     )
-    expect(screen.getByText('1 people waiting')).toBeVisible()
+    expect(screen.getByText('1 person waiting')).toBeVisible()
     view.rerender(
       <MemoryRouter>
         <ServiceResult
@@ -38,7 +38,7 @@ it.each(['restaurant', 'reception', 'pool'] as const)(
         />
       </MemoryRouter>,
     )
-    expect(screen.getByText('1 people waiting')).toBeVisible()
+    expect(screen.getByText('1 person waiting')).toBeVisible()
     view.rerender(
       <MemoryRouter>
         <ServiceResult

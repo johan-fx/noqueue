@@ -68,13 +68,6 @@ async function setup() {
     action: 'declare_full',
     contextToken: context.contextToken,
   })
-  for (const group of context.groups)
-    await runLifecycleCommand(env, tenant.userId, queue, crypto.randomUUID(), {
-      action: 'occupancy',
-      contextToken: (await openingContext(env, queue)).contextToken,
-      group: { spaceId: group.spaceId, seats: group.seats, occupied: 0 },
-      reason: 'Fixture physical capacity update',
-    })
   return { queue, actor: tenant.userId }
 }
 async function entry(queue: string, now: number, size = 4, space = 'terrace') {
@@ -86,7 +79,7 @@ async function entry(queue: string, now: number, size = 4, space = 'terrace') {
     .run()
   return id
 }
-it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace and replay', async () => {
+it('Q-CLOCK preserves assignment/arrival timestamps and treats completion as terminal', async () => {
   const t = await setup(),
     now = 1_800_000_000_000
   const id = await entry(t.queue, now),
@@ -123,21 +116,23 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
     { action: 'complete', entryId: id, version: 1 },
     now + 2 * minute,
   )
-  await runQueueCommand(
-    env,
-    t.actor,
-    t.queue,
-    crypto.randomUUID(),
-    { action: 'release', entryId: id, version: 2 },
-    now + 62 * minute,
-  )
+  await expect(
+    runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      { action: 'release', entryId: id, version: 2 },
+      now + 62 * minute,
+    ),
+  ).rejects.toThrow('operation_retired')
   const state = await loadQueueState(env, t.queue, now + 62 * minute)
   check(
     'Q-CLOCK',
-    'allocation timeline',
+    'inventory is not part of operational state',
     now + 62 * minute,
-    state.allocations.map((a) => [a.reserved_at, a.arrived_at, a.released_at]),
-    [[now, now + 2 * minute, now + 62 * minute]],
+    state.allocations,
+    [],
   )
   check(
     'Q-CLOCK',
@@ -150,14 +145,27 @@ it('Q-CLOCK uses one explicit time for calls, events, arrival, release, grace an
         .bind(id)
         .all<{ created_at: number }>()
     ).results.map((e) => e.created_at),
-    [now, now + 2 * minute, now + 62 * minute],
+    [now, now + 2 * minute],
+  )
+  check(
+    'Q-CLOCK',
+    'arrival completes the turn',
+    now + 62 * minute,
+    (
+      await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+        .bind(id)
+        .first()
+    )?.status,
+    'completed',
   )
 })
-it('Q-COMMAND-LEARNING real arrival-release durations update only the matching group', async () => {
+it('Q-COMMAND-LEARNING trains only on human assignments, not arrival or completion', async () => {
   const t = await setup()
-  let now = 1_800_000_000_000
-  for (let sample = 1; sample <= 3; sample++) {
-    const id = await entry(t.queue, now)
+  const start = 1_800_000_000_000
+  const ids = await Promise.all(Array.from({ length: 4 }, () => entry(t.queue, start)))
+  for (let sample = 0; sample < 3; sample++) {
+    const now = start + sample * 50 * minute
+    const id = ids[sample]!
     await runQueueCommand(
       env,
       t.actor,
@@ -172,34 +180,29 @@ it('Q-COMMAND-LEARNING real arrival-release durations update only the matching g
       t.queue,
       crypto.randomUUID(),
       { action: 'complete', entryId: id, version: 1 },
-      now + 2 * minute,
+      now + minute,
     )
-    await runQueueCommand(
-      env,
-      t.actor,
-      t.queue,
-      crypto.randomUUID(),
-      { action: 'release', entryId: id, version: 2 },
-      now + 62 * minute,
-    )
-    now += 71 * minute
-    // baseline 50*5 + 60*(1+1.1+1.2), divided by 8.3 -> 54.
-    check(
-      'Q-COMMAND-LEARNING',
-      `completed sample ${sample}`,
-      now,
-      (await loadQueueState(env, t.queue, now)).resources.map((r) => [
-        r.spaceId,
-        r.seats,
-        r.averageMinutes,
-      ]),
-      [
-        ['terrace', 2, 50],
-        ['terrace', 4, sample < 3 ? 50 : 54],
-        ['salon', 4, 20],
-      ],
-    )
+    if (sample === 0) {
+      const afterFirst = await env.DB.prepare(
+        'SELECT COUNT(*) n FROM queue_assignment_observation WHERE queue_id=?',
+      ).bind(t.queue).first<{ n: number }>()
+      expect(afterFirst?.n).toBe(1)
+    }
   }
+  const observations = (await env.DB.prepare(
+    'SELECT source,space_id,seats,interval_ms,ratio FROM queue_assignment_observation WHERE queue_id=? ORDER BY assigned_at',
+  ).bind(t.queue).all<{ source: string; space_id: string | null; seats: number | null; interval_ms: number | null; ratio: number | null }>()).results
+  expect(observations).toHaveLength(3)
+  expect(observations.map((o) => [o.space_id, o.seats, o.ratio])).toEqual([
+    ['terrace', 4, null],
+    ['terrace', 4, 1],
+    ['terrace', 4, 1],
+  ])
+  expect(observations.every((o) => o.source === 'staff')).toBe(true)
+  const state = await loadQueueState(env, t.queue, start + 101 * minute)
+  expect(state.resources).toEqual([])
+  expect(state.allocations).toEqual([])
+  expect(Number.isFinite(state.adaptive?.factors.service)).toBe(true)
 })
 it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and replay exactly once', async () => {
   const runs = Number(process.env.QUEUE_SEQUENCE_RUNS ?? 20),
@@ -244,14 +247,6 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
               { entryId: id, version: row!.version + 1, action: 'complete' },
               now + minute,
             )
-            await runQueueCommand(
-              env,
-              t.actor,
-              t.queue,
-              crypto.randomUUID(),
-              { entryId: id, version: row!.version + 2, action: 'release' },
-              now + 31 * minute,
-            )
           } else if (action === 'no_show') {
             await expect(
               runQueueCommand(
@@ -283,11 +278,9 @@ it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and r
             now,
             {
               order: state.parties.map((p) => p.id),
-              activeAllocations: state.allocations.filter(
-                (a) => a.released_at === null,
-              ).length,
+              inventoryState: state.allocations,
             },
-            { order: waiting, activeAllocations: 0 },
+            { order: waiting, inventoryState: [] },
           )
           const events = (
             await env.DB.prepare(
@@ -377,46 +370,47 @@ it('Q-ANCHOR preserves initial forecast and rejects stale versions and conflicti
     .first()
   check(
     'Q-ANCHOR',
-    'error measured against initial forecast',
+    'error measured against the contextual initial forecast',
     now + 2 * minute,
     evidence,
-    { predicted_at: now, error_minutes: 2 },
+    { predicted_at: now + 50 * minute, error_minutes: -48 },
   )
 })
-it('Q-BOUNDARIES D1 learning retains only the last 30 completed durations', async () => {
+it('Q-BOUNDARIES contextual learning uses only the last 30 consecutive assignment ratios', async () => {
   const t = await setup()
-  let now = 1_800_000_000_000
-  for (let sample = 1; sample <= 31; sample++) {
-    const id = await entry(t.queue, now),
-      duration = sample === 1 ? 1440 : 60
-    for (const [action, version, time] of [
-      ['call', 0, now],
-      ['complete', 1, now + minute],
-      ['release', 2, now + (duration + 1) * minute],
-    ] as const)
-      await runQueueCommand(
-        env,
-        t.actor,
-        t.queue,
-        crypto.randomUUID(),
-        { action, entryId: id, version },
-        time,
-      )
-    now += (duration + 2) * minute
-    if (sample === 30 || sample === 31)
-      check(
-        'Q-BOUNDARIES',
-        `completed ${sample}`,
-        now,
-        (await loadQueueState(env, t.queue, now)).resources.find(
-          (r) => r.spaceId === 'terrace' && r.seats === 4,
-        )?.averageMinutes,
-        sample === 30 ? 77 : 59,
-      )
+  const start = 1_800_000_000_000
+  const ids = await Promise.all(Array.from({ length: 32 }, () => entry(t.queue, start)))
+  let now = start
+  for (let i = 0; i < ids.length; i++) {
+    await runQueueCommand(
+      env,
+      t.actor,
+      t.queue,
+      crypto.randomUUID(),
+      { action: 'call', entryId: ids[i]!, version: 0 },
+      now,
+    )
+    // The first valid gap is an outlier; the next thirty equal samples should
+    // evict it from the rolling contextual window.
+    now += i === 0 ? 500 * minute : 60 * minute
   }
+  const observations = (await env.DB.prepare(
+    'SELECT ratio FROM queue_assignment_observation WHERE queue_id=? ORDER BY assigned_at',
+  ).bind(t.queue).all<{ ratio: number | null }>()).results
+  expect(observations).toHaveLength(32)
+  expect(observations[0]?.ratio).toBeNull()
+  expect(observations[1]?.ratio).toBe(10)
+  const state = await loadQueueState(env, t.queue, now)
+  check(
+    'Q-BOUNDARIES',
+    'old outlier evicted after thirty valid gaps',
+    now,
+    state.adaptive?.factors.service,
+    (await import('./adaptive-model')).cadenceFactor(Array(30).fill(60 / 50)),
+  )
 }, 30_000)
 
-it('Q-PROGRESS captures the first positive parallel ETA, never zero, and survives polling and delay', async () => {
+it('Q-PROGRESS keeps canonical serial deadlines positive and stable through polling', async () => {
   const { recalculateQueue } = await import('./projection')
   const t = await setup(),
     now = Date.now()
@@ -425,26 +419,17 @@ it('Q-PROGRESS captures the first positive parallel ETA, never zero, and survive
     await entry(t.queue, now),
     await entry(t.queue, now),
   ]
-  const state = await recalculateQueue(env, t.queue, now)
-  const rows = await env.DB.prepare(
-    'SELECT id,progress_initial_eta_minutes AS initial,version FROM queue_entry WHERE queue_id=? ORDER BY sequence',
-  )
-    .bind(t.queue)
-    .all()
-  expect(rows.results.slice(0, 1)).toMatchObject([
-    { initial: null, version: 0 },
+  await recalculateQueue(env, t.queue, now)
+  const deadlineQuery = () => env.DB.prepare(
+    'SELECT entry_id,predicted_at,cadence_ms FROM queue_adaptive_projection WHERE entry_id IN (?,?,?) ORDER BY predicted_at',
+  ).bind(...ids).all<{ entry_id: string; predicted_at: number; cadence_ms: number }>()
+  const initial = await deadlineQuery()
+  expect(initial.results.map(r => r.predicted_at)).toEqual([
+    now + 50 * minute,
+    now + 100 * minute,
+    now + 150 * minute,
   ])
-  const positive = state.projections.find(
-    (p) => p.etaMinutes > 0 && p.quality !== 'unknown',
-  )!
-  expect(positive).toBeDefined()
-  check(
-    'Q-PROGRESS',
-    'first positive parallel ETA baseline',
-    now,
-    rows.results.find((r) => r.id === positive.id)?.initial,
-    positive.etaMinutes,
-  )
+  expect(initial.results.every(r => r.predicted_at > now && r.cadence_ms > 0)).toBe(true)
   await env.DB.prepare(
     "UPDATE queue SET config=json_set(config,'$.spaces[0].tableTypes[1].averageMinutes',100) WHERE id=?",
   )
@@ -452,42 +437,14 @@ it('Q-PROGRESS captures the first positive parallel ETA, never zero, and survive
     .run()
   await recalculateQueue(env, t.queue, now + minute)
   await recalculateQueue(env, t.queue, now + 2 * minute)
-  expect(
-    await env.DB.prepare(
-      'SELECT progress_initial_eta_minutes AS initial,version FROM queue_entry WHERE id=?',
-    )
-      .bind(positive.id)
-      .first(),
-  ).toEqual({ initial: positive.etaMinutes, version: 0 })
-  // A zero estimate is not a denominator: once a party acquires a positive wait it captures that value.
-  await env.DB.prepare('UPDATE queue_entry SET sequence=99 WHERE id=?')
-    .bind(ids[0]!)
-    .run()
-  const later = await recalculateQueue(env, t.queue, now)
-  const laterPositive = later.projections.find((p) => p.id === ids[0])!
-  expect(laterPositive.etaMinutes).toBeGreaterThan(0)
-  expect(
-    (
-      await env.DB.prepare(
-        'SELECT progress_initial_eta_minutes AS initial FROM queue_entry WHERE id=?',
-      )
-        .bind(ids[0]!)
-        .first()
-    )?.initial,
-  ).toBe(laterPositive.etaMinutes)
-  check(
-    'Q-PROGRESS',
-    'zero denominator captures its first later positive ETA',
-    now,
-    (
-      await env.DB.prepare(
-        'SELECT progress_initial_eta_minutes AS initial FROM queue_entry WHERE id=?',
-      )
-        .bind(ids[0]!)
-        .first()
-    )?.initial,
-    laterPositive.etaMinutes,
-  )
+  const afterConfiguration = await deadlineQuery()
+  expect(afterConfiguration.results.map(r => r.cadence_ms)).toEqual([
+    100 * minute,
+    100 * minute,
+    100 * minute,
+  ])
+  await recalculateQueue(env, t.queue, now + 3 * minute)
+  expect(await deadlineQuery()).toEqual(afterConfiguration)
 })
 
 it('Q-PROGRESS captures grace in the versioned call, replays safely and never resets on restore/new call', async () => {

@@ -170,7 +170,7 @@ it('keeps the viewer read-only', () => {
     screen.queryByRole('button', { name: /Acciones del turno/ }),
   ).not.toBeInTheDocument()
 })
-it('offers an explicit release after arrival', () => {
+it('keeps completed turns final with no resource-release action', () => {
   render(
     <QueueView
       queue={{ ...queue, config: { ...queue.config, type: 'restaurant' } }}
@@ -185,10 +185,12 @@ it('offers an explicit release after arrival', () => {
       onAction={vi.fn()}
     />,
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T2' }))
-  expect(screen.getByRole('button', { name: 'Liberar recurso' })).toBeVisible()
+  expect(screen.getByText('Completado')).toBeVisible()
+  expect(screen.queryByRole('button', { name: /Acciones del turno/ })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Liberar recurso' })).not.toBeInTheDocument()
 })
-it('disables explicit calls while managed inventory needs a fresh survey', () => {
+it('does not gate assignment on a legacy inventory-readiness flag', () => {
+  const action = vi.fn()
   render(
     <QueueView
       queue={{
@@ -207,11 +209,14 @@ it('disables explicit calls while managed inventory needs a fresh survey', () =>
       lastSync=""
       error=""
       onRefresh={vi.fn()}
-      onAction={vi.fn()}
+      onAction={action}
     />,
   )
   fireEvent.click(screen.getByRole('button', { name: /Acciones/ }))
-  expect(screen.getByRole('button', { name: 'Asignar turno' })).toBeDisabled()
+  const assign = screen.getByRole('button', { name: 'Asignar turno' })
+  expect(assign).toBeEnabled()
+  fireEvent.click(assign)
+  expect(action).toHaveBeenCalledWith(entries[0], 'call')
 })
 
 it('numbers the whole active list including called turns, preserves ordinals when filtered and resets for another service', () => {

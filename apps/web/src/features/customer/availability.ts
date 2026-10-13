@@ -1,4 +1,4 @@
-import type { AdmissionStatus } from '@noqueue/contracts/queue'
+import { visibleWaitingCount, type AdmissionStatus } from '@noqueue/contracts/queue'
 import type { Locale } from './shared'
 
 type PresentationStatus = { averageWaitQuality?: 'estimated' | 'provisional' | 'unknown' | undefined } & {
@@ -10,7 +10,7 @@ export function visualWaitingPeople(service: PresentationStatus) {
   return real > 0
     ? real
     : service.serviceOpen && service.queueState === 'active'
-    ? 1
+    ? visibleWaitingCount(real)
     : 0
 }
 export function availabilityText(

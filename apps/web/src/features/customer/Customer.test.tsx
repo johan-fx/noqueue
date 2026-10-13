@@ -790,3 +790,15 @@ it('explains elapsed provisional waiting without claiming a staff call', () => {
   expect(screen.getByText('Estimación alcanzada; pendiente de llamada')).toBeVisible()
   expect(screen.getByRole('heading')).not.toHaveTextContent('¡Es tu turno!')
 })
+
+it.each(['es', 'en'] as const)('floors only the displayed waiting count in %s, without changing ETA', (locale) => {
+  for (const [position, visible] of [[1, 1], [2, 1], [3, 2], [6, 5]]) {
+    const turn = { ...entry('waiting'), position: position!, predictedAt: 241000, etaMinutes: 4, estimateQuality: 'provisional' as const }
+    const { unmount } = render(<MemoryRouter><TurnView entry={turn} locale={locale} now={1000} updatedAt={1000} onAction={vi.fn()} /></MemoryRouter>)
+    const unit = locale === 'es' ? visible === 1 ? 'turno' : 'turnos' : visible === 1 ? 'turn' : 'turns'
+    expect(screen.getByText(`${visible} ${unit}`)).toBeVisible()
+    expect(screen.getByText('4:00')).toBeVisible()
+    expect(turn.position).toBe(position)
+    unmount()
+  }
+})

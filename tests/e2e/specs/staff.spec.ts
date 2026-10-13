@@ -550,7 +550,9 @@ test.describe('service setup retry and persistence', () => {
     })
     await config.getByRole('button', { name: 'Siguiente' }).click()
     await config.getByRole('button', { name: 'Siguiente' }).click()
-    await config.getByLabel('Tiempo medio del cliente en mesa').fill('45')
+    await config
+      .getByLabel('Intervalo inicial estimado entre turnos')
+      .fill('45')
     for (let step = 0; step < 2; step++)
       await config.getByRole('button', { name: 'Siguiente' }).click()
 
@@ -573,7 +575,9 @@ test.describe('service setup retry and persistence', () => {
     await page.getByRole('button', { name: 'Confirmar' }).click()
     await expect(config.getByRole('alert')).toBeVisible()
     expect(patchHits).toBe(1)
-    await expect(config.getByText('Tiempo medio: 45 min')).toBeVisible()
+    await expect(
+      config.getByText('Intervalo inicial estimado entre turnos: 45 min'),
+    ).toBeVisible()
     await page.getByRole('button', { name: 'Confirmar' }).click()
     await expect(config).toHaveCount(0)
     await expect.poll(() => patchHits).toBe(2)
@@ -585,12 +589,12 @@ test.describe('service setup retry and persistence', () => {
     await reopened.getByRole('button', { name: 'Siguiente' }).click()
     await reopened.getByRole('button', { name: 'Siguiente' }).click()
     await expect(
-      reopened.getByLabel('Tiempo medio del cliente en mesa'),
+      reopened.getByLabel('Intervalo inicial estimado entre turnos'),
     ).toHaveValue('45')
   })
 })
 
-test('owner can release, assign, confirm arrival and complete a queue entry', async ({
+test('owner can assign from the queue without releasing inventory and arrival finalizes the turn', async ({
   page,
   request,
   browser,
@@ -603,26 +607,8 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
   expect(initialContextResponse.ok()).toBeTruthy()
   const initialContext = (await initialContextResponse.json()) as {
     contextToken: string
-    groups: { spaceId: string; seats: number }[]
   }
-  const group = initialContext.groups[0]!
-  const occupy = await page.request.post(
-    '/api/v1/staff/queues/' + queue + '/lifecycle',
-    {
-      headers: { Origin: baseURL!, 'Idempotency-Key': crypto.randomUUID() },
-      data: {
-        action: 'occupancy',
-        contextToken: initialContext.contextToken,
-        group: {
-          spaceId: group.spaceId,
-          seats: group.seats,
-          occupied: 1,
-        },
-        reason: 'Test an occupied resource before release',
-      },
-    },
-  )
-  expect(occupy.ok(), await occupy.text()).toBeTruthy()
+  expect(initialContext.contextToken).toBeTruthy()
 
   const queueDrawer = page.getByRole('dialog', {
     name: 'Gestionar lista',
@@ -696,83 +682,12 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
         (entry) =>
           entry.displayName === 'Cliente Staff E2E' &&
           entry.status === 'waiting' &&
-          entry.assignment?.available === false,
+          entry.assignment?.available === true,
       )
     })
     await expect(
       queueDrawer.getByText('Cliente Staff E2E', { exact: true }),
     ).toBeVisible()
-
-    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-    await queueDrawer
-      .getByRole('button', { name: 'Asignar turno', exact: true })
-      .click()
-    const unavailable = page.getByRole('dialog', {
-      name: 'Asignar turno',
-      exact: true,
-    })
-    await expect(
-      unavailable.getByText('No hay una mesa compatible libre. Si una mesa ya está libre, registra su disponibilidad en «Mesa libre» → «Liberar una mesa».', {
-        exact: true,
-      }),
-    ).toBeVisible()
-    await expect(
-      unavailable.getByRole('button', { name: 'Confirmar', exact: true }),
-    ).toBeDisabled()
-    await page.keyboard.press('Escape')
-    await expect(unavailable).toHaveCount(0)
-
-    const listOptions = queueDrawer.getByRole('button', {
-      name: 'Opciones de la lista',
-      exact: true,
-    })
-    await listOptions.click()
-    await expect(listOptions).toHaveAttribute('aria-expanded', 'true')
-    const listMenu = page.getByRole('menu')
-    await expect(listMenu).toBeVisible()
-    await listMenu
-      .getByRole('menuitem', { name: 'Mesa libre', exact: true })
-      .click()
-    const releaseSheet = page.getByRole('dialog', { name: /Mesa libre/ })
-    await expect(releaseSheet).toBeVisible()
-    const releaseMutation = page.waitForResponse(
-      (response) =>
-        response.request().method() === 'POST' &&
-        response.url().includes(`/api/v1/staff/queues/${queue}/lifecycle`),
-    )
-    const releasedEntries = page.waitForResponse(async (response) => {
-      if (
-        response.request().method() !== 'GET' ||
-        !response.url().includes(`/api/v1/staff/queues/${queue}/entries`) ||
-        !response.ok()
-      )
-        return false
-      const rows = (await response.json()) as {
-        status?: string
-        assignment?: { available?: boolean }
-      }[]
-      return rows.some(
-        (entry) =>
-          entry.status === 'waiting' && entry.assignment?.available === true,
-      )
-    })
-    await releaseSheet
-      .getByRole('button', { name: 'Liberar una mesa', exact: true })
-      .click()
-    const releaseResponse = await releaseMutation
-    expect(releaseResponse.ok(), await releaseResponse.text()).toBeTruthy()
-    await expect(releaseSheet).toHaveCount(0)
-    const entriesResponse = await releasedEntries
-    const refreshedEntries = (await entriesResponse.json()) as {
-      status?: string
-      assignment?: { available?: boolean }
-    }[]
-    expect(
-      refreshedEntries.some(
-        (entry) =>
-          entry.status === 'waiting' && entry.assignment?.available === true,
-      ),
-    ).toBe(true)
 
     await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
     await queueDrawer
@@ -791,10 +706,21 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
     await expect(
       queueDrawer.getByText('Pendiente de llegada', { exact: true }),
     ).toBeVisible()
+    const assignedSnapshot = (await (
+      await guest.request.get(`/api/v1/public/entries/${recoveryToken}`)
+    ).json()) as { customer?: { arrivalDeadlineAt?: number | null } }
+    const originalArrivalDeadline = assignedSnapshot.customer?.arrivalDeadlineAt
+    expect(originalArrivalDeadline).toEqual(expect.any(Number))
 
     await guest.reload()
     await expect(guest.getByRole('heading', { name: '¡Es tu turno!' })).toBeVisible()
     await expect(guest.getByText('Acércate al restaurante.')).toBeVisible()
+    const reloadedSnapshot = (await (
+      await guest.request.get(`/api/v1/public/entries/${recoveryToken}`)
+    ).json()) as { customer?: { arrivalDeadlineAt?: number | null } }
+    expect(reloadedSnapshot.customer?.arrivalDeadlineAt).toBe(
+      originalArrivalDeadline,
+    )
     await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
     await queueDrawer
       .getByRole('button', { name: 'Confirmar llegada', exact: true })
@@ -805,15 +731,7 @@ test('owner can release, assign, confirm arrival and complete a queue entry', as
     await expect(
       queueDrawer.getByRole('tab', { name: 'Completados', exact: true }),
     ).toHaveAttribute('aria-selected', 'true')
-    await expect(queueDrawer.getByText('En servicio', { exact: true })).toBeVisible()
-    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-    await queueDrawer
-      .getByRole('button', { name: 'Liberar recurso', exact: true })
-      .click()
-    await page.getByRole('button', { name: 'Confirmar', exact: true }).click()
-    await expect(
-      queueDrawer.getByText('Completado', { exact: true }),
-    ).toBeVisible()
+    await expect(queueDrawer.getByText('Completado', { exact: true })).toBeVisible()
     await guest.reload()
     await expect(
       guest.getByRole('heading', { name: 'Se ha confirmado tu llegada' }),
@@ -912,10 +830,10 @@ test('advanced service drafts are discarded and space tabs remain keyboard acces
     }),
   ).toHaveValue('10')
   await expect(
-    advanced.getByLabel('Cambio mínimo de estimación (min)'),
+    advanced.getByLabel('Mejora mínima para avisar (min)'),
   ).toHaveValue('5')
   await expect(
-    advanced.getByLabel('Intervalo mínimo entre cambios (min)'),
+    advanced.getByLabel('Intervalo mínimo entre avisos de mejora (min)'),
   ).toHaveValue('10')
 
   await page.setViewportSize({ width: 390, height: 844 })
@@ -1041,7 +959,7 @@ test('per-space durations remain drafts until confirmation and persist after rel
   await page.keyboard.press('Escape')
 })
 
-test('availability adjustment reason persists after service configuration confirmation', async ({
+test('estimate reference and arrival deadline persist without inventory adjustment settings', async ({
   page,
   request,
   baseURL,
@@ -1049,31 +967,17 @@ test('availability adjustment reason persists after service configuration confir
   const venue = await provisionVenue(request, baseURL!, fourSpaceService())
   await signInOwner(page, venue.owner, venue.password, venue.venueName)
   const { drawer, advanced } = await openServiceAdvanced(page)
+  const grace = advanced.getByLabel('Plazo de llegada (minutos)')
+  await expect(grace).toHaveValue('5')
+  await grace.fill('8')
+  await expect(
+    advanced.getByRole('button', { name: 'Opciones de operación', exact: true }),
+  ).toHaveCount(0)
   await advanced
     .getByRole('button', { name: 'Mesas de 4', exact: true })
     .click()
-  await advanced
-    .getByRole('button', { name: 'Opciones de operación', exact: true })
-    .click()
-  const adjustment = advanced.getByRole('group', {
-    name: 'Ajuste Terrace · 4 plazas',
-    exact: true,
-  })
-  await adjustment
-    .getByRole('button', { name: 'Añadir ajuste', exact: true })
-    .click()
-  await adjustment.getByRole('combobox', { name: 'Tipo de ajuste' }).click()
-  await page
-    .getByRole('option', { name: 'Bloquear disponibilidad hasta caducidad' })
-    .click()
-  await adjustment.getByLabel('Motivo', { exact: true }).fill('Terrace cleaning')
-  await expect(adjustment.getByLabel('Duración temporal (min)')).toHaveCount(0)
-  await expect(advanced.getByLabel('Motor de estimación')).toHaveCount(0)
-  await expect(
-    advanced.getByLabel(
-      'Confirmo que todos los recursos están vacíos al inicializar',
-    ),
-  ).toHaveCount(0)
+  const interval = advanced.getByLabel('Terrace · 4 plazas (min)')
+  await interval.fill('42')
   await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await drawer.getByRole('button', { name: 'Terrace', exact: true }).click()
@@ -1083,22 +987,21 @@ test('availability adjustment reason persists after service configuration confir
 
   await page.reload()
   const reopened = await openServiceAdvanced(page)
+  await expect(
+    reopened.advanced.getByLabel('Plazo de llegada (minutos)'),
+  ).toHaveValue('8')
+  await expect(
+    reopened.advanced.getByRole('button', {
+      name: 'Opciones de operación',
+      exact: true,
+    }),
+  ).toHaveCount(0)
   await reopened.advanced
     .getByRole('button', { name: 'Mesas de 4', exact: true })
     .click()
-  await reopened.advanced
-    .getByRole('button', { name: 'Opciones de operación', exact: true })
-    .click()
-  const persistedAdjustment = reopened.advanced.getByRole('group', {
-    name: 'Ajuste Terrace · 4 plazas',
-    exact: true,
-  })
   await expect(
-    persistedAdjustment.getByRole('combobox', { name: 'Tipo de ajuste' }),
-  ).toContainText('Bloquear disponibilidad hasta caducidad')
-  await expect(
-    persistedAdjustment.getByLabel('Motivo', { exact: true }),
-  ).toHaveValue('Terrace cleaning')
+    reopened.advanced.getByLabel('Terrace · 4 plazas (min)'),
+  ).toHaveValue('42')
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
 })

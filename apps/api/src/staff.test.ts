@@ -820,7 +820,7 @@ describe('platform establishment navigation', () => {
   })
 })
 
-it('reserves capacity at call, retains it at arrival and frees it only at release', async () => {
+it('assigns waiting turns independently of historical inventory and completes on arrival', async () => {
   const t = await tenant()
   const config = {
     ...input().services[0]!,
@@ -863,16 +863,27 @@ it('reserves capacity at call, retains it at arrival and frees it only at releas
     command(ids[0]!, 0, 'call'),
     command(ids[1]!, 0, 'call'),
   ])
-  expect(results.map((r) => r.status)).toEqual([200, 409])
+  expect(results.map((r) => r.status)).toEqual([200, 200])
+  // Human assignments are the queue's progress signal, not table reservations.
+  expect(
+    (await env.DB.prepare('SELECT COUNT(*) n FROM queue_allocation WHERE queue_id=?')
+      .bind(t.queueId).first<{ n: number }>())?.n,
+  ).toBe(0)
   expect((await command(ids[0]!, 1, 'complete')).status).toBe(200)
-  expect((await command(ids[1]!, 0, 'call')).status).toBe(409)
-  const key = crypto.randomUUID()
-  expect((await command(ids[0]!, 2, 'release', key)).status).toBe(200)
-  expect((await command(ids[0]!, 2, 'release', key)).status).toBe(200)
-  expect((await command(ids[1]!, 0, 'call')).status).toBe(200)
+  const completed = await env.DB.prepare('SELECT status,arrival_deadline_at FROM queue_entry WHERE id=?')
+    .bind(ids[0]!).first<{status:string;arrival_deadline_at:number|null}>()
+  expect(completed?.status).toBe('completed')
+  expect(completed?.arrival_deadline_at).not.toBeNull()
+  // Arrival is terminal; physical release operations are no longer part of the queue API.
+  expect((await command(ids[0]!, 2, 'release')).status).toBe(410)
+  expect((await command(ids[1]!, 1, 'complete')).status).toBe(200)
+  expect(
+    (await env.DB.prepare('SELECT COUNT(*) n FROM queue_allocation WHERE queue_id=?')
+      .bind(t.queueId).first<{ n: number }>())?.n,
+  ).toBe(0)
 })
 
-it('audits explicit priority, preserves cancellation and legacy no-show, and rejects skip', async () => {
+it('allows a non-priority waiting turn without an override reason and preserves no-show/cancel rules', async () => {
   const t = await tenant()
   const config = {
     ...input().services[0]!,
@@ -916,19 +927,11 @@ it('audits explicit priority, preserves cancellation and legacy no-show, and rej
       },
       crypto.randomUUID(),
     )
-  expect((await command(2, 0, 'call')).status).toBe(409)
+  expect((await command(2, 0, 'call')).status).toBe(200)
   expect(
-    (await command(2, 0, 'call', 'Accessibility accommodation')).status,
-  ).toBe(200)
-  expect(
-    (
-      await env.DB.prepare(
-        'SELECT reason FROM queue_override_audit WHERE entry_id=?',
-      )
-        .bind(ids[2]!)
-        .first<{ reason: string }>()
-    )?.reason,
-  ).toBe('Accessibility accommodation')
+    await env.DB.prepare('SELECT 1 FROM queue_override_audit WHERE entry_id=?')
+      .bind(ids[2]!).first(),
+  ).toBeNull()
   // Manual no-show applies to legacy calls without a persisted arrival deadline.
   await env.DB.prepare(
     'UPDATE queue_entry SET arrival_deadline_at=NULL WHERE id=?',
@@ -1047,7 +1050,7 @@ async function declareRestaurant(
   expect(result.status, await result.clone().text()).toBe(200)
 }
 
-it('supplies provisional customer waits while staff retains honest unknown operational availability', async () => {
+it('supplies the same provisional queue forecast to customers and staff when only configured context is available', async () => {
   const t = await tenant()
   await declareRestaurant(t)
   const coordinator = env.QUEUE_COORDINATOR.getByName(t.queueId)
@@ -1078,17 +1081,13 @@ it('supplies provisional customer waits while staff retains honest unknown opera
   )
   expect(((await staff.json()) as unknown[])[0]).toMatchObject({
     position: 1,
-    etaMinutes: 0,
-    predictedAt: null,
-    estimateQuality: 'unknown',
-    waitEstimate: {
-      predictedAt: customer!.predictedAt,
-      estimateQuality: customer!.estimateQuality,
-    },
+    etaMinutes: customer!.etaMinutes,
+    predictedAt: customer!.predictedAt,
+    estimateQuality: customer!.estimateQuality,
   })
 })
 
-it('does not activate enforcement over untracked shadow occupancy', async () => {
+it('keeps intelligent operation active despite legacy untracked turns', async () => {
   const t = await tenant()
   const config = {
     ...input().services[0]!,
@@ -1130,7 +1129,7 @@ it('does not activate enforcement over untracked shadow occupancy', async () => 
         open: true,
       })
     ).status,
-  ).toBe(409)
+  ).toBe(200)
 })
 
 async function configureAndOpen(
@@ -1154,39 +1153,18 @@ async function configureAndOpen(
   const context = (await (
     await request(`/staff/queues/${queueId}/opening-context`, t.owner.cookie)
   ).json()) as import('@noqueue/contracts/staff').QueueOpeningContext
-  const opened = await request(
-    `/staff/queues/${queueId}/lifecycle`,
-    t.owner.cookie,
-    'POST',
-    {
-      action: 'open',
-      contextToken: context.contextToken,
-      groups: context.groups.map((g) => ({
-        spaceId: g.spaceId,
-        seats: g.seats,
-        occupied: g.count - g.allocated,
-      })),
-    },
-    crypto.randomUUID(),
-  )
-  expect(opened.status, await opened.clone().text()).toBe(200)
-  for (const group of context.groups) {
-    const current = (await (
-      await request(`/staff/queues/${queueId}/opening-context`, t.owner.cookie)
-    ).json()) as import('@noqueue/contracts/staff').QueueOpeningContext
-    const freed = await request(
+  if (!context.open) {
+    const opened = await request(
       `/staff/queues/${queueId}/lifecycle`,
       t.owner.cookie,
       'POST',
       {
-        action: 'occupancy',
-        contextToken: current.contextToken,
-        group: { spaceId: group.spaceId, seats: group.seats, occupied: 0 },
-        reason: 'Fixture physical capacity update',
+        action: 'open',
+        contextToken: context.contextToken,
       },
       crypto.randomUUID(),
     )
-    expect(freed.status, await freed.clone().text()).toBe(200)
+    expect(opened.status, await opened.clone().text()).toBe(200)
   }
 }
 
@@ -1284,8 +1262,7 @@ it('evaluates actual call against the immutable first forecast, not call-time re
   expect(evidence?.predicted_at).toBe(forecastAt + 20 * 60000)
   expect(evidence?.error_minutes).toBeLessThan(0)
 })
-it('blocks a free group until adjustment expiry without blocking another space', async () => {
-  const until = Date.now() + 10 * 60000
+it('ignores physical availability as a queue gate and retires legacy availability updates', async () => {
   const t = await resourceFixture(
     [
       {
@@ -1301,44 +1278,23 @@ it('blocks a free group until adjustment expiry without blocking another space',
         tableTypes: [{ seats: 4, count: 1, averageMinutes: 30 }],
       },
     ],
-    {
-      assignmentPreference: 'terrace',
-      adjustments: [
-        {
-          kind: 'availability',
-          spaceId: 'terrace',
-          seats: 4,
-          reason: 'Cleaning the terrace',
-          expiresAt: until,
-        },
-      ],
-    },
+    { assignmentPreference: 'terrace' },
   )
   const id = await t.add(1, 2)
-  const { recalculateQueue } = await import('./features/queue/projection')
-  const before = await recalculateQueue(env, t.queueId)
-  expect(before.projections[0]?.etaMinutes).toBe(10)
-  expect(
-    before.resources.find((r) => r.spaceId === 'salon')?.availableAt,
-  ).toBeLessThan(until)
-  expect((await t.command(id, 'call')).status).toBe(409)
-  const after = await recalculateQueue(env, t.queueId, until + 1)
-  expect(after.projections[0]).toMatchObject({
-    etaMinutes: 0,
-    callable: true,
+  const current = await env.DB.prepare('SELECT version,open,config FROM queue WHERE id=?')
+    .bind(t.queueId).first<{version:number;open:number;config:string}>()
+  const deprecated = await request(`/staff/queues/${t.queueId}`, t.owner.cookie, 'PATCH', {
+    ...JSON.parse(current!.config),
+    adjustments: [{kind:'availability',spaceId:'terrace',seats:4,reason:'Legacy block',expiresAt:Date.now()+60000}],
+    version:current!.version, open:!!current!.open,
   })
-  expect(
-    (
-      await env.DB.prepare(
-        'SELECT actor_id,adjustments FROM queue_adjustment_audit WHERE queue_id=?',
-      )
-        .bind(t.queueId)
-        .first<{ actor_id: string; adjustments: string }>()
-    )?.actor_id,
-  ).toBe(t.owner.id)
+  expect(deprecated.status).toBe(410)
+  expect((await t.command(id, 'call')).status).toBe(200)
+  const second = await t.add(2, 4)
+  expect((await t.command(second, 'call')).status).toBe(200)
+  expect((await env.DB.prepare('SELECT * FROM queue_allocation WHERE queue_id=?').bind(t.queueId).all()).results).toHaveLength(0)
 })
-it('expires an availability block on read and then permits a real call without another queue event', async () => {
-  const until = Date.now() + 2000
+it('completes an arrival terminally and assigns another waiter without release or inventory changes', async () => {
   const t = await resourceFixture(
     [
       {
@@ -1348,36 +1304,24 @@ it('expires an availability block on read and then permits a real call without a
         tableTypes: [{ seats: 4, count: 1, averageMinutes: 20 }],
       },
     ],
-    {
-      adjustments: [
-        {
-          kind: 'availability',
-          spaceId: 'room',
-          seats: 4,
-          reason: 'Short cleaning',
-          expiresAt: until,
-        },
-      ],
-    },
   )
   const id = await t.add(1, 2)
-  expect((await t.command(id, 'call')).status).toBe(409)
-  await new Promise((resolve) =>
-    setTimeout(resolve, Math.max(0, until - Date.now() + 30)),
-  )
+  expect((await t.command(id, 'call')).status).toBe(200)
   const read = await request(
     `/staff/queues/${t.queueId}/entries`,
     t.owner.cookie,
   )
-  expect(((await read.json()) as { callable: boolean }[])[0]?.callable).toBe(
-    true,
-  )
-  expect((await t.command(id, 'call')).status).toBe(200)
+  expect(read.status).toBe(200)
   expect((await t.command(id, 'complete', 1)).status).toBe(200)
   const second = await t.add(2, 2)
-  expect((await t.command(second, 'call')).status).toBe(409)
-  expect((await t.command(id, 'release', 2)).status).toBe(200)
   expect((await t.command(second, 'call')).status).toBe(200)
+  expect((await t.command(id, 'release', 2)).status).toBe(410)
+  expect(
+    (await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
+      .bind(second)
+      .first<{ status: string }>())?.status,
+  ).toBe('called')
+  expect((await env.DB.prepare('SELECT * FROM queue_allocation WHERE queue_id=?').bind(t.queueId).all()).results).toHaveLength(0)
 })
 
 it('reports physical schedule independently of cutoff and legacy switch', async () => {
@@ -1446,7 +1390,7 @@ it('does not allow configuration-only creation to establish a manual operational
     }),
   ).rejects.toThrow('operational_initialization_required')
 })
-it('keeps summaries read-only and repairs a formerly gated queue on selected entries read', async () => {
+it('keeps summaries read-only and does not restore an inventory gate on selected entries read', async () => {
   const t = await tenant()
   await configureAndOpen(t, t.queueId, {
     ...input().services[0]!,
@@ -1485,7 +1429,7 @@ it('keeps summaries read-only and repairs a formerly gated queue on selected ent
     config: { estimationMode: string }
     readiness: { state: string }
   }[]
-  expect(rows[0]?.readiness.state).toBe('pending')
+  expect(rows[0]?.readiness.state).toBe('active')
   expect(rows[0]?.config.estimationMode).toBe('shadow')
   expect(
     (await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie))
@@ -1624,7 +1568,7 @@ it('exposes safe service metadata and handles scoped manual/public detailed join
   ).toBe(3)
 })
 
-it('maps colon-containing resource identities exactly, keeps historical assignments and reads null-config entries', async () => {
+it('retires physical resource operations while preserving historical assignments and reading null-config entries', async () => {
   const t = await tenant()
   const raw = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
     .bind(t.queueId)
@@ -1666,7 +1610,7 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
         crypto.randomUUID(),
       )
     ).status,
-  ).toBe(200)
+  ).toBe(410)
   const r = await request(
     `/public/services/${t.queueId}/entries`,
     '',
@@ -1681,11 +1625,7 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
     id: string
     space: { name: string; source: string } | null
   }[]
-  expect(rows[0]!.space).toEqual({
-    id: 'a:extra',
-    name: 'Exact match',
-    source: 'predicted',
-  })
+  expect(rows[0]!.space).toBeNull()
   await env.DB.batch([
     env.DB.prepare("UPDATE queue_entry SET status='served' WHERE id=?").bind(
       rows[0]!.id,
@@ -1697,11 +1637,12 @@ it('maps colon-containing resource identities exactly, keeps historical assignme
   rows = (await (
     await request(`/staff/queues/${t.queueId}/entries`, t.owner.cookie)
   ).json()) as typeof rows
-  expect(rows[0]!.space).toEqual({
-    id: 'a:extra',
-    name: 'Exact match',
-    source: 'assigned',
-  })
+  expect(rows[0]!.space).toBeNull()
+  expect(
+    await env.DB.prepare('SELECT space_id FROM queue_allocation WHERE entry_id=?')
+      .bind(rows[0]!.id)
+      .first(),
+  ).toEqual({ space_id: 'a:extra' })
   await env.DB.prepare('UPDATE queue SET config=NULL WHERE id=?')
     .bind(t.queueId)
     .run()

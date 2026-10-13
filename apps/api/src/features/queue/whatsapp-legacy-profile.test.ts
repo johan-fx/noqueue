@@ -229,7 +229,8 @@ it('keeps historical v1 joined and v2 ready rendering despite selecting v3 for l
   )
   expect(bodies).toHaveLength(2)
   expect(bodies[0]).toContain('Example venue: tu turno es')
-  expect(bodies[1]).toContain('tu turno está asignado en Recepción')
+  expect(bodies[1]).toContain('tu turno está asignado.')
+  expect(bodies[1]).not.toContain('en Recepción')
   expect(bodies[1]).not.toContain('¡Ya es tu turno!')
 })
 

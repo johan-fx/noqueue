@@ -1,3 +1,4 @@
+import { visibleWaitingCount } from '@noqueue/contracts/queue'
 import type { OutboundWhatsAppMessage } from './360dialog'
 
 type Locale = 'es' | 'en'
@@ -97,14 +98,11 @@ function values(message: OutboundWhatsAppMessage): Record<Parameter, string> {
     : `We estimate a wait of around ${minutes} ${
         minutes === 1 ? 'minute' : 'minutes'
       }.`
-  const ahead = message.ahead
+  const real = message.ahead
+  const ahead = real == null || !Number.isInteger(real) || real < 0 ? null : visibleWaitingCount(real)
   const position =
     ahead == null || !Number.isInteger(ahead) || ahead < 0
       ? ''
-      : ahead === 0
-      ? es
-        ? 'Estás al principio de la cola.'
-        : 'You’re at the front of the waiting list.'
       : es
       ? ahead === 1
         ? 'Hay 1 turno por delante.'

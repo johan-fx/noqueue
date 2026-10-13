@@ -32,6 +32,8 @@ const messages: Record<string, string> = {
   preferred_space_in_use:
     'Hay turnos activos que han elegido ese espacio. Resuélvelos antes de cambiarlo.',
   queue_unavailable: 'La lista está cerrada, completa o fuera de horario.',
+  operation_retired:
+    'Esta operación ya no se utiliza. Gestiona directamente los turnos de la lista.',
   inventory_refresh_required:
     'La distribución ha cambiado. Confirma de nuevo la ocupación antes de llamar más turnos. Las llegadas y liberaciones siguen disponibles.',
   inventory_already_confirmed:

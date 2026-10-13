@@ -1,4 +1,3 @@
-import { readinessMessages } from './queue-readiness'
 import { useState, useEffect } from 'react'
 import { Plus, Users, LogIn, LogOut, BadgeHelp } from 'lucide-react'
 import { QueueEntryCard } from './QueueEntryCard'
@@ -114,11 +113,6 @@ export function QueueView({
   }
   return (
     <div className="space-y-6">
-      {queue.readiness?.reasons.includes('inventory_refresh_required') && (
-        <p role="status" className="text-sm text-muted-foreground">
-          {readinessMessages.inventory_refresh_required}
-        </p>
-      )}
       <Tabs
         value={tab}
         onValueChange={(value) => {

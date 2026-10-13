@@ -16,13 +16,7 @@ import {
   maintainQueue,
   type QueueModelInput,
 } from '../queue/projection'
-import {
-  configurationComplete,
-  inventoryConfirmed,
-  readiness,
-  resourceGroups,
-  topology,
-} from '../queue/opening-state'
+import { inventoryConfirmed, readiness } from '../queue/opening-state'
 
 /** Run through the queue coordinator, including reads used to establish a mutation snapshot. */
 export async function openingContext(
@@ -45,20 +39,6 @@ export async function openingContext(
       .all<{ id: string; status: string; version: number }>()
   ).results
   const status = await readiness(env, queueId, state.config)
-  const groups = (
-    state.config.type === 'restaurant' ? resourceGroups(state.config) : []
-  ).map((group) => ({
-    ...group,
-    allocated: state.allocations.filter(
-      (a) =>
-        a.released_at === null &&
-        a.space_id === group.spaceId &&
-        a.seats === group.seats,
-    ).length,
-    occupied: state.holds.filter(
-      (a) => a.space_id === group.spaceId && a.seats === group.seats,
-    ).length,
-  }))
   const admission = await admissionState(env, queueId)
   return {
     ...admission,
@@ -74,28 +54,13 @@ export async function openingContext(
         reminderId: admission?.reminderId,
         config: state.config,
         entries,
-        allocations: state.allocations
-          .filter((a) => a.released_at === null)
-          .sort((a, b) => a.resource_id.localeCompare(b.resource_id)),
-        holds: [...state.holds].sort((a, b) =>
-          a.resource_id.localeCompare(b.resource_id),
-        ),
         status,
       }),
     ),
     pendingCount: entries.filter((e) => e.status !== 'completed').length,
-    untrackedCount:
-      state.config.type !== 'restaurant'
-        ? 0
-        : entries.filter(
-            (e) =>
-              e.status !== 'waiting' &&
-              !state.allocations.some(
-                (a) => a.entry_id === e.id && a.released_at === null,
-              ),
-          ).length,
+    untrackedCount: 0,
     readiness: status,
-    groups,
+    groups: [],
   }
 }
 export async function runLifecycleCommand(
@@ -106,21 +71,11 @@ export async function runLifecycleCommand(
   input: QueueLifecycleCommand,
 ) {
   const access = await queueAccess(env, actor, queueId, 'queue.operate')
+  if (['release_unit', 'confirm_inventory', 'occupancy'].includes(input.action))
+    throw new HTTPException(410, { message: 'operation_retired' })
   const parsed = queueLifecycleSchema.safeParse(input)
-  if (!parsed.success) {
-    // The legacy schema catches duplicate answers before semantic validation.
-    // Restaurant activation must still return the explicit declaration error.
-    if (input.action === 'open') {
-      const state = await loadQueueState(env, queueId)
-      if (state.config?.type === 'restaurant')
-        throw new HTTPException(409, {
-          message: configurationComplete(state.config)
-            ? 'full_declaration_required'
-            : 'configuration_missing',
-        })
-    }
-    throw new HTTPException(400, { message: 'invalid_inventory' })
-  }
+  if (!parsed.success)
+    throw new HTTPException(400, { message: 'invalid_command' })
   input = parsed.data
   const fingerprint = await hash(JSON.stringify({ queueId, lifecycle: input }))
   const previous = await env.DB.prepare(
@@ -139,16 +94,10 @@ export async function runLifecycleCommand(
   if (input.contextToken !== context.contextToken)
     throw new HTTPException(409, { message: 'version_conflict' })
   if (
-    (input.action === 'open' && context.open && context.inventoryConfirmed) ||
+    (input.action === 'open' && context.open) ||
     (input.action === 'close' && !context.open)
   )
     throw new HTTPException(409, { message: 'invalid_transition' })
-  if (input.action === 'confirm_inventory') {
-    if (context.inventoryConfirmed)
-      throw new HTTPException(409, { message: 'inventory_already_confirmed' })
-    if (context.readiness.reasons.includes('configuration_missing'))
-      throw new HTTPException(409, { message: 'configuration_missing' })
-  }
   const now = Date.now()
   const state = await loadQueueState(env, queueId, now),
     config = state.config!
@@ -158,46 +107,13 @@ export async function runLifecycleCommand(
     parties: state.parties,
     holds: state.holds.map((h) => ({ ...h })),
   }
-  if (
-    config.type !== 'restaurant' &&
-    ['confirm_inventory', 'occupancy', 'release_unit'].includes(input.action)
-  )
-    throw new HTTPException(409, { message: 'unsupported_action' })
-  const legacyRestaurantOpen =
-    input.action === 'open' && config.type === 'restaurant'
-  if (legacyRestaurantOpen) {
-    if (!configurationComplete(config))
-      throw new HTTPException(409, { message: 'configuration_missing' })
-    const groups = input.action === 'open' ? input.groups : []
-    const identities = new Set(
-      groups.map((group) => JSON.stringify([group.spaceId, group.seats])),
-    )
-    if (
-      groups.length !== context.groups.length ||
-      identities.size !== context.groups.length ||
-      !context.groups.every((group) =>
-        groups.some(
-          (answer) =>
-            answer.spaceId === group.spaceId &&
-            answer.seats === group.seats &&
-            answer.occupied === group.count - group.allocated,
-        ),
-      )
-    )
-      throw new HTTPException(409, { message: 'full_declaration_required' })
-  }
-  // A verified legacy request is an alias, not a client-controlled inventory path.
   const statements: D1PreparedStatement[] = []
   const activates = ['declare_full', 'resume', 'open'].includes(input.action)
   if (activates) after.demandActive = true
-  if (input.action === 'pause' || input.action === 'close') after.demandActive = false
+  if (input.action === 'pause' || input.action === 'close')
+    after.demandActive = false
   if (activates && (!context.serviceOpen || context.blockReason === 'cutoff'))
     throw new HTTPException(409, { message: 'outside_admission_hours' })
-  if (
-    input.action === 'declare_full' &&
-    (config.type !== 'restaurant' || !configurationComplete(config))
-  )
-    throw new HTTPException(409, { message: 'configuration_missing' })
   if (
     input.action === 'resume' &&
     (context.queueState !== 'paused' ||
@@ -239,142 +155,7 @@ export async function runLifecycleCommand(
       ),
     )
   }
-  if (input.action === 'release_unit') {
-    const group = context.groups.find(
-      (g) => g.spaceId === input.spaceId && g.seats === input.seats,
-    )
-    if (!group) throw new HTTPException(400, { message: 'invalid_inventory' })
-    const hold = state.holds.find(
-      (h) => h.space_id === group.spaceId && h.seats === group.seats,
-    )
-    if (!hold)
-      throw new HTTPException(409, { message: 'no_external_occupancy' })
-    after.holds = after.holds!.filter((h) => h.resource_id !== hold.resource_id)
-    statements.push(
-      env.DB.prepare(
-        'DELETE FROM queue_external_occupancy WHERE queue_id=? AND resource_id=?',
-      ).bind(queueId, hold.resource_id),
-    )
-  }
   if (
-    config.type === 'restaurant' &&
-    (input.action === 'declare_full' ||
-      input.action === 'open' ||
-      input.action === 'confirm_inventory' ||
-      input.action === 'occupancy')
-  ) {
-    const answers =
-      input.action === 'occupancy'
-        ? [input.group]
-        : input.action === 'declare_full' || legacyRestaurantOpen
-        ? context.groups.map((g) => ({
-            spaceId: g.spaceId,
-            seats: g.seats,
-            occupied: g.count - g.allocated,
-          }))
-        : input.groups
-    if (
-      input.action !== 'occupancy' &&
-      answers.length !== context.groups.length
-    )
-      throw new HTTPException(400, { message: 'incomplete_inventory' })
-    for (const answer of answers) {
-      const group = context.groups.find(
-        (g) => g.spaceId === answer.spaceId && g.seats === answer.seats,
-      )
-      if (!group || answer.occupied > group.count - group.allocated)
-        throw new HTTPException(400, { message: 'invalid_inventory' })
-      const occupiedSlots = new Set(
-        state.allocations
-          .filter((a) => a.released_at === null)
-          .map((a) => a.resource_id),
-      )
-      const availableIds = Array.from(
-        { length: group.count },
-        (_, i) => `${group.spaceId}:${group.seats}:${i}`,
-      ).filter((id) => !occupiedSlots.has(id))
-      // Reconcile only the delta: unchanged external timestamps and ticket allocations survive.
-      const prior = state.holds.filter(
-        (h) => h.space_id === group.spaceId && h.seats === group.seats,
-      )
-      const keep = prior.slice(0, answer.occupied)
-      after.holds = after.holds!.filter(
-        (h) =>
-          !prior
-            .slice(answer.occupied)
-            .some((old) => old.resource_id === h.resource_id),
-      )
-      for (const hold of prior.slice(answer.occupied))
-        statements.push(
-          env.DB.prepare(
-            'DELETE FROM queue_external_occupancy WHERE queue_id=? AND resource_id=?',
-          ).bind(queueId, hold.resource_id),
-        )
-      const additional = availableIds
-        .filter((id) => !prior.some((h) => h.resource_id === id))
-        .slice(0, Math.max(0, answer.occupied - keep.length))
-      after.holds!.push(
-        ...additional.map((resource_id) => ({
-          resource_id,
-          space_id: group.spaceId,
-          seats: group.seats,
-        })),
-      )
-      for (const resourceId of additional)
-        statements.push(
-          env.DB.prepare(
-            'INSERT INTO queue_external_occupancy VALUES (?,?,?,?,?)',
-          ).bind(queueId, resourceId, group.spaceId, group.seats, now),
-        )
-    }
-  }
-  if (
-    config.type === 'restaurant' &&
-    (input.action === 'declare_full' ||
-      input.action === 'open' ||
-      input.action === 'confirm_inventory')
-  ) {
-    const complete = configurationComplete(config)
-    if (complete)
-      statements.push(
-        env.DB.prepare(
-          'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
-        ).bind(
-          crypto.randomUUID(),
-          queueId,
-          actor,
-          'inventory_confirmed',
-          JSON.stringify({ topology: topology(config) }),
-          now,
-        ),
-      )
-    statements.push(
-      env.DB.prepare(
-        'INSERT INTO queue_opening VALUES (?,?,?,?,?) ON CONFLICT(queue_id) DO UPDATE SET topology=excluded.topology,complete=excluded.complete,opened_at=excluded.opened_at,actor_id=excluded.actor_id',
-      ).bind(queueId, topology(config), Number(complete), now, actor),
-    )
-    after.config = {
-      ...config,
-      estimationMode: 'shadow',
-      resourceStateKnown: complete,
-    }
-    const source = JSON.stringify({
-      ...config,
-      estimationMode: 'shadow',
-      resourceStateKnown: complete,
-    })
-    // Activation happens after the atomic inventory write, through the same projection path.
-    statements.push(
-      env.DB.prepare(
-        `UPDATE queue SET ${
-          input.action === 'open' || input.action === 'declare_full'
-            ? 'open=1,'
-            : ''
-        }config=?,version=version+1 WHERE id=?`,
-      ).bind(source, queueId),
-      directoryConfigStatement(env, queueId, source),
-    )
-  } else if (
     input.action === 'disable_intelligence' ||
     input.action === 'enable_intelligence'
   ) {
@@ -382,12 +163,13 @@ export async function runLifecycleCommand(
       input.action === 'disable_intelligence' ? 'disabled' : 'automatic'
     if (nextPolicy !== (config.intelligencePolicy ?? 'automatic'))
       statements.push(touchVenueConfiguration(env, access.venueId, now))
-    const source = JSON.stringify({
+    after.config = {
       ...config,
       intelligencePolicy:
         input.action === 'disable_intelligence' ? 'disabled' : 'automatic',
-      estimationMode: 'shadow',
-    })
+      estimationMode: nextPolicy === 'disabled' ? 'shadow' : 'active',
+    }
+    const source = JSON.stringify(after.config)
     statements.push(
       env.DB.prepare(
         'UPDATE queue SET config=?,version=version+1 WHERE id=?',
@@ -400,38 +182,13 @@ export async function runLifecycleCommand(
         `UPDATE queue SET ${
           input.action === 'close' || input.action === 'pause'
             ? 'open=0,'
-            : input.action === 'resume'
+            : activates
             ? 'open=1,'
             : ''
         }version=version+1 WHERE id=?`,
       ).bind(queueId),
     )
   statements.push(
-    env.DB.prepare(
-      'INSERT INTO queue_inventory_audit VALUES (?,?,?,?,?,?)',
-    ).bind(
-      crypto.randomUUID(),
-      queueId,
-      actor,
-      input.action,
-      JSON.stringify({
-        ...input,
-        ...(input.action === 'release_unit'
-          ? { reason: 'operator_released_external_unit' }
-          : {}),
-        ...(input.action === 'disable_intelligence' ||
-        input.action === 'enable_intelligence'
-          ? {
-              previousPolicy: config.intelligencePolicy ?? 'automatic',
-              policy:
-                input.action === 'disable_intelligence'
-                  ? 'disabled'
-                  : 'automatic',
-            }
-          : {}),
-      }),
-      now,
-    ),
     audit(
       env,
       actor,

@@ -369,6 +369,12 @@ it('real assignment wins over a due safety review and preserves arrival deadline
 })
 it('activation is silent, preserves historical anchors, and rollback retains observations', async () => {
   const f = await fixture(2, 'reception', 1)
+  // Simulate a genuinely pre-v2 durable state: legacy projections without
+  // adaptive rows or cadence metadata. Config v1 alone is not a legacy model
+  // marker because v1 configs already run the operational v2 estimator.
+  await env.DB.prepare('DELETE FROM queue_adaptive_projection WHERE entry_id IN (?,?)').bind(...f.ids).run()
+  await env.DB.prepare('DELETE FROM queue_cadence_state WHERE queue_id=?').bind(f.queueId).run()
+  await env.DB.prepare('UPDATE queue_projection SET estimator_version=1 WHERE entry_id IN (?,?)').bind(...f.ids).run()
   const anchor = await env.DB.prepare(
     'SELECT * FROM queue_forecast_anchor WHERE entry_id=?',
   )
@@ -430,10 +436,11 @@ it('activation is silent, preserves historical anchors, and rollback retains obs
     Date.now(),
   )
   expect(await observations(f.queueId)).toHaveLength(1)
-  expect((await adaptive(f.ids[1]!)).safety_review_at).toBeNull()
+  const safety = await adaptive(f.ids[1]!)
+  expect(safety.safety_review_at).toBe(safety.predicted_at - 60_000)
   expect(
     (await readProjection(env, f.ids[1]!, true))?.estimatorVersion,
-  ).toBeUndefined()
+  ).toBe(2)
 })
 it('join, public mean and frozen notices use adaptive forecasts without the old floor', async () => {
   const f = await fixture(5)
@@ -546,7 +553,7 @@ it('rearms approach only above A+S and does not emit improved alongside approach
   ).toEqual([0, 1])
   expect(rows.filter((r) => r.kind === 'improved')).toHaveLength(0)
 })
-it('retains a first small safety delay through cooldown and emits only the current revision afterwards', async () => {
+it('records every safety extension inside cooldown and retains all distinct pending events', async () => {
   const f = await fixture(1)
   await env.DB.prepare(
     "INSERT INTO consent VALUES (?,?,'demo-org','queue_updates','test-only',?,NULL)",
@@ -570,7 +577,7 @@ it('retains a first small safety delay through cooldown and emits only the curre
         .bind(f.ids[0])
         .first()
     )?.n,
-  ).toBe(0)
+  ).toBe(3)
   f.clock(10 * minute)
   await recalculateQueue(env, f.queueId, Date.now())
   const current = await adaptive(f.ids[0]!)
@@ -581,14 +588,14 @@ it('retains a first small safety delay through cooldown and emits only the curre
       .bind(f.ids[0])
       .all<{ payload_snapshot: string }>()
   ).results
-  expect(notices).toHaveLength(1)
-  expect(JSON.parse(notices[0]!.payload_snapshot)).toMatchObject({
+  expect(notices).toHaveLength(3)
+  expect(JSON.parse(notices[2]!.payload_snapshot)).toMatchObject({
     predictedAt: current.predicted_at,
     estimationRevision: current.revision,
     safetyRevision: current.safety_revision,
   })
 })
-it('records real restaurant assignments with the selected group baseline and learns occupancy separately', async () => {
+it('records only the explicitly inferred assignment context and ignores historical occupancy', async () => {
   const f = await fixture(4, 'restaurant')
   const before = await loadQueueState(env, f.queueId, f.now)
   const config = {
@@ -619,12 +626,12 @@ it('records real restaurant assignments with the selected group baseline and lea
   )
     .bind(f.ids[0])
     .first()
-  expect(obs).toEqual({ baseline_ms: 7 * minute, space_id: 'room', seats: 4 })
+  expect(obs).toEqual({ baseline_ms: 4 * minute, space_id: null, seats: null })
   let state = await loadQueueState(env, f.queueId, Date.now())
-  expect(state.resources[0]?.availableAt).toBeNull()
-  expect(state.resources[0]?.occupancyMinutes).toBeNull()
-  // Served samples are independent of assignment cadence. Never infer duration
-  // from reserved/called time, configured 7 minutes or cancelled allocations.
+  expect(state.resources).toEqual([])
+  expect(state.allocations).toEqual([])
+  // Historic reservations remain stored but cannot become operational state or
+  // cadence samples; a completion/release duration is no longer estimator input.
   for (let i = 0; i < 3; i++) {
     const id = crypto.randomUUID()
     await env.DB.prepare(
@@ -638,14 +645,18 @@ it('records real restaurant assignments with the selected group baseline and lea
       .bind(id, f.queueId, f.now - 40 * minute, f.now - 30 * minute, f.now)
       .run()
   }
-  await env.DB.prepare(
-    'UPDATE queue_allocation SET arrived_at=? WHERE entry_id=?',
-  )
-    .bind(Date.now(), f.ids[0])
-    .run()
   state = await loadQueueState(env, f.queueId, Date.now())
-  expect(state.resources[0]?.occupancyMinutes).toBe(30)
-  expect(state.resources[0]?.availableAt).toBe(Date.now() + 30 * minute)
+  expect(state.resources).toEqual([])
+  expect(state.allocations).toEqual([])
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT COUNT(*) n FROM queue_allocation WHERE queue_id=?',
+      )
+        .bind(f.queueId)
+        .first()
+    )?.n,
+  ).toBe(3)
   expect(await observations(f.queueId)).toHaveLength(1)
 })
 it('new demand after an empty queue starts a fresh episode without an idle-gap sample', async () => {
@@ -725,7 +736,7 @@ it('real pause and resume commands terminate learning episodes and safety alarms
     null,
   ])
 })
-it('keeps staff future availability unknown when a free table has no observed occupancy duration', async () => {
+it('projects a serial queue without resource-derived unknown future slots', async () => {
   const f = await fixture(2, 'restaurant')
   const before = await loadQueueState(env, f.queueId, f.now)
   const config = {
@@ -740,19 +751,20 @@ it('keeps staff future availability unknown when a free table has no observed oc
   }
   const state = await loadQueueState(env, f.queueId, f.now, { config })
   expect(state.projections[0]).toMatchObject({
-    predictedAt: f.now,
+    predictedAt: f.now + 4 * minute,
     callable: true,
   })
   expect(state.projections[1]).toMatchObject({
-    predictedAt: null,
-    quality: 'unknown',
-    callable: false,
+    predictedAt: f.now + 8 * minute,
+    quality: 'provisional',
+    callable: true,
   })
   expect(state.adaptiveProjections.map((p) => p.predictedAt)).toEqual([
     f.now + 4 * minute,
     f.now + 8 * minute,
   ])
-  expect(before.resources.every((r) => r.occupancyMinutes === null)).toBe(true)
+  expect(before.resources).toEqual([])
+  expect(state.allocations).toEqual([])
 })
 it('anchors the next cadence to real assignment instead of double-counting elapsed work', async () => {
   const f = await fixture(3)

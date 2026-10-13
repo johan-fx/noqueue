@@ -208,10 +208,10 @@ describe('service configuration wizard', () => {
     expect(
       screen.queryByRole('tablist', { name: 'Espacios' }),
     ).not.toBeInTheDocument()
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Opciones de operación' }),
-    )
-    expect(screen.getByLabelText('Puestos de atención')).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: 'Opciones de operación' }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Puestos de atención')).not.toBeInTheDocument()
   })
 })
 
@@ -258,7 +258,7 @@ it('keeps arrival grace out of basic settings and discards advanced changes on b
   fireEvent.change(screen.getByLabelText('Terraza · 4 plazas (min)'), {
     target: { value: '90' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'Opciones de operación' }))
+  expect(screen.queryByRole('button', { name: 'Opciones de operación' })).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
   expect(
     screen.queryByLabelText(/todos los recursos están vacíos/),
@@ -269,7 +269,7 @@ it('keeps arrival grace out of basic settings and discards advanced changes on b
   )
   fireEvent.click(screen.getByRole('button', { name: 'Mesas de 4' }))
   expect(screen.getByLabelText('Terraza · 4 plazas (min)')).toHaveValue(40)
-  fireEvent.click(screen.getByRole('button', { name: 'Opciones de operación' }))
+  expect(screen.queryByRole('button', { name: 'Opciones de operación' })).not.toBeInTheDocument()
   expect(screen.queryByLabelText('Motor de estimación')).not.toBeInTheDocument()
 })
 

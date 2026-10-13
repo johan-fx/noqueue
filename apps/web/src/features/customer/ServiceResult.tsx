@@ -62,7 +62,9 @@ export function ServiceResult({
         <span className="block text-xs text-gray-600">{service.address}</span>
         <span className="block text-xs text-gray-600">
           {visualWaitingPeople(service)}{' '}
-          {locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
+          {visualWaitingPeople(service) === 1
+              ? locale === 'es' ? 'persona en lista de espera' : 'person waiting'
+              : locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
         </span>
       </span>
     </Link>

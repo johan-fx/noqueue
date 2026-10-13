@@ -1,4 +1,3 @@
-import { learnedOccupancyMinutes } from './adaptive-model'
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
 import { loadQueueState, refreshQueue } from './projection'
@@ -54,44 +53,39 @@ async function fixture(history: number) {
     .run()
   return { id, waiting }
 }
-it('bounds allocation history rows_read to 30 valid samples per configured group at 10x terminal history', async () => {
+it('bounds contextual assignment reads at 10x terminal inventory history', async () => {
   const measurements = []
   for (const history of [100, 1000]) {
     const { id } = await fixture(history),
       measured = profileD1(env)
+    await env.DB.prepare(
+      `INSERT INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,space_id,seats,baseline_ms,interval_ms,ratio,source,provenance,model_revision)
+      SELECT id,1,queue_id,'read-cost',sequence,'room',4,1800000,3600000,2,'staff','inferred',2
+      FROM queue_entry WHERE queue_id=? AND status='served'`,
+    ).bind(id).run()
     const state = await loadQueueState(measured.env, id, 1_900_000_000_000)
-    const allocation = measured.costs.find((cost) =>
-      cost.sql.includes('FROM queue_allocation'),
-    )!
-    expect(state.allocations).toHaveLength(30)
-    expect(state.resources[0]?.averageMinutes).toBeGreaterThan(1)
-    expect(allocation.rowsRead).toBeLessThan(150)
-    expect(
-      state.allocations.every(
-        (item) => item.released_at! - item.arrived_at! === 120000,
-      ),
-    ).toBe(true)
-    const plan = await env.DB.prepare(`EXPLAIN QUERY PLAN ${allocation.sql}`)
-      .bind(id, JSON.stringify([{ spaceId: 'room', seats: 4 }]), id)
-      .all<{ detail: string }>()
-    expect(
-      plan.results.some((row) =>
-        row.detail.includes('allocation_valid_history'),
-      ),
-    ).toBe(true)
+    expect(state.allocations).toEqual([])
+    expect(state.resources).toEqual([])
+    expect(state.adaptive?.factors.service).toBeGreaterThan(1)
+    const observations = measured.costs.filter((cost) =>
+      cost.sql.includes('queue_assignment_observation'),
+    )
+    expect(observations.length).toBeGreaterThan(0)
+    const observationRowsRead = observations.reduce(
+      (sum, cost) => sum + cost.rowsRead,
+      0,
+    )
+    // The model performs bounded indexed windows for service, zone and each
+    // configured type; allow the fixed per-query overhead while still proving
+    // the 1k-row fixture does not scale with the 10x historical dataset.
+    expect(observationRowsRead).toBeLessThan(400)
+    expect(measured.costs.some((cost) => cost.sql.includes('FROM queue_allocation'))).toBe(false)
     expect(
       measured.costs.some((cost) => cost.sql.includes('FROM queue_event')),
     ).toBe(false)
-    measurements.push({
-      history,
-      statements: measured.costs.length,
-      allocationRowsRead: allocation.rowsRead,
-    })
+    measurements.push({ history, observationRowsRead })
   }
-  expect(measurements).toEqual([
-    { history: 100, statements: 8, allocationRowsRead: 121 },
-    { history: 1000, statements: 8, allocationRowsRead: 121 },
-  ])
+  expect(measurements[0]!.observationRowsRead).toBe(measurements[1]!.observationRowsRead)
 })
 it('coalesces projection writes within 5 seconds but repairs missing projections and expires before the gate', async () => {
   const { id, waiting } = await fixture(10),
@@ -190,29 +184,24 @@ it('skips truly empty and terminal-only cron queues but expires called entries e
     )?.status,
   ).toBe('expired')
 })
-it('includes a just-released valid duration in the last-30 weighted samples instead of dropping it ahead of older history', async () => {
+it('does not load historical reservation durations into the cadence model', async () => {
   const { id } = await fixture(100),
     now = 1_900_000_000_000
-  const before = await loadQueueState(env, id, now)
-  expect(before.resources[0]?.occupancyMinutes).toBe(2)
-  const after = await loadQueueState(env, id, now, {
-    allocations: [
-      {
-        entry_id: 'new-sample',
-        resource_id: 'room:4:0',
-        space_id: 'room',
-        seats: 4,
-        reserved_at: now - 60 * 60000,
-        arrived_at: now - 60 * 60000,
-        released_at: now,
-        outcome: 'served',
-      },
-      ...before.allocations,
-    ],
-  })
-  expect(after.resources[0]?.occupancyMinutes).toBe(learnedOccupancyMinutes([...Array(29).fill(2),60]))
+  const state = await loadQueueState(env, id, now)
+  expect(state.allocations).toEqual([])
+  expect(state.resources).toEqual([])
+  expect(state.adaptive?.factors.service).toBe(1)
+  expect(
+    (
+      await env.DB.prepare(
+        'SELECT COUNT(*) n FROM queue_allocation WHERE queue_id=?',
+      )
+        .bind(id)
+        .first<{ n: number }>()
+    )?.n,
+  ).toBe(100)
 })
-it('plans a new provisional call with the same 11-call bound as the persisted query without mutating before-state cadence', async () => {
+it('does not treat prior calls or holds as resource slots when projecting a new turn', async () => {
   const { id } = await fixture(1),
     now = 1_900_000_000_000
   const calls = Array.from({ length: 11 }, (_, index) => ({
@@ -225,5 +214,8 @@ it('plans a new provisional call with the same 11-call bound as the persisted qu
   })
   expect(calls).toHaveLength(11)
   expect(after.calls).toHaveLength(11)
-  expect(after.projections[0]?.predictedAt).toBe(now + 66000)
+  expect(after.projections[0]?.predictedAt).toBe(now + 30 * 60000)
+  expect(after.adaptiveProjections[0]?.cadenceMs).toBe(30 * 60000)
+  expect(after.resources).toEqual([])
+  expect(after.allocations).toEqual([])
 })

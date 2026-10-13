@@ -249,38 +249,34 @@ it('keeps a capacity-blocked active list checked and lets staff close admission'
   fireEvent.click(screen.getByRole('switch'))
   expect(screen.getByRole('alertdialog')).toBeVisible()
 })
-it('opens missing configuration from activation and secondary actions return to the persistent Gear', async () => {
+it('activates without an inventory or table-configuration preflight', async () => {
+  mock()
   const p = props({
     ...service,
     readiness: { state: 'pending', reasons: ['configuration_missing'] },
   })
   render(<ServiceCard {...p} />)
-  const gear = screen.getByRole('button', { name: 'Opciones del servicio' })
-  fireEvent.click(screen.getByRole('switch'))
-  expect(p.onAdvanced).toHaveBeenCalledWith(gear)
-  expect(mutations()).toHaveLength(0)
-  fireEvent.click(gear)
-  fireEvent.click(
-    await screen.findByRole('menuitem', { name: 'Configurar servicio' }),
-  )
-  expect(p.onConfigure).toHaveBeenCalledWith(gear)
-  expect(gear).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('switch', { name: 'Activar lista' }))
+  await waitFor(() => expect(mutations()).toHaveLength(1))
+  expect(mutations()[0]?.[2]).toEqual({ action: 'declare_full', contextToken: 'one' })
+  expect(p.onAdvanced).not.toHaveBeenCalled()
+  expect(p.onConfigure).not.toHaveBeenCalled()
 })
-it('shows only configured restaurant release and respects commercial and read-only capabilities', async () => {
+it('does not expose physical-resource release in service actions and respects read-only capabilities', async () => {
   const p = props({ ...service, inventoryConfirmed: true })
   const view = render(<ServiceCard {...p} />)
   const gear = screen.getByRole('button', { name: 'Opciones del servicio' })
   fireEvent.click(gear)
-  fireEvent.click(await screen.findByRole('menuitem', { name: 'Mesa libre' }))
-  expect(p.onFree).toHaveBeenCalledWith(gear)
+  expect(screen.queryByRole('menuitem', { name: 'Mesa libre' })).not.toBeInTheDocument()
+  expect(p.onFree).not.toHaveBeenCalled()
   view.rerender(
     <ServiceCard {...p} permissions={['queue.read', 'queue.configure']} />,
   )
   expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+  if (screen.queryByRole('menu'))
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
   fireEvent.click(gear)
-  expect(
-    screen.queryByRole('menuitem', { name: 'Mesa libre' }),
-  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('menuitem', { name: 'Mesa libre' })).not.toBeInTheDocument()
   expect(
     await screen.findByRole('menuitem', { name: 'Configurar servicio' }),
   ).toBeVisible()

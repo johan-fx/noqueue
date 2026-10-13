@@ -266,7 +266,7 @@ describe('immutable WhatsApp lifecycle v4 catalog', () => {
     const zero = lifecycleV4(message({ ahead: 0, etaMinutes: 0 }))
     expect(zero.template.buttons.map((button) => button.type)).toEqual(['url'])
     expect(renderLifecycleV4(message({ ahead: 0, etaMinutes: 0 }))).toContain(
-      'Por ahora, *no tienes turnos por delante. La espera estimada es de unos 0 minutos.*',
+      'Por ahora, *hay 1 turno por delante. La espera estimada es de unos 0 minutos.*',
     )
     expect(renderLifecycleV4(message({ ahead: 1, etaMinutes: 1 }))).toContain(
       'Por ahora, *hay 1 turno por delante. La espera estimada es de unos 1 minuto.*',
@@ -441,8 +441,8 @@ describe('immutable WhatsApp lifecycle v4 catalog', () => {
         etaMinutes: 0,
         estimateQuality: 'estimated',
         expected:
-          'Por ahora, *no tienes turnos por delante. La espera estimada es de unos 0 minutos.*',
-        plain: 'Por ahora, no tienes turnos por delante. La espera estimada es de unos 0 minutos.',
+          'Por ahora, *hay 1 turno por delante. La espera estimada es de unos 0 minutos.*',
+        plain: 'Por ahora, hay 1 turno por delante. La espera estimada es de unos 0 minutos.',
       },
       {
         locale: 'es',
@@ -467,8 +467,8 @@ describe('immutable WhatsApp lifecycle v4 catalog', () => {
         ahead: 0,
         etaMinutes: 0,
         estimateQuality: 'estimated',
-        expected: 'For now, *there are no turns ahead. The estimated wait is around 0 minutes.*',
-        plain: 'For now, there are no turns ahead. The estimated wait is around 0 minutes.',
+        expected: 'For now, *there is 1 turn ahead. The estimated wait is around 0 minutes.*',
+        plain: 'For now, there is 1 turn ahead. The estimated wait is around 0 minutes.',
       },
       {
         locale: 'en',
@@ -588,4 +588,18 @@ describe('immutable WhatsApp lifecycle v4 catalog', () => {
 
     expect(rendered.parameters[0]).toBe('Café Central')
   })
+})
+
+it.each(['queue_joined', 'approaching', 'delayed', 'improved'] as const)('floors the %s display count only, preserving known/unknown ETA and input', (notice) => {
+  for (const locale of ['es', 'en'] as const) {
+    for (const ahead of [0, 1, 2, 9]) {
+      const input = { ...base, notice, locale, ahead, etaMinutes: 4 } as OutboundWhatsAppMessage
+      const copy = renderLifecycleV4(input).toLowerCase()
+      const visible = Math.max(1, ahead)
+      expect(copy).toContain(locale === 'es' ? `hay ${visible} turno` : `there ${visible === 1 ? 'is' : 'are'} ${visible} turn`)
+      expect(copy).toContain(locale === 'es' ? '4 minutos' : '4 minutes')
+      expect(input.ahead).toBe(ahead)
+    }
+    expect(renderLifecycleV4({ ...base, notice, locale, ahead: null, etaMinutes: null, estimateQuality: 'unknown' } as OutboundWhatsAppMessage)).not.toMatch(/1 turno|1 turn/)
+  }
 })

@@ -45,7 +45,6 @@ export function ServiceCard({
   onView,
   onConfigure,
   onAdvanced,
-  onFree,
 }: {
   service: QueueSummary
   permissions: readonly Capability[]
@@ -117,13 +116,6 @@ export function ServiceCard({
         const context = await api<QueueOpeningContext>(
           `/queues/${service.id}/opening-context`,
         )
-        if (
-          action === 'declare_full' &&
-          context.readiness.reasons.includes('configuration_missing')
-        ) {
-          if (gear.current) onAdvanced(gear.current)
-          return
-        }
         request.current = {
           action,
           body: { action, contextToken: context.contextToken },
@@ -241,15 +233,6 @@ export function ServiceCard({
                 />
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                {canOperate &&
-                  service.config.type === 'restaurant' &&
-                  service.inventoryConfirmed && (
-                    <DropdownMenuItem
-                      onClick={() => gear.current && onFree(gear.current)}
-                    >
-                      Mesa libre
-                    </DropdownMenuItem>
-                  )}
                 <DropdownMenuItem
                   onClick={() => gear.current && onAdvanced(gear.current)}
                 >
@@ -295,15 +278,13 @@ export function ServiceCard({
         {service.blockReason === 'cutoff' && (
           <p className="text-sm">Horario de inscripciones finalizado</p>
         )}
-        {canOperate &&
-          service.reminderDue &&
-          !service.readiness?.reasons.includes('configuration_missing') && (
-            <QueueReminder
-              key={`${service.id}:${service.reminderId}`}
-              queueId={service.id}
-              onSaved={onSaved}
-            />
-          )}
+        {canOperate && service.reminderDue && (
+          <QueueReminder
+            key={`${service.id}:${service.reminderId}`}
+            queueId={service.id}
+            onSaved={onSaved}
+          />
+        )}
         {error && !confirm && (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -335,12 +316,6 @@ export function ServiceCard({
                 if (!checked) {
                   setError('')
                   setConfirm(true)
-                } else if (
-                  service.config.type === 'restaurant' &&
-                  service.queueState === 'inactive' &&
-                  service.readiness?.reasons.includes('configuration_missing')
-                ) {
-                  if (gear.current) onAdvanced(gear.current)
                 } else
                   void operate(
                     service.queueState === 'paused' ||

@@ -176,7 +176,7 @@ it('requires confirmation before changing notice policy with waiting entries', a
     />,
   )
   fireEvent.click(
-    screen.getByRole('button', { name: 'Recursos y ajustes de estimación' }),
+    screen.getByRole('button', { name: 'Espacios y referencias de estimación' }),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Save test settings' }))
   expect(confirm).toHaveBeenCalledWith(
@@ -201,7 +201,7 @@ it('applies a confirmed notice policy update to current waiting entries', async 
     />,
   )
   fireEvent.click(
-    screen.getByRole('button', { name: 'Recursos y ajustes de estimación' }),
+    screen.getByRole('button', { name: 'Espacios y referencias de estimación' }),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Save test settings' }))
   await waitFor(() => expect(api).toHaveBeenCalledTimes(1))
@@ -234,7 +234,7 @@ it('does not request policy confirmation for a legacy turn-count-only change', a
     />,
   )
   fireEvent.click(
-    screen.getByRole('button', { name: 'Recursos y ajustes de estimación' }),
+    screen.getByRole('button', { name: 'Espacios y referencias de estimación' }),
   )
   fireEvent.click(screen.getByRole('button', { name: 'Save legacy turn threshold' }))
 

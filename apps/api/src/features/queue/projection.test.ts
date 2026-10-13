@@ -1,7 +1,8 @@
-// Explicit v1 fixtures retain rollback regressions; default v2 is covered by adaptive-estimator.test.ts.
+// Stored v1 configs remain readable, but operational projections use estimator v2.
 import { env } from 'cloudflare:workers'
 import { expect, it } from 'vitest'
 import { loadQueueState, recalculateQueue } from './projection'
+import { serviceWindow } from '../staff/availability'
 it('persists shared projections and deduplicated intents without delivery', async () => {
   const id = crypto.randomUUID()
   await env.DB.prepare(
@@ -54,8 +55,12 @@ it('persists shared projections and deduplicated intents without delivery', asyn
         i,
       )
       .run()
+  await env.DB.prepare(
+    "INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,'continuous','active',?)",
+  ).bind(id, Date.now()).run()
   const state = await loadQueueState(env, id)
-  expect(state.resources.map((r) => r.averageMinutes)).toEqual([70, 20])
+  expect(state.resources).toEqual([])
+  expect(state.allocations).toEqual([])
   await recalculateQueue(env, id)
   await recalculateQueue(env, id)
   const rows = await env.DB.prepare(
@@ -63,7 +68,7 @@ it('persists shared projections and deduplicated intents without delivery', asyn
   )
     .bind(id)
     .all<{ eta_minutes: number }>()
-  expect(rows.results.map((r) => r.eta_minutes)).toEqual([0, 0, 20])
+  expect(rows.results.map((r) => r.eta_minutes)).toEqual([20, 40, 60])
   expect(
     (
       await env.DB.prepare(
@@ -116,7 +121,7 @@ it('keeps unknown legacy spaces provisional and inherits size defaults independe
   expect(config.queueBySeat?.[0]?.capacity).toBe(50)
 })
 
-it('recalculates an expired group adjustment without a queue event and never frees overdue actual occupancy', async () => {
+it('ignores legacy adjustments and keeps historical allocations out of ETA state', async () => {
   const now = Date.now(),
     id = crypto.randomUUID(),
     entryId = crypto.randomUUID()
@@ -167,13 +172,26 @@ it('recalculates an expired group adjustment without a queue event and never fre
   )
     .bind(entryId, id, now, now)
     .run()
+  const waitingId = crypto.randomUUID()
+  await env.DB.prepare(
+    "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,2,'en',?,2,'waiting')",
+  )
+    .bind(waitingId, id, waitingId, 'hash', waitingId, waitingId, now)
+    .run()
+  await env.DB.prepare(
+    "INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,'continuous','active',?)",
+  ).bind(id, now).run()
   const before = await recalculateQueue(env, id, now)
-  expect(before.resources[0]?.averageMinutes).toBe(60)
+  expect(before.resources).toEqual([])
+  expect(before.allocations).toEqual([])
+  expect(before.adaptiveProjections[0]?.cadenceMs).toBe(30 * 60_000)
   const after = await recalculateQueue(env, id, now + 60000)
-  expect(after.resources[0]?.averageMinutes).toBe(30)
+  expect(after.adaptiveProjections[0]?.cadenceMs).toBe(30 * 60_000)
   const overdue = await recalculateQueue(env, id, now + 31 * 60000)
-  expect(overdue.resources[0]?.availableAt).toBeNull()
-  expect(overdue.allocations[0]?.released_at).toBeNull()
+  expect(overdue.adaptiveProjections[0]?.predictedAt).toBe(now + 61 * 60_000)
+  expect(overdue.resources).toEqual([])
+  expect(overdue.allocations).toEqual([])
+  expect((await env.DB.prepare('SELECT released_at FROM queue_allocation WHERE entry_id=?').bind(entryId).first())?.released_at).toBeNull()
 })
 it('emits approaching on the time threshold even inside the legacy position cutoff', async () => {
   const start = 1_800_000_000_000
@@ -210,6 +228,9 @@ it('emits approaching on the time threshold even inside the legacy position cuto
     .bind(queueId, JSON.stringify(config))
     .run()
   await env.DB.prepare(
+    'INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,? ,\'active\',?)',
+  ).bind(queueId, serviceWindow(config as Parameters<typeof serviceWindow>[0], 'Europe/Madrid', new Date(start)).windowId, start).run()
+  await env.DB.prepare(
     "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,1,'en',?,0,'arrived')",
   )
     .bind(activeEntryId, queueId, activeEntryId, 'hash', activeEntryId, 'ACTIVE', start)
@@ -244,14 +265,16 @@ it('emits approaching on the time threshold even inside the legacy position cuto
     (projection) => projection.id === waitingEntryIds[2],
   )
   expect(targetBefore?.position).toBe(3)
-  expect(targetBefore?.predictedAt).toBe(start + 8 * 60_000)
-  expect(targetBefore?.etaMinutes).toBe(8)
+  // Raw operational projections move with the current clock. The persisted
+  // customer-facing deadline is the canonical value to check across refreshes.
+  const canonicalBefore = await env.DB.prepare(
+    'SELECT predicted_at FROM queue_adaptive_projection WHERE entry_id=?',
+  ).bind(waitingEntryIds[2]).first<{ predicted_at: number }>()
+  expect(canonicalBefore?.predicted_at).toBe(start + 9 * 60_000)
+  expect(targetBefore?.etaMinutes).toBe(9)
   const atThreshold = await recalculateQueue(env, queueId, start + 60_000)
-  expect(
-    atThreshold.projections.find(
-      (projection) => projection.id === waitingEntryIds[2],
-    )?.etaMinutes,
-  ).toBe(7)
+  expect(atThreshold.projections.find((projection) => projection.id === waitingEntryIds[2])?.etaMinutes).toBe(9)
+  expect((await env.DB.prepare('SELECT predicted_at FROM queue_adaptive_projection WHERE entry_id=?').bind(waitingEntryIds[2]).first<{ predicted_at: number }>())?.predicted_at).toBe(canonicalBefore?.predicted_at)
   const emitted = await env.DB.prepare(
     "SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='approaching'",
   )
@@ -293,7 +316,7 @@ it('preserves legacy group identities when an older client reorders spaces witho
   expect(reordered.spaces.map((s) => s.id)).toEqual(['legacy-1', 'legacy-0'])
 })
 
-it('records duration-adjustment expiry as an operational improvement at fixed current time', async () => {
+it('does not turn duration-adjustment expiry into a queue cadence improvement', async () => {
   const start = 1_900_000_000_000,
     queueId = crypto.randomUUID()
   const config = {
@@ -323,28 +346,35 @@ it('records duration-adjustment expiry as an operational improvement at fixed cu
   )
     .bind(queueId, JSON.stringify(config))
     .run()
+  await env.DB.prepare(
+    'INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,? ,\'active\',?)',
+  ).bind(queueId, serviceWindow(config as Parameters<typeof serviceWindow>[0], 'Europe/Madrid', new Date(start)).windowId, start).run()
   const ids = [crypto.randomUUID(), crypto.randomUUID()]
   for (const [i, id] of ids.entries())
     await env.DB.prepare(
-      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,'continuous:test')",
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,?)",
     )
-      .bind(id, queueId, id, id, id, id, start, i + 1)
+      .bind(id, queueId, id, id, id, id, start, i + 1, serviceWindow(config as Parameters<typeof serviceWindow>[0], 'Europe/Madrid', new Date(start)).windowId)
       .run()
-  await recalculateQueue(env, queueId, start)
+  const initialState = await recalculateQueue(env, queueId, start)
+  const cadence = initialState.adaptiveProjections[0]?.cadenceMs
+  const deadlines = await env.DB.prepare(
+    'SELECT predicted_at,cadence_ms FROM queue_adaptive_projection WHERE entry_id IN (?,?) ORDER BY predicted_at',
+  ).bind(...ids).all<{ predicted_at: number; cadence_ms: number }>()
   await recalculateQueue(env, queueId, start + 60_000)
-  expect(
-    (
-      await env.DB.prepare(
-        'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?',
-      )
-        .bind(ids[1])
-        .first()
-    )?.operational_forecast_delta_ms,
-  ).toBe(-30 * 60_000)
+  const refreshed = await env.DB.prepare(
+    'SELECT predicted_at,cadence_ms FROM queue_adaptive_projection WHERE entry_id IN (?,?) ORDER BY predicted_at',
+  ).bind(...ids).all<{ predicted_at: number; cadence_ms: number }>()
+  expect(refreshed.results).toEqual(deadlines.results)
+  const overdue = await recalculateQueue(env, queueId, start + 31 * 60_000)
+  expect(cadence).toBe(30 * 60_000)
+  expect(overdue.adaptiveProjections.map((p) => p.cadenceMs)).toEqual([cadence, cadence])
+  expect(overdue.adaptiveProjections[0]?.predictedAt).toBe(start + 61 * 60_000)
+  expect(overdue.resources).toEqual([])
+  expect(overdue.allocations).toEqual([])
 })
 
-it('accumulates signed fixed-time changes and never increments on clock refresh', async () => {
-  const { commitQueueTransition } = await import('./projection')
+it('keeps canonical queue deadlines stable through clock-only refreshes', async () => {
   const start = 1_900_000_000_000,
     queueId = crypto.randomUUID()
   const config = {
@@ -360,60 +390,46 @@ it('accumulates signed fixed-time changes and never increments on clock refresh'
     receptionServices: ['other' as const],
     spaces: [],
   }
+  const windowId = serviceWindow(config as Parameters<typeof serviceWindow>[0], 'Europe/Madrid', new Date(start)).windowId
   await env.DB.prepare(
     "INSERT INTO queue(id,venue_id,name,config,capacity,average_minutes) VALUES (?,'demo-venue','Desk',?,99,60)",
   )
     .bind(queueId, JSON.stringify(config))
     .run()
+  await env.DB.prepare(
+    'INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,? ,\'active\',?)',
+  ).bind(queueId, windowId, start).run()
   const ids = [crypto.randomUUID(), crypto.randomUUID()]
   for (const [i, id] of ids.entries())
     await env.DB.prepare(
-      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,'continuous:test')",
+      "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,1,'en',?,?,?)",
     )
-      .bind(id, queueId, id, id, id, id, start, i + 1)
+      .bind(id, queueId, id, id, id, id, start, i + 1, windowId)
       .run()
   await recalculateQueue(env, queueId, start)
-  for (const elapsed of [20, 40, 60])
-    await recalculateQueue(env, queueId, start + elapsed * 60_000)
-  const row = () =>
+  const deadlines = async () =>
     env.DB.prepare(
-      'SELECT operational_forecast_delta_ms,revision FROM queue_projection WHERE entry_id=?',
+      'SELECT predicted_at,cadence_ms FROM queue_adaptive_projection WHERE entry_id IN (?,?) ORDER BY predicted_at',
     )
-      .bind(ids[1])
-      .first<{ operational_forecast_delta_ms: number; revision: number }>()
-  expect(await row()).toMatchObject({
-    operational_forecast_delta_ms: 0,
-    revision: 1,
-  })
-  for (const minutes of [62, 64, 66, 60]) {
-    const now = start + 65 * 60_000
-    const before = await loadQueueState(env, queueId, now)
-    const next = { ...config, averageMinutes: minutes }
-    await commitQueueTransition(
-      env,
-      queueId,
-      before,
-      {
-        config: next,
-        allocations: before.allocations,
-        parties: before.parties,
-        holds: before.holds,
-      },
-      [
-        env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(
-          JSON.stringify(next),
-          queueId,
-        ),
-      ],
-      now,
-    )
-    expect((await row())?.operational_forecast_delta_ms).toBe(
-      (minutes - 60) * 60_000,
-    )
+      .bind(...ids)
+      .all<{ predicted_at: number; cadence_ms: number }>()
+  const original = await deadlines()
+  expect(original.results.map((r) => r.cadence_ms)).toEqual([60 * 60_000, 60 * 60_000])
+  for (const elapsed of [20, 40, 58]) {
+    await recalculateQueue(env, queueId, start + elapsed * 60_000)
+    expect((await deadlines()).results).toEqual(original.results)
   }
+  await recalculateQueue(env, queueId, start + 60 * 60_000)
+  const protectedDeadlines = await deadlines()
+  expect(protectedDeadlines.results.map((row) => row.predicted_at)).toEqual([
+    start + 2 * 60 * 60_000,
+    start + 3 * 60 * 60_000,
+  ])
+  await recalculateQueue(env, queueId, start + 60 * 60_000)
+  expect((await deadlines()).results).toEqual(protectedDeadlines.results)
 })
 
-it('rolls back legacy quick-allocation retirement when canonical projection persistence fails', async () => {
+it('never retires historical quick allocations during recalculation or retry', async () => {
   const start = 1_900_000_000_000,
     queueId = crypto.randomUUID(),
     waiting = crypto.randomUUID(),
@@ -503,14 +519,8 @@ it('rolls back legacy quick-allocation retirement when canonical projection pers
         .bind(legacy)
         .first()
     )?.released_at
-  ).toBe(start + 1000)
-  expect(
-    (
-      await env.DB.prepare(
-        'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?'
-      )
-        .bind(waiting)
-        .first()
-    )?.operational_forecast_delta_ms
-  ).toBe(0)
+  ).toBeNull()
+  const state = await loadQueueState(env, queueId, start + 1000)
+  expect(state.allocations).toEqual([])
+  expect(state.resources).toEqual([])
 })

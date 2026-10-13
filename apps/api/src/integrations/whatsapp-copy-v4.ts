@@ -1,3 +1,4 @@
+import { visibleWaitingCount } from '@noqueue/contracts/queue'
 import type { OutboundWhatsAppMessage } from './360dialog'
 import { isOpenStagingV4 } from './whatsapp-policy'
 
@@ -407,12 +408,9 @@ function inferVariant(message: Message): LifecycleV4Variant {
 
 function aheadDescription(message: Message): string {
   const es = message.locale === 'es'
-  const ahead = message.ahead
-  if (ahead == null || !Number.isInteger(ahead) || ahead < 0) return ''
-  if (ahead === 0)
-    return es
-      ? 'No tienes turnos por delante.'
-      : 'There are no turns ahead.'
+  const real = message.ahead
+  if (real == null || !Number.isInteger(real) || real < 0) return ''
+  const ahead = visibleWaitingCount(real)
   return es
     ? ahead === 1
       ? 'Hay 1 turno por delante.'

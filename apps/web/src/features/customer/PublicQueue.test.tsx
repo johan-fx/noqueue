@@ -70,7 +70,7 @@ it.each(['reception', 'pool'] as const)(
       </MemoryRouter>,
     )
     expect(
-      await screen.findByText('1 personas en lista de espera'),
+      await screen.findByText('1 persona en lista de espera'),
     ).toBeVisible()
   },
 )

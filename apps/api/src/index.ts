@@ -6,7 +6,11 @@ import {
 import type { CustomerCommand } from '@noqueue/contracts/queue'
 import { openingContext, runLifecycleCommand } from './features/staff/opening'
 import type { QueueLifecycleCommand } from '@noqueue/contracts/staff'
-import { recalculateQueue, maintainQueue, refreshQueue } from './features/queue/projection'
+import {
+  recalculateQueue,
+  maintainQueue,
+  refreshQueue,
+} from './features/queue/projection'
 import { HTTPException } from 'hono/http-exception'
 import type { QueueCommand } from '@noqueue/contracts/staff'
 import { runQueueCommand, configureQueue } from './features/staff/commands'
@@ -15,7 +19,11 @@ import type { JoinQueue, ManualJoin } from '@noqueue/contracts/queue'
 import { app } from './app'
 import { confirmationExperimentEnabled } from './features/queue/confirmation'
 import { changeExperiment } from './features/queue/experiment'
-import { joinQueue, readEntrySnapshot, type JoinSource } from './features/queue/entries'
+import {
+  joinQueue,
+  readEntrySnapshot,
+  type JoinSource,
+} from './features/queue/entries'
 import {
   dispatchNotification,
   dispatchNotificationSerialized,
@@ -40,11 +48,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     } finally {
       const now = Date.now()
       const next = await this.env.DB.prepare(
-        `WITH checkpoint AS (
-          SELECT MIN(p.updated_at) AS updated_at FROM queue_entry e
-          JOIN queue_projection p ON p.entry_id=e.id
-          WHERE e.queue_id=? AND e.status='waiting'
-        ), adaptive AS (
+        `WITH adaptive AS (
           SELECT MIN(deadline) AS deadline FROM (
             SELECT a.safety_review_at AS deadline
               FROM queue_entry e
@@ -74,24 +78,10 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
         SELECT MIN(deadline) AS deadline FROM (
           SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called'
           UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting'
-          UNION ALL SELECT CAST(json_extract(a.value,'$.expiresAt') AS INTEGER) AS deadline
-            FROM queue q,json_each(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.adjustments') a
-            WHERE q.id=? AND CAST(json_extract(a.value,'$.expiresAt') AS INTEGER)>COALESCE((SELECT updated_at FROM checkpoint),?)
           UNION ALL SELECT deadline FROM adaptive
         )`,
       )
-        .bind(
-          queueId,
-          queueId,
-          queueId,
-          now,
-          queueId,
-          now,
-          queueId,
-          queueId,
-          queueId,
-          now,
-        )
+        .bind(queueId, queueId, now, queueId, now, queueId, queueId)
         .first<{ deadline: number | null }>()
       if (next?.deadline != null)
         await this.ctx.storage.setAlarm(Math.max(now + 1, next.deadline))
@@ -152,11 +142,15 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   staffConfigure(actor: string, queueId: string, input: unknown) {
     return this.serialize(() =>
-      this.withQueue(queueId, () => this.staffResult(() => configureQueue(this.env, actor, queueId, input))),
+      this.withQueue(queueId, () =>
+        this.staffResult(() => configureQueue(this.env, actor, queueId, input)),
+      ),
     )
   }
   openingContext(queueId: string) {
-    return this.serialize(() => this.withQueue(queueId, () => openingContext(this.env, queueId)))
+    return this.serialize(() =>
+      this.withQueue(queueId, () => openingContext(this.env, queueId)),
+    )
   }
   lifecycle(
     actor: string,
@@ -165,9 +159,11 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     input: QueueLifecycleCommand,
   ) {
     return this.serialize(() =>
-      this.withQueue(queueId, () => this.staffResult(() =>
-        runLifecycleCommand(this.env, actor, queueId, key, input),
-      )),
+      this.withQueue(queueId, () =>
+        this.staffResult(() =>
+          runLifecycleCommand(this.env, actor, queueId, key, input),
+        ),
+      ),
     )
   }
   read(queueId: string, token: string) {
@@ -191,9 +187,15 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   dispatch(id: string) {
     return this.serialize(async () => {
-      const row = await this.env.DB.prepare('SELECT e.queue_id FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE n.id=?')
-        .bind(id).first<{ queue_id: string }>()
-      if (row) return this.withQueue(row.queue_id, () => dispatchNotificationSerialized(this.env, id))
+      const row = await this.env.DB.prepare(
+        'SELECT e.queue_id FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE n.id=?',
+      )
+        .bind(id)
+        .first<{ queue_id: string }>()
+      if (row)
+        return this.withQueue(row.queue_id, () =>
+          dispatchNotificationSerialized(this.env, id),
+        )
       return dispatchNotificationSerialized(this.env, id)
     })
   }
@@ -201,7 +203,9 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   staffJoin(actor: string, queueId: string, key: string, input: ManualJoin) {
     return this.serialize(async () => {
       try {
-        return await this.withQueue(queueId, () => joinQueue(this.env, queueId, key, input, false, actor))
+        return await this.withQueue(queueId, () =>
+          joinQueue(this.env, queueId, key, input, false, actor),
+        )
       } catch (error) {
         if (error instanceof HTTPException)
           return { status: error.status, body: { error: error.message } }
@@ -262,10 +266,8 @@ export default {
     const queues = await env.DB.prepare(
       `SELECT q.id FROM queue q
        WHERE EXISTS(SELECT 1 FROM queue_entry e WHERE e.queue_id=q.id AND e.status IN ('waiting','called'))
-       OR EXISTS(SELECT 1 FROM queue_allocation a WHERE a.queue_id=q.id AND a.released_at IS NULL)
-       OR EXISTS(SELECT 1 FROM queue_external_occupancy h WHERE h.queue_id=q.id)
-       OR EXISTS(SELECT 1 FROM json_each(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.adjustments') a WHERE json_extract(a.value,'$.expiresAt')>?)`,
-    ).bind(Date.now()).all<{ id: string }>()
+       `,
+    ).all<{ id: string }>()
     for (const queue of queues.results) {
       try {
         await (env.APP_ENV === 'local'

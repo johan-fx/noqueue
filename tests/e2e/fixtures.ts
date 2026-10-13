@@ -49,13 +49,25 @@ export async function newClientContext(
   clientLabel: string,
   options: BrowserContextOptions = {},
 ) {
-  return browser.newContext({
+  const context = await browser.newContext({
     ...options,
     extraHTTPHeaders: {
       ...options.extraHTTPHeaders,
       'CF-Connecting-IP': clientIpAddress(info, clientLabel),
     },
   })
+  // The app's opportunistic PWA update banner is unrelated to queue-flow
+  // assertions and can cover controls in long-running E2Es. Defer only the
+  // non-forced update prompt; dedicated PWA tests use Playwright's base fixture.
+  context.on('page', (page) => {
+    void page
+      .addLocatorHandler(
+        page.getByTestId('pwa-update-later'),
+        async (later) => later.click(),
+      )
+      .catch(() => undefined)
+  })
+  return context
 }
 
 const test = base.extend<{}, { context: BrowserContext; request: APIRequestContext }>({

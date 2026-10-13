@@ -47,6 +47,7 @@ beforeEach(async () => {
       'queue_event',
       'queue_entry_contact',
       'queue_entry',
+      'queue_admission',
       'pilot_rate',
     ].map((table) => env.DB.prepare(`DELETE FROM ${table}`)),
   )
@@ -402,6 +403,20 @@ describe('queue vertical in workerd', () => {
       const occupied = crypto.randomUUID()
       await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
         .bind(JSON.stringify(config), 'demo-queue')
+        .run()
+      const { serviceWindow } = await import('./features/staff/availability')
+      const activeWindow = serviceWindow(
+        config,
+        'Europe/Madrid',
+        new Date(now),
+      )
+      await env.DB.prepare(
+        `INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at)
+         VALUES (? ,?,'active',?)
+         ON CONFLICT(queue_id) DO UPDATE SET window_id=excluded.window_id,
+           override_state=excluded.override_state,activated_at=excluded.activated_at`,
+      )
+        .bind('demo-queue', activeWindow.windowId, now)
         .run()
       await env.DB.prepare(
         `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status)
@@ -1003,7 +1018,7 @@ describe('provider boundary', () => {
     ])
   })
 })
-it('obsoletes compensated and legacy correction snapshots before any provider dispatch', async () => {
+it('obsoletes queued and legacy correction snapshots before any provider dispatch', async () => {
   let now = 1_800_000_000_000
   const nowSpy = vi.spyOn(Date, 'now').mockImplementation(() => now)
   const originalConfig = await env.DB.prepare(
@@ -1040,6 +1055,20 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
     const occupied = crypto.randomUUID()
     await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
       .bind(JSON.stringify(config), 'demo-queue')
+      .run()
+    const { serviceWindow } = await import('./features/staff/availability')
+    const activeWindow = serviceWindow(
+      config,
+      'Europe/Madrid',
+      new Date(now),
+    )
+    await env.DB.prepare(
+      `INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at)
+       VALUES (? ,?,'active',?)
+       ON CONFLICT(queue_id) DO UPDATE SET window_id=excluded.window_id,
+         override_state=excluded.override_state,activated_at=excluded.activated_at`,
+    )
+      .bind('demo-queue', activeWindow.windowId, now)
       .run()
     await env.DB.prepare(
       `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,'demo-queue',?,'hash',?,?,2,'en',?,0,'completed')`,
@@ -1091,7 +1120,11 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
       )
     }
     const changed = await change(70)
-    expect(changed.projections[0]).toMatchObject({
+    expect(
+      await import('./features/queue/projection').then(({ readProjection }) =>
+        readProjection(env, first!.entry_id, true),
+      ),
+    ).toMatchObject({
       predictedAt: acceptedPrediction + 10 * 60000,
       etaMinutes: 50,
     })
@@ -1100,9 +1133,13 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
     )
       .bind(first!.entry_id)
       .first<{ id: string; payload_snapshot: string }>()
-    expect(
-      JSON.parse(delayed!.payload_snapshot).operationalForecastDeltaMs,
-    ).toBe(10 * 60000)
+    expect(JSON.parse(delayed!.payload_snapshot)).toMatchObject({
+      estimatorVersion: 2,
+      estimationRevision: expect.any(Number),
+      correctionReason: 'configuration',
+      predictedAt: acceptedPrediction + 10 * 60000,
+      etaMinutes: 50,
+    })
     await change(60)
     let sends = 0
     network.use(
@@ -1124,6 +1161,9 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
       .bind(first!.entry_id)
       .first<{ id: string; payload_snapshot: string }>()
     const frozen = JSON.parse(legacy!.payload_snapshot)
+    delete frozen.estimatorVersion
+    delete frozen.estimationRevision
+    delete frozen.correctionReason
     delete frozen.operationalForecastDeltaMs
     await env.DB.prepare(
       'UPDATE notification_outbox SET payload_snapshot=? WHERE id=?',
@@ -1141,40 +1181,43 @@ it('obsoletes compensated and legacy correction snapshots before any provider di
     ).toEqual([])
     expect(sends).toBe(0)
     const beforeUnknown = await loadQueueState(env, 'demo-queue', now)
+    const customerBeforeLegacyInventory = await import('./features/queue/projection').then(
+      ({ readProjection }) => readProjection(env, first!.entry_id, true),
+    )
     await commitQueueTransition(
       env,
       'demo-queue',
       beforeUnknown,
       {
         config: beforeUnknown.config,
-        allocations: beforeUnknown.allocations.map((allocation) => ({
-          ...allocation,
-          released_at: now,
-          outcome: 'completed',
-        })),
+        allocations: beforeUnknown.allocations,
         parties: beforeUnknown.parties,
-        holds: [{ resource_id: 'room:100:0', space_id: 'room', seats: 100 }],
+        holds: beforeUnknown.holds,
       },
       [
         env.DB.prepare(
-          "UPDATE queue_allocation SET released_at=?,outcome='completed' WHERE entry_id=?",
-        ).bind(now, occupied),
-        env.DB.prepare(
-          "INSERT INTO queue_external_occupancy VALUES ('demo-queue','room:100:0','room',100,?)",
+          "INSERT INTO queue_external_occupancy VALUES ('demo-queue','legacy-room:100:0','legacy-room',100,?)",
         ).bind(now),
       ],
       now,
     )
-    expect(
-      await env.DB.prepare(
-        'SELECT operational_forecast_delta_ms,quality FROM queue_projection WHERE entry_id=?',
-      )
-        .bind(first!.entry_id)
-        .first(),
-    ).toMatchObject({
-      operational_forecast_delta_ms: 10 * 60000,
-      quality: 'unknown',
+    const customerAfterLegacyInventory = await import('./features/queue/projection').then(
+      ({ readProjection }) => readProjection(env, first!.entry_id, true),
+    )
+    expect(customerAfterLegacyInventory).toMatchObject({
+      predictedAt: customerBeforeLegacyInventory?.predictedAt,
+      estimateQuality: customerBeforeLegacyInventory?.estimateQuality,
     })
+    expect(
+      await env.DB.prepare('SELECT released_at FROM queue_allocation WHERE entry_id=?')
+        .bind(occupied)
+        .first(),
+    ).toEqual({ released_at: null })
+    expect(
+      await env.DB.prepare('SELECT COUNT(*) AS n FROM queue_external_occupancy WHERE queue_id=?')
+        .bind('demo-queue')
+        .first(),
+    ).toEqual({ n: 1 })
   } finally {
     await env.DB.prepare(
       "DELETE FROM queue_external_occupancy WHERE queue_id='demo-queue'",

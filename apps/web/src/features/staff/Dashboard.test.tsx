@@ -200,7 +200,7 @@ it('does not advance a known but exhausted shadow queue', async () => {
     screen.queryByRole('button', { name: 'Avanzar un turno' }),
   ).not.toBeInTheDocument()
 })
-it('blocks advance and explains how to resurvey invalidated managed inventory', async () => {
+it('allows assignment when legacy inventory says unavailable and asks for no priority reason', async () => {
   const invalidated = {
     ...service,
     config: {
@@ -213,22 +213,26 @@ it('blocks advance and explains how to resurvey invalidated managed inventory', 
       reasons: ['inventory_refresh_required' as const],
     },
   }
-  vi.mocked(api).mockImplementation(async (path) =>
-    path.endsWith('/queues')
-      ? [invalidated]
-      : [
-          {
-            id: 'entry',
-            code: 'A1',
-            partySize: 4,
-            status: 'waiting',
-            sequence: 1,
-            version: 0,
-            calledAt: null,
-            callable: false,
-          },
-        ],
-  )
+  const commands: { body: unknown; key: unknown }[] = []
+  vi.mocked(api).mockImplementation(async (path, _method, body, key) => {
+    if (path.endsWith('/queues')) return [invalidated]
+    if (path.endsWith('/commands')) {
+      commands.push({ body, key })
+      return { ok: true }
+    }
+    return [
+      {
+        id: 'entry',
+        code: 'A1',
+        partySize: 4,
+        status: 'waiting',
+        sequence: 1,
+        version: 0,
+        calledAt: null,
+        callable: false,
+      },
+    ]
+  })
   render(
     <Dashboard
       venue={{
@@ -240,17 +244,21 @@ it('blocks advance and explains how to resurvey invalidated managed inventory', 
       }}
     />,
   )
-  await openCardAdvanced()
-  expect(await screen.findByText(/La distribución ha cambiado/)).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Atrás' }))
   fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
-  expect(
-    screen.queryByRole('button', { name: 'Avanzar un turno' }),
-  ).not.toBeInTheDocument()
+  fireEvent.click(await screen.findByRole('button', { name: 'Acciones del turno A1' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Asignar turno' }))
+  const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
+  expect(within(sheet).getByText(/confirmas que puedes atender/i)).toBeVisible()
+  expect(within(sheet).queryByLabelText(/motivo de prioridad/i)).not.toBeInTheDocument()
+  expect(within(sheet).getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+  await waitFor(() => expect(commands).toHaveLength(1))
+  expect(commands[0]?.body).toMatchObject({ entryId: 'entry', action: 'call' })
+  expect(commands[0]?.body).not.toHaveProperty('overrideReason')
 })
 
 it.each(['pending', 'active'] as const)(
-  'presents %s readiness without confusing the shared pending Alert with active status',
+  'does not expose inventory readiness warnings for legacy %s summaries',
   async (state) => {
     const row: QueueSummary = {
       ...service,
@@ -277,26 +285,15 @@ it.each(['pending', 'active'] as const)(
       name: 'Servicio Restaurante',
     })
     expect(within(card).queryByRole('alert')).not.toBeInTheDocument()
-    expect(
-      within(card).queryByText('Gestión inteligente pendiente'),
-    ).not.toBeInTheDocument()
+    expect(within(card).queryByText(/inventario|ocupación|tipos de mesa/i)).not.toBeInTheDocument()
     await openCardAdvanced()
-    expect(
-      await screen.findByText(
-        state === 'pending'
-          ? 'Gestión inteligente pendiente'
-          : 'Gestión inteligente activa',
-      ),
-    ).toBeVisible()
-    expect(
-      screen.getByText(
-        'Falta configurar los tipos de mesa o grupos de plazas.',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByText('Gestión inteligente activa')).toBeVisible()
+    expect(screen.queryByText('Gestión inteligente pendiente')).not.toBeInTheDocument()
+    expect(screen.queryByText(/tipos de mesa|grupos de plazas|inventario|ocupación/i)).not.toBeInTheDocument()
   },
 )
 it.each([false, true])(
-  'prioritizes the initial inventory task and uses server schedule feedback (confirmed %s)',
+  'keeps schedule admission feedback independent of legacy inventory confirmation (%s)',
   async (confirmed) => {
     vi.mocked(api).mockImplementation(async (path) =>
       path.endsWith('/queues')
@@ -334,14 +331,11 @@ it.each([false, true])(
       screen.queryByRole('button', { name: 'Confirmar ocupación' }),
     ).not.toBeInTheDocument()
     await openCardAdvanced()
-    expect(
-      await screen.findByText(
-        confirmed ? 'Gestión inteligente activa' : 'Confirma la ocupación',
-      ),
-    ).toBeVisible()
+    expect(await screen.findByText('Gestión inteligente activa')).toBeVisible()
+    expect(screen.queryByText(/confirma la ocupación|inventario/i)).not.toBeInTheDocument()
   },
 )
-it('offers configuration instead of inventory confirmation when table groups are missing', async () => {
+it('does not require table groups to operate and keeps configuration available', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [
@@ -378,9 +372,10 @@ it('offers configuration instead of inventory confirmation when table groups are
   expect(
     screen.queryByRole('button', { name: 'Confirmar ocupación' }),
   ).not.toBeInTheDocument()
+  expect(screen.queryByText(/inventario|ocupación pendiente/i)).not.toBeInTheDocument()
   expect(screen.queryByText('Fuera de horario')).not.toBeInTheDocument()
 })
-it('keeps corrections reachable for retained external occupancy in a closed invalidated queue', async () => {
+it('does not expose occupancy corrections for legacy inventory data', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [
@@ -439,16 +434,8 @@ it('keeps corrections reachable for retained external occupancy in a closed inva
   fireEvent.click(
     await screen.findByRole('menuitem', { name: 'Configuración avanzada' }),
   )
-  fireEvent.click(
-    await screen.findByRole('button', {
-      name: 'Desglose y correcciones de ocupación',
-    }),
-  )
-  expect(
-    await screen.findByRole('dialog', {
-      name: 'Actualizar ocupación · Restaurante',
-    }),
-  ).toBeVisible()
+  expect(screen.queryByRole('button', { name: /desglose y correcciones de ocupación/i })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /actualizar ocupación|liberar uno/i })).not.toBeInTheDocument()
   expect(
     screen.queryByRole('button', { name: 'Confirmar ocupación' }),
   ).not.toBeInTheDocument()
@@ -502,7 +489,7 @@ it.each(['queue_staff', 'viewer'] as const)(
       ).not.toBeInTheDocument()
   },
 )
-it('keeps service Card actions minimal and moves operations into the queue header menu', async () => {
+it('keeps service actions minimal and removes physical-resource operations from the queue menu', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [
@@ -553,7 +540,7 @@ it('keeps service Card actions minimal and moves operations into the queue heade
   )
   expect(
     (await screen.findAllByRole('menuitem')).map((item) => item.textContent),
-  ).toEqual(['Configuración avanzada', 'Mesa libre'])
+  ).toEqual(['Configuración avanzada'])
 })
 it('returns nested operation sheets to the queue menu trigger after cancel and save, then back closes only the drawer', async () => {
   let disabled = false
@@ -615,7 +602,7 @@ it('returns nested operation sheets to the queue menu trigger after cancel and s
   let sheet = await screen.findByRole('dialog', {
     name: 'Desactivar gestión inteligente · Restaurante',
   })
-  fireEvent.click(within(sheet).getByRole('button', { name: 'Cancelar' }))
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Volver' }))
   await waitFor(() => expect(policy).toHaveFocus())
   expect(
     screen.getByRole('dialog', { name: 'Configuración avanzada' }),
@@ -685,7 +672,7 @@ it('keeps the members close button and omits operations and empty queue footer i
       .mock.calls.every(([, method]) => !method || method === 'GET'),
   ).toBe(true)
 })
-it('keeps the initial occupancy CTA visible even when intelligence is manually disabled', async () => {
+it('does not show a legacy inventory CTA when intelligence is manually disabled', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [
@@ -711,15 +698,10 @@ it('keeps the initial occupancy CTA visible even when intelligence is manually d
     />,
   )
   expect(await screen.findByText('Servicio abierto')).toBeVisible()
-  expect(
-    screen.queryByRole('button', { name: 'Confirmar ocupación' }),
-  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Confirmar ocupación' })).not.toBeInTheDocument()
   await openCardAdvanced()
-  expect(
-    await screen.findByRole('button', {
-      name: 'Desglose y correcciones de ocupación',
-    }),
-  ).toBeVisible()
+  expect(await screen.findByRole('button', { name: 'Volver a gestión automática' })).toBeVisible()
+  expect(screen.queryByRole('button', { name: /desglose y correcciones|actualizar ocupación/i })).not.toBeInTheDocument()
   expect(screen.getByText('Desactivada manualmente')).toBeVisible()
 })
 it('omits the restaurant global footer and assigns the selected group through the existing sheet', async () => {
@@ -896,17 +878,13 @@ it('reuses the exact request after an unknown outcome when refreshed assignment 
   fireEvent.click(
     within(sheet).getByRole('checkbox', { name: 'Cliente ya presente' }),
   )
-  fireEvent.change(
-    within(sheet).getByLabelText('Motivo de prioridad (obligatorio)'),
-    { target: { value: 'Cliente esperando' } },
-  )
+  expect(within(sheet).queryByLabelText(/motivo de prioridad/i)).not.toBeInTheDocument()
   const confirm = within(sheet).getByRole('button', { name: 'Confirmar' })
   fireEvent.click(confirm)
   await waitFor(() => expect(commands).toHaveLength(1))
   await waitFor(() => expect(entryReads).toBeGreaterThan(1))
-  expect(
-    await within(sheet).findByText(/Disponibilidad compatible · Terraza/),
-  ).toBeVisible()
+  expect(await within(sheet).findByText(/Al asignar confirmas/)).toBeVisible()
+  expect(within(sheet).queryByText(/Terraza|Interior/)).not.toBeInTheDocument()
   await waitFor(() => expect(confirm).toBeEnabled())
 
   fireEvent.click(confirm)
@@ -917,7 +895,6 @@ it('reuses the exact request after an unknown outcome when refreshed assignment 
     action: 'call',
     arrivalMode: 'present',
     assignmentToken: 'first-token',
-    overrideReason: 'Cliente esperando',
   })
   expect(commands[0]!.key).toEqual(expect.any(String))
   expect(commands[1]!.body).toEqual(commands[0]!.body)

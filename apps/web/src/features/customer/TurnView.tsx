@@ -1,6 +1,6 @@
 import { Link } from 'react-router'
 import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
-import type { Entry } from '@noqueue/contracts/queue'
+import { visibleWaitingCount, type Entry } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import {
@@ -377,7 +377,10 @@ export function TurnView({
                 <p>
                   {es ? 'Hay ' : ''}
                   <strong>
-                    {Math.max(0, entry.position - 1)} {es ? 'turnos' : 'turns'}
+                    {visibleWaitingCount(entry.position - 1)}{' '}
+                    {visibleWaitingCount(entry.position - 1) === 1
+                      ? es ? 'turno' : 'turn'
+                      : es ? 'turnos' : 'turns'}
                   </strong>{' '}
                   {es ? 'delante de ti' : 'ahead of you'}
                 </p>

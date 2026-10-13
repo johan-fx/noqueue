@@ -59,7 +59,9 @@ export function PublicQueue() {
           </p>
           <p>
             {visualWaitingPeople(service)}{' '}
-            {locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
+            {visualWaitingPeople(service) === 1
+              ? locale === 'es' ? 'persona en lista de espera' : 'person waiting'
+              : locale === 'es' ? 'personas en lista de espera' : 'people waiting'}
           </p>
         </div>
       )}

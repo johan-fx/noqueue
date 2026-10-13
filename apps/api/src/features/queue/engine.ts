@@ -11,6 +11,7 @@ export type Resource = {
   callable?: boolean
 }
 export type Party = {
+  version?: number
   id: string
   sequence: number
   partySize: number
@@ -97,8 +98,7 @@ export function projectQueue(
           progress.lastCallAt <= now &&
           progress.lastCallAt + progress.cadenceMinutes * 60000 > now
         const predictedAt = cadenceValid
-          ? progress.lastCallAt +
-            (index + 1) * progress.cadenceMinutes * 60000
+          ? progress.lastCallAt + (index + 1) * progress.cadenceMinutes * 60000
           : null
         return {
           id: party.id,
@@ -117,9 +117,10 @@ export function projectQueue(
       const predictedAt = Math.max(now, slot.availableAt!)
       const callable = !!slot.callable && predictedAt <= now
       slot.callable = false
-      slot.availableAt = slot.occupancyMinutes === null
-        ? null
-        : predictedAt + (slot.occupancyMinutes ?? slot.averageMinutes) * 60000
+      slot.availableAt =
+        slot.occupancyMinutes === null
+          ? null
+          : predictedAt + (slot.occupancyMinutes ?? slot.averageMinutes) * 60000
       return {
         id: party.id,
         position: index + 1,

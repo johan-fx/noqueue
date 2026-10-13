@@ -3,7 +3,6 @@ import type { ServiceInput } from '@noqueue/contracts/staff'
 import {
   cadenceFactor,
   configuredIntervalMinutes,
-  learnedOccupancyMinutes,
   projectAdaptiveQueue,
   protectionRemainingMs,
   safetyMarginMs,
@@ -89,17 +88,22 @@ describe('adaptive cadence helpers', () => {
     expect(cadenceFactor([Infinity, -1, 1, 1])).toBeCloseTo(1)
   })
 
-  it('learns occupancy separately, only after three valid arrival→release samples', () => {
-    expect(learnedOccupancyMinutes([30, 40])).toBeNull()
-    expect(learnedOccupancyMinutes([0, 30, 40, 50, 1441])).toBeCloseTo(
-      (30 + 40 * 1.1 + 50 * 1.2) / 3.3,
+  it('does not use arrival-to-release duration as a cadence input', () => {
+    const plain = projectAdaptiveQueue(parties, [resource('a')], 0, config(), 20, 1)
+    const withHistoricalDuration = projectAdaptiveQueue(
+      parties,
+      [resource('a', { occupancyMinutes: 60 })],
+      0,
+      config(),
+      20,
+      1,
     )
-    expect(learnedOccupancyMinutes([10, 20, 30, ...Array(30).fill(60)])).toBe(
-      60,
+    expect(withHistoricalDuration.map((row) => row.predictedAt)).toEqual(
+      plain.map((row) => row.predictedAt),
     )
   })
 
-  it('uses the configured interval as the initial stacked cadence (4, 8, 12)', () => {
+  it('serially stacks configured work without claiming an inferred zone', () => {
     const source = [resource('a'), resource('b'), resource('c')]
     const snapshot = structuredClone(source)
     const projection = projectAdaptiveQueue(
@@ -112,14 +116,15 @@ describe('adaptive cadence helpers', () => {
     )
     expect(projection.map((row) => row.predictedAt / 60_000)).toEqual([4, 8, 12])
     expect(projection.map((row) => row.quality)).toEqual([
-      'estimated',
-      'estimated',
-      'estimated',
+      'provisional',
+      'provisional',
+      'provisional',
     ])
+    expect(projection.map((row) => row.resourceId)).toEqual([null, null, null])
     expect(source).toEqual(snapshot)
   })
 
-  it('uses learned occupancy only to model later resource availability', () => {
+  it('does not let inventory quantity or historic occupancy change serial cadence', () => {
     const projection = projectAdaptiveQueue(
       [...parties, { id: 'p4', sequence: 4, partySize: 2 }],
       [
@@ -136,8 +141,9 @@ describe('adaptive cadence helpers', () => {
       4,
       8,
       12,
-      24,
+      16,
     ])
+    expect(projection.every((row) => row.resourceId === null)).toBe(true)
   })
 
   it('applies the learned factor gradually without rounding fractional minutes', () => {
@@ -161,7 +167,7 @@ describe('adaptive cadence helpers', () => {
     ])
   })
 
-  it('falls back to provisional cadence without asserting an unknown resource is callable', () => {
+  it('keeps a finite provisional forecast with unknown inventory', () => {
     const projection = projectAdaptiveQueue(
       parties,
       [resource('unknown', { known: false, availableAt: 0 })],
@@ -201,7 +207,7 @@ describe('adaptive cadence helpers', () => {
     })
   })
 
-  it('never reuses a predicted assignment as a known slot without occupancy history', () => {
+  it('ignores resource count and occupancy history as throughput constraints', () => {
     const projection = projectAdaptiveQueue(
       parties,
       [resource('single', { occupancyMinutes: null })],
@@ -211,18 +217,14 @@ describe('adaptive cadence helpers', () => {
       1,
     )
     expect(projection.map((row) => row.quality)).toEqual([
-      'estimated',
+      'provisional',
       'provisional',
       'provisional',
     ])
-    expect(projection.map((row) => row.resourceId)).toEqual([
-      'single',
-      null,
-      null,
-    ])
+    expect(projection.map((row) => row.resourceId)).toEqual([null, null, null])
   })
 
-  it('respects party size and selected-space eligibility', () => {
+  it('uses selected context configuration but never chooses a physical resource', () => {
     const projection = projectAdaptiveQueue(
       [{ id: 'large', sequence: 1, partySize: 5, preferredSpaceId: 'other' }],
       [resource('room-small'), resource('other-large', { spaceId: 'other', seats: 6 })],
@@ -232,9 +234,9 @@ describe('adaptive cadence helpers', () => {
       1,
     )
     expect(projection[0]).toMatchObject({
-      resourceId: 'other-large',
+      resourceId: null,
       predictedAt: 9 * 60_000,
-      quality: 'estimated',
+      quality: 'provisional',
     })
   })
 

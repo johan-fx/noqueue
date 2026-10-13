@@ -232,136 +232,85 @@ async function openControlFixture(
   return { gear, commands, saved, config, mocks }
 }
 
-test('release group popup preserves its Sheet and restores focus after submitting the selected tuple', async ({
+test('queue options omit physical inventory actions and restore focus after dismissal', async ({
   page,
 }) => {
   const { gear, commands, mocks } = await openControlFixture(page, {
-    commands: 1,
+    commands: 0,
     patches: 0,
+    openingContext: 0,
   })
   await gear.click()
   await expect(gear).toHaveAttribute('aria-expanded', 'true')
   const serviceMenu = page.getByRole('menu')
   await expect(serviceMenu).toBeVisible()
-  await serviceMenu
-    .getByRole('menuitem', { name: 'Mesa libre', exact: true })
-    .click()
-  const sheet = page.getByRole('dialog', {
-    name: 'Mesa libre · Control restaurant',
-    exact: true,
-  })
-  const trigger = sheet.getByRole('combobox', { name: 'Grupo de mesas' })
-  await expect(trigger.locator('[data-slot=select-value]')).toHaveText(
-    'Terraza · 4 plazas',
-  )
-  await trigger.focus()
-  await trigger.press('Enter')
-  await page.keyboard.press('Escape')
-  await expect(trigger).toBeFocused()
-  await expect(sheet).toBeVisible()
-  await trigger.press('Enter')
-  await page.getByRole('option', { name: 'Salón · 4 plazas' }).click()
-  await expect(trigger.locator('[data-slot=select-value]')).toHaveText(
-    'Salón · 4 plazas',
-  )
-  await expect(sheet).toBeVisible()
+  await expect(
+    serviceMenu.getByRole('menuitem', { name: 'Mesa libre', exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    serviceMenu.getByRole('menuitem', {
+      name: 'Desglose y correcciones de ocupación',
+      exact: true,
+    }),
+  ).toHaveCount(0)
   expect(commands).toHaveLength(0)
-  await sheet
-    .getByRole('button', { name: 'Liberar una mesa', exact: true })
-    .click()
-  await expect(sheet).toHaveCount(0)
-  expect(commands).toEqual([
-    {
-      action: 'release_unit',
-      contextToken: 'control-context',
-      spaceId: 'salon',
-      seats: 4,
-    },
-  ])
+  await page.keyboard.press('Escape')
   await expect(gear).toBeFocused()
   await mocks.assertComplete()
 })
 
-test('adjustment type popup preserves metadata and submits duration and availability payloads', async ({
+test('queue configuration saves estimate reference and arrival deadline without inventory controls', async ({
   page,
 }) => {
-  const { gear, saved, config, mocks } = await openControlFixture(page, {
+  const { gear, saved, mocks } = await openControlFixture(page, {
     commands: 0,
-    patches: 2,
+    patches: 1,
     openingContext: 0,
   })
-  for (const mode of ['duration', 'availability'] as const) {
-    await gear.click()
-    await page
-      .getByRole('menuitem', { name: 'Configurar servicio', exact: true })
-      .click()
-    const drawer = page.getByRole('dialog', {
-      name: 'Configuración restaurante',
-      exact: true,
-    })
-    await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
-    await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
-    await drawer
-      .getByRole('button', { name: 'Configuración avanzada', exact: true })
-      .click()
-    const advanced = page.getByRole('dialog', {
-      name: 'Configuración avanzada',
-      exact: true,
-    })
-    await advanced
-      .getByRole('button', { name: 'Opciones de operación', exact: true })
-      .click()
-    const trigger = advanced.getByRole('combobox', { name: 'Tipo de ajuste' })
-    const options = page.getByRole('listbox')
-    await expect(trigger.locator('[data-slot=select-value]')).toHaveText(
-      'Duración estimada',
-    )
-    await trigger.scrollIntoViewIfNeeded()
-    await trigger.click()
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(options).toBeVisible()
-    await page.keyboard.press('Escape')
-    await expect(trigger).toBeFocused()
-    await trigger.press('Enter')
-    await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-    await expect(options).toBeVisible()
-    await options
-      .getByRole('option', { name: 'Bloquear disponibilidad hasta caducidad' })
-      .click()
-    await expect(advanced.getByLabel('Duración temporal (min)')).toHaveCount(0)
-    await expect(advanced.getByLabel('Motivo', { exact: true })).toHaveValue(
-      'Cleaning',
-    )
-    if (mode === 'duration') {
-      await trigger.click()
-      await expect(trigger).toHaveAttribute('aria-expanded', 'true')
-      await expect(options).toBeVisible()
-      await options
-        .getByRole('option', { name: 'Duración estimada', exact: true })
-        .click()
-      await expect(advanced.getByLabel('Duración temporal (min)')).toHaveValue(
-        '30',
-      )
-    }
-    await advanced
-      .getByRole('button', { name: 'Confirmar', exact: true })
-      .click()
-    await expect(advanced).toHaveCount(0)
-    await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
-    await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
-    await drawer.getByRole('button', { name: 'Confirmar', exact: true }).click()
-    await expect(drawer).toHaveCount(0)
-    const adjustment = saved.at(-1)!.adjustments[0]!
-    expect(adjustment).toMatchObject({
-      kind: mode,
-      spaceId: 'terrace',
-      seats: 4,
-      reason: 'Cleaning',
-      expiresAt: config.adjustments[0]!.expiresAt,
-    })
-    if (mode === 'duration') expect(adjustment.minutes).toBe(30)
-    else expect(adjustment).not.toHaveProperty('minutes')
-    await expect(gear).toBeFocused()
-  }
+  await gear.click()
+  await page
+    .getByRole('menuitem', { name: 'Configurar servicio', exact: true })
+    .click()
+  const drawer = page.getByRole('dialog', {
+    name: 'Configuración restaurante',
+    exact: true,
+  })
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer
+    .getByRole('button', { name: 'Configuración avanzada', exact: true })
+    .click()
+  const advanced = page.getByRole('dialog', {
+    name: 'Configuración avanzada',
+    exact: true,
+  })
+  await expect(
+    advanced.getByRole('button', { name: 'Opciones de operación', exact: true }),
+  ).toHaveCount(0)
+  await expect(advanced.getByRole('combobox', { name: 'Tipo de ajuste' })).toHaveCount(0)
+  await expect(advanced.getByLabel('Plazo de llegada (minutos)')).toHaveValue('5')
+  await advanced.getByLabel('Plazo de llegada (minutos)').fill('8')
+  await advanced.getByRole('button', { name: 'Mesas de 4', exact: true }).click()
+  const interval = advanced.getByLabel('Terraza · 4 plazas (min)')
+  await interval.fill('42')
+  await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(advanced).toHaveCount(0)
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  await drawer.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(drawer).toHaveCount(0)
+  expect(saved).toHaveLength(1)
+  expect(saved[0]).toMatchObject({ graceMinutes: 8 })
+  expect(saved[0]!.spaces).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        id: 'terrace',
+        tableTypes: expect.arrayContaining([
+          expect.objectContaining({ seats: 4, averageMinutes: 42 }),
+        ]),
+      }),
+    ]),
+  )
+  await expect(gear).toBeFocused()
   await mocks.assertComplete()
 })

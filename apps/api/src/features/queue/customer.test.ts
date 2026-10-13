@@ -106,7 +106,7 @@ it('atomically yields to the next compatible group and replays before version va
     }),
   ).rejects.toThrow('idempotency_conflict')
 })
-it('allows a called entry to pass its reservation to the next compatible waiting party', async () => {
+it('automatically calls the next compatible party without transferring inventory', async () => {
   const { queueId, entries } = await fixture()
   await env.DB.batch([
     env.DB.prepare(
@@ -126,7 +126,7 @@ it('allows a called entry to pass its reservation to the next compatible waiting
     .bind(queueId)
     .all()
   expect(rows.results).toMatchObject([
-    { id: entries[2]!.id, status: 'called', sequence: 1, version: 1 },
+    { id: entries[2]!.id, status: 'called', sequence: 1, version: 1, call_cycle: 1, arrival_deadline_at: 302_000 },
     { id: entries[1]!.id, status: 'waiting', sequence: 2 },
     {
       id: entries[0]!.id,
@@ -144,17 +144,13 @@ it('allows a called entry to pass its reservation to the next compatible waiting
       .bind(queueId)
       .all()
   ).results
-  expect(allocations).toHaveLength(2)
+  expect(allocations).toHaveLength(1)
   expect(allocations.find((item) => item.entry_id === entries[0]!.id)).toMatchObject({
-    released_at: 2_000,
-    outcome: 'yielded',
-  })
-  expect(allocations.find((item) => item.entry_id === entries[2]!.id)).toMatchObject({
     released_at: null,
     outcome: null,
   })
 })
-it('returns a called entry to its original position and releases its reservation when nobody compatible waits', async () => {
+it('returns a called entry to its position without inventing a reservation release when nobody compatible waits', async () => {
   const { queueId, entries } = await fixture()
   await env.DB.batch([
     env.DB.prepare(
@@ -194,7 +190,7 @@ it('returns a called entry to its original position and releases its reservation
     )
       .bind(entries[0]!.id)
       .first(),
-  ).toMatchObject({ released_at: 2_000, outcome: 'yielded' })
+  ).toMatchObject({ released_at: null, outcome: null })
 })
 
 it('commits one WhatsApp cancellation and one event-bound receipt across repeated taps', async () => {
@@ -390,7 +386,7 @@ it('expires at the persisted deadline exactly once and preserves legacy calls', 
         .bind(entries[0]!.id)
         .first()
     )?.released_at,
-  ).toBe(1000)
+  ).toBeNull()
 })
 
 it('runs the durable alarm without a browser and repairs a missing alarm on coordinator refresh', async () => {
@@ -668,15 +664,11 @@ it('rolls back the operational command when its canonical projection fails', asy
     ).results,
   ).toHaveLength(0)
 })
-it('preserves signed operational improvement on idempotent cancellation replay and creates no new intent for the cancelled entry', async () => {
+it('reprojects a cancellation without inventory deltas and creates no new intent on idempotent replay', async () => {
   const { recalculateQueue } = await import('./projection')
+  const { readProjection } = await import('./projection')
   const { queueId, entries } = await fixture(),
     now = Date.now()
-  await env.DB.prepare(
-    "UPDATE queue SET config=json_set(config,'$.resourceStateKnown',json('true')) WHERE id=?",
-  )
-    .bind(queueId)
-    .run()
   await recalculateQueue(env, queueId, now)
   const cancelled = entries[0]!,
     successor = entries[2]!,
@@ -688,6 +680,7 @@ it('preserves signed operational improvement on idempotent cancellation replay a
       .bind(cancelled.id)
       .first<{ n: number }>()
   const originalIntents = await intents()
+  const predictionBefore = await readProjection(env, successor.id, true)
   await runCustomerCommand(
     env,
     queueId,
@@ -696,13 +689,12 @@ it('preserves signed operational improvement on idempotent cancellation replay a
     { action: 'cancel', version: 0 },
     now,
   )
-  const provenance = () =>
-    env.DB.prepare(
-      'SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?',
-    )
-      .bind(successor.id)
-      .first<{ operational_forecast_delta_ms: number }>()
-  expect((await provenance())?.operational_forecast_delta_ms).toBe(-30 * 60000)
+  const predictionAfter = await readProjection(env, successor.id, true)
+  expect(predictionAfter?.position).toBe(2)
+  expect(predictionAfter?.predictedAt).toBeLessThan(predictionBefore!.predictedAt!)
+  expect(
+    (await env.DB.prepare('SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?').bind(successor.id).first())?.operational_forecast_delta_ms,
+  ).toBe(0)
   await recalculateQueue(env, queueId, now + 20 * 60000)
   await runCustomerCommand(
     env,
@@ -712,13 +704,11 @@ it('preserves signed operational improvement on idempotent cancellation replay a
     { action: 'cancel', version: 0 },
     now + 40 * 60000,
   )
-  expect((await provenance())?.operational_forecast_delta_ms).toBe(-30 * 60000)
+  expect((await readProjection(env, successor.id, true))?.predictedAt).toBe(predictionAfter?.predictedAt)
   expect(await intents()).toEqual(originalIntents)
 })
-it('arms an already-due unprocessed adjustment when its deadline passes during coordinated work', async () => {
-  const { runInDurableObject, runDurableObjectAlarm } = await import(
-    'cloudflare:test'
-  )
+it('ignores expired legacy resource adjustments without scheduling queue work', async () => {
+  const { runInDurableObject } = await import('cloudflare:test')
   const { recalculateQueue } = await import('./projection')
   const { queueId, entries } = await fixture(),
     start = Date.now(),
@@ -753,13 +743,10 @@ it('arms an already-due unprocessed adjustment when its deadline passes during c
       })
       return state.storage.getAlarm()
     })
-    expect(alarm).toBe(deadline + 1)
-    await runDurableObjectAlarm(stub)
-    expect(
-      await runInDurableObject(stub, (_instance, state) =>
-        state.storage.getAlarm(),
-      ),
-    ).toBeNull()
+    // Legacy adjustment expiries are no longer operational timers. The queue
+    // cadence must remain driven by configured/contextual estimates only.
+    expect(alarm).toBeNull()
+    await recalculateQueue(env, queueId, deadline)
     expect(
       (
         await env.DB.prepare(
@@ -768,7 +755,7 @@ it('arms an already-due unprocessed adjustment when its deadline passes during c
           .bind(entries[2]!.id)
           .first()
       )?.operational_forecast_delta_ms,
-    ).toBe(-30 * 60000)
+    ).toBe(0)
   } finally {
     nowSpy.mockRestore()
   }

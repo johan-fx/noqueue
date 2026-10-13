@@ -202,3 +202,8 @@ export const consentCopy = {
   es: 'Acepto recibir actualizaciones de este turno por WhatsApp. Puedo darme de baja enviando STOP o BAJA. Aviso provisional para pruebas.',
   en: 'I agree to receive updates for this waiting list entry on WhatsApp. I can opt out by sending STOP or BAJA. Provisional testing notice.',
 }
+
+/** Presentation only: never use this virtual floor for ordering or estimates. */
+export function visibleWaitingCount(real: number): number {
+  return Math.max(1, real)
+}

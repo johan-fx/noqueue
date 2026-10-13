@@ -24,7 +24,7 @@ import { Switch } from '@/components/ui/switch'
 import { api, errorMessage } from './api'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
-import { occupancyAction, readinessNotice } from './queue-readiness'
+import { readinessNotice } from './queue-readiness'
 
 type Child = 'settings' | 'reminder' | QueueLifecycleCommand['action']
 type DeliveryTrace = {
@@ -185,30 +185,11 @@ export function QueueAdvancedDrawer({
               disabled={busy || needsReload}
               onClick={(e) => open('settings', e.currentTarget)}
             >
-              Recursos y ajustes de estimación
+              Espacios y referencias de estimación
             </Button>
           )}
           {canOperate && (
             <>
-              {queue.config.type === 'restaurant' && (
-                <Button
-                  variant="outline"
-                  className="min-h-12 w-full"
-                  disabled={
-                    busy ||
-                    needsReload ||
-                    queue.readiness?.reasons.includes('configuration_missing')
-                  }
-                  onClick={(e) =>
-                    open(
-                      occupancyAction(queue) ?? 'confirm_inventory',
-                      e.currentTarget,
-                    )
-                  }
-                >
-                  Desglose y correcciones de ocupación
-                </Button>
-              )}
               <Button
                 variant="outline"
                 className="min-h-12 w-full whitespace-normal"

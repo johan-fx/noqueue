@@ -529,7 +529,7 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   )
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
-    `SELECT id,code,party_size AS partySize,status,sequence,version,CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=queue_entry.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,arrival_deadline_at AS arrivalDeadlineAt,(SELECT resource_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS resourceId,(SELECT space_id FROM queue_allocation a WHERE a.entry_id=queue_entry.id) AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
+    `SELECT id,code,party_size AS partySize,status,sequence,version,CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=queue_entry.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,display_name_cipher AS displayNameCipher,reception_service AS receptionService,preferred_space_id AS preferredSpaceId,called_at AS calledAt,arrival_deadline_at AS arrivalDeadlineAt,NULL AS resourceId,NULL AS assignedSpaceId FROM queue_entry WHERE queue_id=? ORDER BY CASE WHEN status IN ('waiting','called','completed') THEN 0 ELSE 1 END,CASE WHEN status IN ('waiting','called','completed') THEN sequence ELSE -sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
     .all()
@@ -581,12 +581,14 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
           ...entry,
           ...(cancellationReason ? { cancellationReason } : {}),
           ...projection,
-          ...(row.status === 'waiting' ? {
-            waitEstimate: {
-              predictedAt: waitProjection?.predictedAt ?? null,
-              estimateQuality: waitProjection?.estimateQuality ?? 'unknown',
-            },
-          } : {}),
+          ...(row.status === 'waiting'
+            ? {
+                waitEstimate: {
+                  predictedAt: waitProjection?.predictedAt ?? null,
+                  estimateQuality: waitProjection?.estimateQuality ?? 'unknown',
+                },
+              }
+            : {}),
           allowedActions: allowedEntryActions(
             config?.type ?? 'reception',
             String(row.status),
@@ -655,7 +657,10 @@ staffRoutes.post('/queues/:id/commands', async (c) => {
     c.req.param('id'),
     'queue.operate',
   )
-  const input = queueCommandSchema.safeParse(await c.req.json())
+  const raw = await c.req.json()
+  if (raw?.action === 'release')
+    return c.json({ error: 'operation_retired' }, 410)
+  const input = queueCommandSchema.safeParse(raw)
   if (!input.success) return c.json({ error: 'invalid_command' }, 400)
   const result = await coordinator(c.env, c.req.param('id')).staffCommand(
     c.get('actor').id,
@@ -685,7 +690,10 @@ staffRoutes.post('/queues/:id/lifecycle', async (c) => {
     c.req.param('id'),
     'queue.operate',
   )
-  const input = queueLifecycleSchema.safeParse(await c.req.json())
+  const raw = await c.req.json()
+  if (['release_unit', 'occupancy', 'confirm_inventory'].includes(raw?.action))
+    return c.json({ error: 'operation_retired' }, 410)
+  const input = queueLifecycleSchema.safeParse(raw)
   if (!input.success) return c.json({ error: 'invalid_inventory' }, 400)
   const result = await coordinator(c.env, c.req.param('id')).lifecycle(
     c.get('actor').id,

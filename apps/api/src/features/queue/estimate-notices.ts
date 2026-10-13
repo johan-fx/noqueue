@@ -77,6 +77,8 @@ export function evaluateEstimateNotice(input: {
 }
 
 /**
+ * Snapshot policy retained for legacy notices and adaptive improvements.
+ * New adaptive delays use queue_wait_extension events, not these gates.
  * Evaluate an adaptive-estimator correction from absolute forecast deadlines.
  * Unlike the legacy evaluator, provenance is already encoded in the current
  * and accepted deadlines, so natural countdown passage cannot create a notice.

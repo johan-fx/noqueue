@@ -255,7 +255,7 @@ it('blocks only grace changes while a legacy call lacks its immutable deadline',
   expect((await loadQueueState(env, t.queue)).config?.graceMinutes).toBe(5)
 })
 
-it('uses compatible priority, revalidates stale availability, and retains the table after arrival', async () => {
+it('assigns any waiting restaurant turn without inventory context and completes terminally', async () => {
   const { assignmentContext } = await import('./assignment')
   const t = await setup({
     ...config,
@@ -281,68 +281,48 @@ it('uses compatible priority, revalidates stale availability, and retains the ta
   ).toBe(false)
   expect(
     (await assignmentContext(state, later, Date.now())).priorityRequired,
-  ).toBe(true)
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'call',
-      entryId: later,
-      version: 0,
-    }),
-  ).rejects.toThrow('oldest_compatible_required')
+  ).toBe(false)
   const snapshot = await assignmentContext(state, small, Date.now())
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'call',
     entryId: later,
     version: 0,
-    overrideReason: 'Priority guest',
   })
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'call',
-      entryId: small,
-      version: 0,
-      assignmentToken: snapshot.token,
-    }),
-  ).rejects.toThrow('assignment_context_changed')
+  // An unrelated assignment does not invalidate this turn's state/version token.
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'call',
+    entryId: small,
+    version: 0,
+    assignmentToken: snapshot.token,
+  })
   expect(
     (
       await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
         .bind(small)
         .first()
     )?.status,
-  ).toBe('waiting')
+  ).toBe('called')
+  expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'complete',
     entryId: later,
     version: 1,
   })
-  state = await loadQueueState(env, t.queue)
-  expect(
-    state.allocations.find((a) => a.entry_id === later)?.released_at,
-  ).toBeNull()
-  expect(
-    state.allocations.find((a) => a.entry_id === later)?.arrived_at,
-  ).not.toBeNull()
+  await expect(
+    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      action: 'release',
+      entryId: later,
+      version: 2,
+    }),
+  ).rejects.toThrow('operation_retired')
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'release',
-    entryId: later,
-    version: 2,
-  })
-  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'call',
-    entryId: small,
-    version: 0,
-  })
-  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'cancel',
+    action: 'complete',
     entryId: small,
     version: 1,
   })
-  expect(
-    (await loadQueueState(env, t.queue)).allocations.every(
-      (a) => a.released_at !== null,
-    ),
-  ).toBe(true)
+  state = await loadQueueState(env, t.queue)
+  expect(state.allocations).toHaveLength(0)
+  expect(state.parties.map((party) => party.id)).toEqual([large])
   expect(
     (
       await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
@@ -456,7 +436,7 @@ it('reissues a ready notice with a new call-cycle after expiry, restoration, and
   )
   expect(
     JSON.parse(notices.results[0]!.payload_snapshot).resourceName,
-  ).toBe('Piscina / bar')
+  ).toBeNull()
 })
 
 it('cancels a pending joined notice atomically when the turn is assigned', async () => {
@@ -574,20 +554,22 @@ it('timestamps only real service configuration, not operational activity or no-o
     }),
   ).rejects.toMatchObject({ message: 'version_conflict' })
   expect(await stamp()).toBe(200)
-  await configureQueue(env, t.actor, t.queue, {
-    ...JSON.parse(state!.config),
-    version: state!.version,
-    open: !!state!.open,
-    adjustments: [
-      {
-        spaceId: 'terrace',
-        seats: 4,
-        minutes: 40,
-        reason: 'Temporary delay',
-        expiresAt: Date.now() + 60000,
-      },
-    ],
-  })
+  await expect(
+    configureQueue(env, t.actor, t.queue, {
+      ...JSON.parse(state!.config),
+      version: state!.version,
+      open: !!state!.open,
+      adjustments: [
+        {
+          spaceId: 'terrace',
+          seats: 4,
+          minutes: 40,
+          reason: 'Temporary delay',
+          expiresAt: Date.now() + 60000,
+        },
+      ],
+    }),
+  ).rejects.toMatchObject({ status: 410, message: 'operation_retired' })
   expect(await stamp()).toBe(200)
   const context = await openingContext(env, t.queue)
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
@@ -672,7 +654,7 @@ it('does not timestamp queue lifecycle operations or repeated intelligence polic
       contextToken: (await openingContext(env, t.queue)).contextToken,
       groups: [],
     })
-  await command('open')
+  if (!(await openingContext(env, t.queue)).open) await command('open')
   expect(await stamp()).toBe(100)
   await command('pause')
   expect(await stamp()).toBe(100)

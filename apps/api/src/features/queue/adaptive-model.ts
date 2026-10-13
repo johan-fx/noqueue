@@ -36,36 +36,35 @@ export function configuredIntervalMinutes(
   seats?: number,
 ): number {
   if (config && spaceId !== undefined && seats !== undefined) {
-    const tableType =
-      config.spaces
-        .find((space) => space.id === spaceId)
-        ?.tableTypes?.find((type) => type.seats === seats)
-        ?.averageMinutes
+    const tableType = config.spaces
+      .find((space) => space.id === spaceId)
+      ?.tableTypes?.find((type) => type.seats === seats)?.averageMinutes
     if (positiveMinutes(tableType)) return tableType
 
-    const legacy = config.queueBySeat?.find((row) => row.seats === seats)
-      ?.averageMinutes
+    const legacy = config.queueBySeat?.find(
+      (row) => row.seats === seats,
+    )?.averageMinutes
     if (positiveMinutes(legacy)) return legacy
   }
 
   return config && positiveMinutes(config.averageMinutes)
     ? config.averageMinutes
     : positiveMinutes(baseline)
-      ? baseline
-      : 1
+    ? baseline
+    : 1
 }
 
 /**
  * Learn one service-level cadence multiplier from assignment intervals.
  * Ratios are chronological (oldest first); zero is a valid simultaneous call.
  */
-export function cadenceFactor(ratios: number[]): number {
+export function cadenceFactor(ratios: number[], prior = 1): number {
   const valid = ratios
     .filter((value) => Number.isFinite(value) && value >= 0)
     .slice(-OBSERVATION_WINDOW)
-  if (valid.length < 3) return 1
+  if (valid.length < 3) return prior
 
-  let weightedTotal = 5 // prior weight, centered on the configured cadence (1x)
+  let weightedTotal = 5 * prior // hierarchical prior, weight five
   let totalWeight = 5
   for (const [index, value] of valid.entries()) {
     const weight = 1 + index / 10
@@ -76,9 +75,7 @@ export function cadenceFactor(ratios: number[]): number {
 }
 
 /** Learn occupancy duration only from real arrival→release observations. */
-export function learnedOccupancyMinutes(
-  observations: number[],
-): number | null {
+export function learnedOccupancyMinutes(observations: number[]): number | null {
   const valid = observations
     .filter(
       (value) =>
@@ -109,10 +106,7 @@ export function safetyMarginMs(
     Number.isFinite(approachMinutes) && approachMinutes > 0
       ? (approachMinutes * 60_000) / 2
       : Number.POSITIVE_INFINITY
-  return Math.max(
-    MIN_SAFETY_MS,
-    Math.min(60_000, cadence / 4, approachLimit),
-  )
+  return Math.max(MIN_SAFETY_MS, Math.min(60_000, cadence / 4, approachLimit))
 }
 
 /** Minimum extension after a safety check finds no assignment yet. */
@@ -129,169 +123,179 @@ export function protectionRemainingMs(
   return Math.max(cadence, 2 * safety, elapsed / 2)
 }
 
-function effectiveCadenceMs(
+export type EstimateContext = {
+  spaceId: string | null
+  seats: number | null
+  baselineMinutes: number
+  provenance: 'inferred' | 'general'
+}
+
+/** Requested context only: this never claims an actual physical allocation. */
+export function resolveEstimateContext(
+  party: Pick<Party, 'partySize' | 'preferredSpaceId'>,
   config: ServiceInput | null,
   baseline: number,
-  factor: number,
-  spaceId?: string,
-  seats?: number,
-) {
-  const factorValue = Number.isFinite(factor) ? Math.max(0, factor) : 1
-  return Math.max(
-    MIN_CADENCE_MS,
-    configuredIntervalMinutes(config, baseline, spaceId, seats) *
-      factorValue *
-      60_000,
-  )
+): EstimateContext {
+  const spaceId =
+    party.preferredSpaceId && party.preferredSpaceId !== 'fastest'
+      ? party.preferredSpaceId
+      : null
+  const type = spaceId
+    ? config?.spaces
+        .find((s) => s.id === spaceId)
+        ?.tableTypes?.filter((t) => t.seats >= party.partySize)
+        .sort((a, b) => a.seats - b.seats)[0]
+    : undefined
+  return {
+    spaceId,
+    seats: type?.seats ?? null,
+    baselineMinutes: configuredIntervalMinutes(
+      config,
+      baseline,
+      spaceId ?? undefined,
+      type?.seats,
+    ),
+    provenance: type ? 'inferred' : 'general',
+  }
 }
-
-function validOccupancyMinutes(value: number | null | undefined): value is number {
-  return (
-    typeof value === 'number' &&
-    Number.isFinite(value) &&
-    value >= 1 &&
-    value <= MAX_LEARNED_OCCUPANCY_MINUTES
-  )
+export type ContextualFactors = {
+  service: number
+  learned: boolean
+  zones: Map<string, number>
+  types: Map<string, number>
 }
-
-/** Keep the scheduling rule shared with engine.ts without a runtime dependency. */
-function eligibleAdaptiveResources(
-  party: Party,
-  resources: AdaptiveResource[],
-  preference?: string,
-): AdaptiveResource[] {
-  const compatible = resources.filter(
-    (resource) => resource.seats >= party.partySize,
-  )
-  if (party.preferredSpaceId === 'fastest') return compatible
-  if (party.preferredSpaceId)
-    return compatible.filter(
-      (resource) => resource.spaceId === party.preferredSpaceId,
+export function contextKey(spaceId: string, seats: number) {
+  return JSON.stringify([spaceId, seats])
+}
+export type ContextSample = {
+  space_id: string
+  seats: number | null
+  ratio: number
+}
+/** Inputs are chronological and contain only validated human capacity samples. */
+export function learnContextualFactors(
+  config: ServiceInput,
+  serviceRatios: number[],
+  observations: ContextSample[],
+): ContextualFactors {
+  const factors: ContextualFactors = {
+    service: cadenceFactor(serviceRatios),
+    learned: serviceRatios.length >= 3,
+    zones: new Map(),
+    types: new Map(),
+  }
+  for (const space of config.spaces) {
+    if (!space.id) continue
+    const rows = observations.filter((r) => r.space_id === space.id)
+    const zone = cadenceFactor(
+      rows.map((r) => r.ratio),
+      factors.service,
     )
-  const preferred = compatible.filter(
-    (resource) => resource.spaceId === preference,
+    factors.zones.set(space.id, zone)
+    for (const type of space.tableTypes ?? [])
+      factors.types.set(
+        contextKey(space.id, type.seats),
+        cadenceFactor(
+          rows.filter((r) => r.seats === type.seats).map((r) => r.ratio),
+          zone,
+        ),
+      )
+  }
+  return factors
+}
+export function contextualFactor(
+  context: EstimateContext,
+  factors: ContextualFactors,
+) {
+  const zone = context.spaceId
+    ? factors.zones.get(context.spaceId) ?? factors.service
+    : factors.service
+  return context.spaceId && context.seats !== null
+    ? factors.types.get(contextKey(context.spaceId, context.seats)) ?? zone
+    : zone
+}
+export function forecastInterval(
+  party: Pick<Party, 'partySize' | 'preferredSpaceId'>,
+  config: ServiceInput | null,
+  baseline: number,
+  factors: ContextualFactors,
+) {
+  const context = resolveEstimateContext(party, config, baseline)
+  // Predictive alternatives are deliberately not written into assignment evidence.
+  const alternatives =
+    !context.spaceId && config?.type === 'restaurant'
+      ? config.spaces
+          .map((s) =>
+            resolveEstimateContext(
+              { ...party, preferredSpaceId: s.id ?? null },
+              config,
+              baseline,
+            ),
+          )
+          .filter((c) => c.seats !== null)
+      : []
+  const candidates = alternatives.length ? alternatives : [context]
+  return {
+    cadenceMs: Math.max(
+      MIN_CADENCE_MS,
+      Math.min(
+        ...candidates.map(
+          (c) => c.baselineMinutes * contextualFactor(c, factors) * 60_000,
+        ),
+      ),
+    ),
+    quality:
+      factors.learned &&
+      (config?.type !== 'restaurant' || context.provenance === 'inferred')
+        ? ('estimated' as const)
+        : ('provisional' as const),
+  }
+}
+export function compatibleSuccessor(
+  source: Pick<Party, 'partySize' | 'preferredSpaceId'>,
+  candidate: Pick<Party, 'partySize' | 'preferredSpaceId'>,
+  context: EstimateContext,
+) {
+  const zone =
+    candidate.preferredSpaceId && candidate.preferredSpaceId !== 'fastest'
+      ? candidate.preferredSpaceId
+      : null
+  return (
+    zone === context.spaceId &&
+    candidate.partySize <= (context.seats ?? source.partySize)
   )
-  return preferred.length ? preferred : compatible
 }
 
-/**
- * Deterministic customer-facing forecast. Queue dispatch stays sequential
- * (configured interval per turn), while compatible known resources can delay
- * a dispatch until their modeled release. Unknown availability is never
- * treated as a callable resource; in that case cadence-only output is marked
- * provisional. Inputs are copied and never mutated.
- */
+/** Serial dispatch; inventory quantities and availability are not throughput. */
 export function projectAdaptiveQueue(
   parties: Party[],
-  resources: AdaptiveResource[],
+  _resources: AdaptiveResource[],
   now: number,
   config: ServiceInput | null,
   baseline: number,
-  factor: number,
+  factor: number | ContextualFactors,
 ): AdaptiveProjection[] {
-  const slots = resources.map((resource) => ({
-    ...resource,
-    availableAt: resource.known ? resource.availableAt : null,
-  }))
-  const sortedParties = [...parties].sort(
-    (left, right) => left.sequence - right.sequence,
-  )
-  let cursor = now
-
-  return sortedParties.map((party, index) => {
-    const eligible = eligibleAdaptiveResources(
-      party,
-      slots,
-      config?.assignmentPreference,
-    )
-    const fallbackCadenceMs = Math.min(
-      ...(
-        eligible.length
-          ? eligible.map((resource) =>
-              effectiveCadenceMs(
-                config,
-                baseline,
-                factor,
-                resource.spaceId,
-                resource.seats,
-              ),
-            )
-          : [effectiveCadenceMs(config, baseline, factor)]
-      ),
-    )
-    const nextCadenceAt = cursor + fallbackCadenceMs
-
-    const candidates = eligible
-      .filter(
-        (resource) =>
-          resource.known &&
-          resource.availableAt !== null &&
-          Number.isFinite(resource.availableAt),
-      )
-      .map((resource) => {
-        const cadenceMs = effectiveCadenceMs(
-          config,
-          baseline,
-          factor,
-          resource.spaceId,
-          resource.seats,
-        )
-        return {
-          resource,
-          cadenceMs,
-          predictedAt: Math.max(cursor + cadenceMs, resource.availableAt!),
+  const factors =
+    typeof factor === 'number'
+      ? {
+          service: factor,
+          learned: false,
+          zones: new Map<string, number>(),
+          types: new Map<string, number>(),
         }
-      })
-      .sort(
-        (left, right) =>
-          left.predictedAt - right.predictedAt ||
-          left.resource.seats - right.resource.seats ||
-          left.resource.id.localeCompare(right.resource.id),
-      )
-    const cadenceFallbackAt = nextCadenceAt
-    const chosen = candidates[0]
-    const hasUnknownAvailability = eligible.some(
-      (resource) =>
-        !resource.known ||
-        resource.availableAt === null ||
-        !Number.isFinite(resource.availableAt),
-    )
-
-    if (
-      !chosen ||
-      (hasUnknownAvailability && cadenceFallbackAt < chosen.predictedAt)
-    ) {
-      const predictedAt = cadenceFallbackAt
-      cursor = predictedAt
+      : factor
+  let cursor = now
+  return [...parties]
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((party, index) => {
+      const interval = forecastInterval(party, config, baseline, factors)
+      cursor += interval.cadenceMs
       return {
         id: party.id,
         position: index + 1,
-        predictedAt,
-        quality: 'provisional' as const,
-        cadenceMs: fallbackCadenceMs,
+        predictedAt: cursor,
+        ...interval,
         resourceId: null,
       }
-    }
-
-    cursor = chosen.predictedAt
-    const occupancy = chosen.resource.occupancyMinutes
-    if (validOccupancyMinutes(occupancy)) {
-      chosen.resource.availableAt =
-        chosen.predictedAt + occupancy * 60_000
-    } else {
-      // We can forecast this assignment, but cannot promise when the resource
-      // will next be free without real arrival→release history.
-      chosen.resource.availableAt = null
-      chosen.resource.known = false
-    }
-
-    return {
-      id: party.id,
-      position: index + 1,
-      predictedAt: chosen.predictedAt,
-      quality: 'estimated' as const,
-      cadenceMs: chosen.cadenceMs,
-      resourceId: chosen.resource.id,
-    }
-  })
+    })
 }

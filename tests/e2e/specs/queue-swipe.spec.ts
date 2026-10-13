@@ -210,15 +210,20 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await mocks.assertComplete()
 })
 
-test('swipe call respects inventory and viewer cannot drag', async ({
+test('legacy inventory readiness does not block assignment and viewer cannot drag', async ({
   page,
 }) => {
-  let setup = await openQueue(page, { blocked: true })
+  let setup = await openQueue(page, { blocked: true, expectedCommands: 1 })
   let row = setup.drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 120)
-  await expect(
-    row.getByRole('button', { name: 'Asignar turno' }),
-  ).toBeDisabled()
+  const assignment = row.getByRole('button', { name: 'Asignar turno' })
+  await expect(assignment).toBeEnabled()
+  await assignment.click()
+  await page
+    .getByRole('dialog', { name: 'Asignar turno', exact: true })
+    .getByRole('button', { name: 'Confirmar', exact: true })
+    .click()
+  await expect.poll(() => setup.commands()).toBe(1)
   await setup.mocks.assertComplete()
   await page.unrouteAll()
   setup = await openQueue(page, { viewer: true })

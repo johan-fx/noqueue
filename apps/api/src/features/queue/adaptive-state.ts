@@ -1,8 +1,17 @@
 import type { ServiceInput } from '@noqueue/contracts/staff'
 import { resolveAdmission, type AdmissionRecord } from '../staff/availability'
-import { cadenceFactor, configuredIntervalMinutes } from './adaptive-model'
+import {
+  cadenceFactor,
+  resolveEstimateContext,
+  learnContextualFactors,
+  type EstimateContext,
+} from './adaptive-model'
 
 export type AssignmentObservation = {
+  source?: 'staff' | 'handoff'
+  context?: EstimateContext
+  partySize?: number
+  preferredSpaceId?: string | null | undefined
   entryId: string
   callCycle: number
   resourceId?: string | undefined
@@ -10,6 +19,7 @@ export type AssignmentObservation = {
   seats?: number
 }
 export type CadenceState = {
+  model_revision?: number
   estimator_version: number
   episode_id: string | null
   episode_started_at: number | null
@@ -49,8 +59,8 @@ export async function loadAdaptiveState(
   const active =
     demandActive ?? (admission.serviceOpen && admission.queueState === 'active')
   const state: CadenceState =
-    stored?.estimator_version === 2
-      ? { ...stored }
+    stored !== null
+      ? { ...stored, estimator_version: 2 }
       : {
           estimator_version: 2,
           episode_id: null,
@@ -60,12 +70,60 @@ export async function loadAdaptiveState(
         }
   const rows = (
     await env.DB.prepare(
-      'SELECT ratio FROM queue_assignment_observation WHERE queue_id=? AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30',
+      `SELECT ratio FROM queue_assignment_observation WHERE queue_id=? AND source IN ('staff','legacy') AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30`,
     )
       .bind(queueId)
       .all<{ ratio: number }>()
   ).results.reverse()
   const statements: D1PreparedStatement[] = []
+  const transitioning = stored?.model_revision !== 2
+  // Old queues without v2 state still have an episode/progress anchor. Do not
+  // restart their elapsed wait merely because the first post-migration read arrived.
+  const legacyAnchor =
+    transitioning && !state.episode_id && active && waiting > 0
+      ? await env.DB.prepare(
+          `SELECT MIN(created_at) AS started_at FROM queue_entry WHERE queue_id=? AND status='waiting'`,
+        )
+          .bind(queueId)
+          .first<{ started_at: number | null }>()
+      : null
+  const groups = config.spaces.flatMap((space) =>
+    (space.tableTypes ?? []).map((type) => ({
+      spaceId: space.id,
+      seats: type.seats,
+    })),
+  )
+  // Separate indexed lookups keep sparse types bounded independently of zone traffic.
+  const observations = (
+    await env.DB.prepare(
+      `
+      SELECT o.space_id,o.seats,o.ratio,o.assigned_at,o.rowid AS observation_id FROM json_each(?) g
+      JOIN queue_assignment_observation o ON o.rowid IN (
+        SELECT rowid FROM queue_assignment_observation WHERE queue_id=? AND model_revision=2 AND source='staff'
+        AND space_id=json_extract(g.value,'$.spaceId') AND seats=json_extract(g.value,'$.seats')
+        AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30)
+      UNION
+      SELECT o.space_id,o.seats,o.ratio,o.assigned_at,o.rowid AS observation_id FROM json_each(?) g
+      JOIN queue_assignment_observation o ON o.rowid IN (
+        SELECT rowid FROM queue_assignment_observation WHERE queue_id=? AND model_revision=2 AND source='staff'
+        AND space_id=json_extract(g.value,'$.spaceId')
+        AND ratio IS NOT NULL ORDER BY assigned_at DESC,rowid DESC LIMIT 30)
+      ORDER BY assigned_at,observation_id`,
+    )
+      .bind(
+        JSON.stringify(groups),
+        queueId,
+        JSON.stringify(config.spaces.map((s) => ({ spaceId: s.id }))),
+        queueId,
+      )
+      .all<{
+        space_id: string
+        seats: number | null
+        ratio: number
+        assigned_at: number
+        observation_id: number
+      }>()
+  ).results
   let assignmentRecorded = false
   const windowChanged = state.service_window_id !== admission.windowId
   if ((!active || windowChanged) && state.episode_id) {
@@ -85,12 +143,12 @@ export async function loadAdaptiveState(
   state.service_window_id = admission.windowId ?? null
   if (!state.episode_id && ((active && waiting > 0) || assignment)) {
     state.episode_id = crypto.randomUUID()
-    state.episode_started_at = now
+    state.episode_started_at = legacyAnchor?.started_at ?? now
     state.last_assignment_at = null
     statements.push(
       env.DB.prepare(
         'INSERT INTO queue_demand_episode(id,queue_id,started_at) VALUES (?,?,?)',
-      ).bind(state.episode_id, queueId, now),
+      ).bind(state.episode_id, queueId, state.episode_started_at),
     )
   }
   if (assignment && state.episode_id) {
@@ -100,38 +158,56 @@ export async function loadAdaptiveState(
       .bind(assignment.entryId, assignment.callCycle)
       .first()
     if (!already) {
-      assignmentRecorded = true
-      const baselineMs =
-        configuredIntervalMinutes(
-          config,
-          baseline,
-          assignment.spaceId,
-          assignment.seats,
-        ) * 60000
+      assignmentRecorded = assignment.source !== 'handoff'
+      const inferred =
+        assignment.source === 'handoff' && assignment.context
+          ? assignment.context
+          : resolveEstimateContext(
+              {
+                partySize: assignment.partySize ?? assignment.seats ?? 1,
+                preferredSpaceId:
+                  assignment.preferredSpaceId ?? assignment.spaceId ?? null,
+              },
+              config,
+              baseline,
+            )
+      const baselineMs = inferred.baselineMinutes * 60000
       const interval =
-        state.last_assignment_at === null
+        !assignmentRecorded || !active || state.last_assignment_at === null
           ? null
           : Math.max(0, now - state.last_assignment_at)
       const ratio = interval === null ? null : interval / baselineMs
       statements.push(
         env.DB.prepare(
-          'INSERT OR IGNORE INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,resource_id,space_id,seats,baseline_ms,interval_ms,ratio) VALUES (?,?,?,?,?,?,?,?,?,?,?)',
+          'INSERT OR IGNORE INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,resource_id,space_id,seats,baseline_ms,interval_ms,ratio,source,provenance,model_revision) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,2)',
         ).bind(
           assignment.entryId,
           assignment.callCycle,
           queueId,
           state.episode_id,
           now,
-          assignment.resourceId ?? null,
-          assignment.spaceId ?? null,
-          assignment.seats ?? null,
+          null,
+          inferred.spaceId,
+          inferred.seats,
           baselineMs,
           interval,
           ratio,
+          assignment.source ?? 'staff',
+          inferred.provenance,
         ),
       )
-      if (ratio !== null) rows.push({ ratio })
-      state.last_assignment_at = now
+      if (ratio !== null) {
+        rows.push({ ratio })
+        if (inferred.spaceId)
+          observations.push({
+            space_id: inferred.spaceId,
+            seats: inferred.seats,
+            ratio,
+            observation_id: -1,
+            assigned_at: now,
+          })
+      }
+      if (assignmentRecorded) state.last_assignment_at = now
     }
   }
   const lastProgressAt =
@@ -149,7 +225,7 @@ export async function loadAdaptiveState(
   }
   statements.push(
     env.DB.prepare(
-      'INSERT INTO queue_cadence_state(queue_id,estimator_version,episode_id,episode_started_at,last_assignment_at,service_window_id,updated_at) VALUES (?,2,?,?,?,?,?) ON CONFLICT(queue_id) DO UPDATE SET estimator_version=2,episode_id=excluded.episode_id,episode_started_at=excluded.episode_started_at,last_assignment_at=excluded.last_assignment_at,service_window_id=excluded.service_window_id,updated_at=excluded.updated_at',
+      'INSERT INTO queue_cadence_state(queue_id,estimator_version,episode_id,episode_started_at,last_assignment_at,service_window_id,updated_at,model_revision) VALUES (?,2,?,?,?,?,?,2) ON CONFLICT(queue_id) DO UPDATE SET model_revision=2,estimator_version=2,episode_id=excluded.episode_id,episode_started_at=excluded.episode_started_at,last_assignment_at=excluded.last_assignment_at,service_window_id=excluded.service_window_id,updated_at=excluded.updated_at',
     ).bind(
       queueId,
       state.episode_id,
@@ -159,7 +235,14 @@ export async function loadAdaptiveState(
       now,
     ),
   )
+  const factors = learnContextualFactors(
+    config,
+    rows.map((r) => r.ratio),
+    observations,
+  )
   return {
+    transitioning,
+    factors,
     active,
     assignmentRecorded,
     factor: cadenceFactor(rows.map((r) => r.ratio)),

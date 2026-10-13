@@ -1,6 +1,6 @@
 import { resolveFixtureLocation } from '../helpers/location.js'
 import { test, expect } from '../fixtures.js'
-test('mobile full declaration, quick release, pause, nested advanced keyboard tabs and desktop layout', async ({
+test('mobile queue opening, pause, queue-only controls and desktop layout', async ({
   page,
   request,
   baseURL,
@@ -92,9 +92,6 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
     card.getByText('Servicio abierto', { exact: true }),
   ).toBeVisible()
   await expect(card.getByText('Lista inactiva', { exact: true })).toBeVisible()
-  await expect(
-    card.getByText('Actívala cuando el restaurante esté lleno.'),
-  ).toBeVisible()
   await expect(page.getByRole('spinbutton')).toHaveCount(0)
   await expect(card.locator('dd').first()).toHaveText('0')
   await expect(card.locator('img')).toHaveCount(2)
@@ -117,41 +114,29 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
   })
   await activate.click()
   await expect(card.getByText('Lista activa', { exact: true })).toBeVisible()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
   const gear = card.getByRole('button', {
     name: 'Opciones del servicio',
     exact: true,
   })
   await gear.focus()
   await page.keyboard.press('Enter')
-  await page.getByRole('menuitem', { name: 'Mesa libre', exact: true }).click()
-  let sheet = page.getByRole('dialog', {
-    name: `Mesa libre · ${serviceName}`,
-    exact: true,
-  })
+  const serviceMenu = page.getByRole('menu')
+  await expect(serviceMenu).toBeVisible()
+  await expect(
+    serviceMenu.getByRole('menuitem', { name: 'Mesa libre', exact: true }),
+  ).toHaveCount(0)
+  await expect(
+    serviceMenu.getByRole('menuitem', {
+      name: 'Desglose y correcciones de ocupación',
+      exact: true,
+    }),
+  ).toHaveCount(0)
+  await page.keyboard.press('Escape')
   const queues = (await (
     await page.request.get(`/api/v1/staff/venues/${venueId}/queues`)
   ).json()) as { id: string }[]
   const queueId = queues[0]!.id
-  const context = async () =>
-    (await (
-      await page.request.get(`/api/v1/staff/queues/${queueId}/opening-context`)
-    ).json()) as { groups: { spaceId: string; occupied: number }[] }
-  expect((await context()).groups.map((g) => g.occupied)).toEqual([2, 1])
-  await sheet.getByRole('combobox', { name: 'Grupo de mesas' }).click()
-  await page.getByRole('option', { name: 'Terraza · 4 plazas' }).click()
-  await expect(sheet).toBeVisible()
-  const releaseResponse = page.waitForResponse(
-    (response) =>
-      response.request().method() === 'POST' &&
-      response.url().endsWith(`/api/v1/staff/queues/${queueId}/lifecycle`),
-  )
-  await sheet
-    .getByRole('button', { name: 'Liberar una mesa', exact: true })
-    .click()
-  expect((await releaseResponse).ok()).toBeTruthy()
-  await expect
-    .poll(async () => (await context()).groups.map((g) => g.occupied))
-    .toEqual([1, 1])
   await expect(gear).toBeFocused()
   const added = await page.request.post(
     `/api/v1/public/services/${queueId}/entries`,
@@ -217,7 +202,6 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
     .getByRole('button', { name: 'Cerrar lista', exact: true })
     .click()
   await expect(card.getByText('Lista pausada', { exact: true })).toBeVisible()
-  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 1])
   const retained = await page.request.get(
     `/api/v1/public/entries/${pending.recoveryToken}`,
   )
@@ -227,7 +211,6 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
     .getByRole('switch', { name: 'Reanudar lista', exact: true })
     .click()
   await expect(card.getByText('Lista activa', { exact: true })).toBeVisible()
-  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 1])
   const advancedTrigger = gear
   await advancedTrigger.click()
   await page
@@ -243,10 +226,11 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
     exact: true,
   })
   await policy.click()
-  sheet = page.getByRole('dialog', {
+  const policyConfirmation = page.getByRole('dialog', {
     name: `Desactivar gestión inteligente · ${serviceName}`,
     exact: true,
   })
+  await expect(policyConfirmation).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(policy).toBeFocused()
   await policy.click()
@@ -273,45 +257,14 @@ test('mobile full declaration, quick release, pause, nested advanced keyboard ta
     })
     .getByRole('button', { name: 'Volver a gestión automática', exact: true })
     .click()
-  await advanced
-    .getByRole('button', {
-      name: 'Desglose y correcciones de ocupación',
-      exact: true,
-    })
-    .click()
-  sheet = page.getByRole('dialog', {
-    name: `Actualizar ocupación · ${serviceName}`,
-    exact: true,
-  })
-  const terrace = sheet.getByRole('tab', { name: 'Terraza' })
-  await terrace.focus()
-  await page.keyboard.press('ArrowRight')
-  await expect(sheet.getByRole('tab', { name: 'Salón' })).toBeFocused()
-  await page.keyboard.press('Enter')
-  await sheet
-    .getByRole('tabpanel', { name: 'Salón', exact: true })
-    .getByRole('button', { name: 'Mesas de 4', exact: true })
-    .click()
-  await expect(
-    sheet.getByLabel('Salón · 4 plazas ocupadas fuera de la lista'),
-  ).toHaveValue('1')
-  await sheet
-    .getByRole('tabpanel', { name: 'Salón', exact: true })
-    .getByRole('button', { name: 'Liberar uno', exact: true })
-    .click()
-  await sheet
-    .getByRole('button', { name: 'Guardar cambio', exact: true })
-    .click()
-  await expect(sheet).toHaveCount(0)
   await expect(
     advanced.getByRole('button', {
       name: 'Desglose y correcciones de ocupación',
       exact: true,
     }),
-  ).toBeFocused()
+  ).toHaveCount(0)
   await advanced.getByRole('button', { name: 'Atrás', exact: true }).click()
   await expect(advancedTrigger).toBeFocused()
-  expect((await context()).groups.map((g) => g.occupied)).toEqual([1, 0])
   await expect(card.getByRole('button', { name: 'Ver lista' })).toBeEnabled()
   await page.setViewportSize({ width: 1280, height: 900 })
   expect(

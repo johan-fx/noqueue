@@ -143,7 +143,7 @@ describe('natural lifecycle v3 catalog', () => {
     ).toContain('Calculamos unos 0 minutos de espera.')
     expect(
       renderLifecycleV3({ ...base, etaMinutes: 0, ahead: 0 }, 'LINK'),
-    ).toContain('Estás al principio de la cola.')
+    ).toContain('Hay 1 turno por delante.')
     const ready = renderLifecycleV3(
       { ...base, notice: 'ready', resourceName: 'Terrace' },
       'LINK',

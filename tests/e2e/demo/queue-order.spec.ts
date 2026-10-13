@@ -1,7 +1,7 @@
 import { test, expect, newClientContext, type Page } from '../fixtures.js'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
-import { fixture, supportEntry, serviceNames, type ChapterId, type QueueOpeningContext } from './fixtures.js'
+import { fixture, supportEntry, serviceNames, type ChapterId } from './fixtures.js'
 import { assertVisiblePhase, ensureRowsInViewport, phaseHeading, type CustomerPhase } from './visible-proof.js'
 import { fillPublicWhatsAppConsent } from '../helpers/queue-actions.js'
 import type { Entry } from '../../../packages/contracts/src/queue.js'
@@ -127,7 +127,7 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
               await row(n).getByRole('button', { name: /Acciones del turno/ }).click()
               await row(n).getByRole('button', { name: 'Asignar turno', exact: true }).click()
               await expect(staff.getByRole('dialog', { name: 'Asignar turno', exact: true })).toBeVisible()
-              if (visible) await moment('assign-dialog', 'El personal confirma la mesa compatible que va a asignar')
+              if (visible) await moment('assign-dialog', 'El personal asigna el turno desde la cola · Sin gestionar inventario')
               await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
             } else await drawer.getByRole('button', { name: 'Asignar próximo turno', exact: true }).click()
             await expect(row(n).getByText('Pendiente de llegada', { exact: true })).toBeVisible()
@@ -140,16 +140,6 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
             await drawer.getByRole('tab', { name: 'Completados', exact: true }).click()
             await expect(row(n)).toBeVisible()
             await expect.poll(async () => (await entries()).find(e => e.displayName === n)?.status).toBe('completed')
-          }
-          const release = async (n: string, visible = false) => {
-            if (type === 'restaurant') {
-              await row(n).getByRole('button', { name: /Acciones del turno/ }).click()
-              await row(n).getByRole('button', { name: 'Liberar recurso', exact: true }).click()
-              await expect(staff.getByRole('dialog', { name: 'Liberar recurso', exact: true })).toBeVisible()
-              if (visible) await moment('release-dialog', 'Liberar la mesa es una acción del personal · No cancela la llegada')
-              await staff.getByRole('dialog', { name: 'Liberar recurso', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
-            }
-            await drawer.getByRole('tab', { name: 'Lista', exact: true }).click()
           }
           if (id === 'main') {
             await phase('waiting')
@@ -166,7 +156,6 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
               if (i === 0) { await phase('approaching'); await moment('approaching', 'Ya casi es tu turno · El personal avanza los turnos anteriores') }
               await arrive(n)
               await moment(`predecessor-${i}`, `Llegada confirmada del turno anterior ${i + 1}`)
-              await release(n)
             }
             await call(name, true)
             await phase('called')
@@ -176,13 +165,11 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
             await arrive(name)
             await phase('arrived')
             await moment('arrived', 'El personal confirma la llegada · Cliente y personal ven el resultado')
-            await release(name, true)
             if (type === 'restaurant') {
               const publicState = await snapshot()
-              const released = (await entries()).find(e => e.displayName === name)!
-              const inventory = await (await staff.request.get(`/api/v1/staff/queues/${t.queue}/opening-context`)).json() as QueueOpeningContext
-              assert('resource:released', { phase: publicState.customer!.phase, staffStatus: released.status, occupied: inventory.groups.map(g => g.occupied), allocated: inventory.groups.map(g => g.allocated) }, { phase: 'arrived', staffStatus: 'served', occupied: [0], allocated: [0] }, chapter)
-              await moment('released', 'Mesa liberada por el personal · El cliente conserva llegada confirmada')
+              const finalized = (await entries()).find(e => e.displayName === name)!
+              assert('arrival:finalized', { phase: publicState.customer!.phase, staffStatus: finalized.status }, { phase: 'arrived', staffStatus: 'completed' }, chapter)
+              await moment('completed', 'Llegada confirmada · El turno queda finalizado sin un paso posterior de liberación')
             }
           } else if (id === 'alternatives') {
             await phase('waiting')
@@ -258,10 +245,6 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
             await drawer.getByRole('tab', { name: 'Cancelados', exact: true }).click()
             await expect(row(name).getByText('Caducado', { exact: true })).toBeVisible()
             assert('server-expiration', (await entries()).find(e => e.displayName === name)!.status, 'expired', chapter)
-            if (type === 'restaurant') {
-              const inventory = await (await staff.request.get(`/api/v1/staff/queues/${t.queue}/opening-context`)).json() as QueueOpeningContext
-              assert('expiration-resource:released', inventory.groups.map(g => ({ occupied: g.occupied, allocated: g.allocated })), [{ occupied: 0, allocated: 0 }], chapter)
-            }
             if (cutEnd - cutStart > 5) chapter.cuts.push({ start: cutStart, end: cutEnd, label: 'Ha transcurrido el plazo · Demo configurada a 1 minuto' })
             await moment('expired', 'Turno caducado por el servidor · Sin llegada confirmada', 8)
           }

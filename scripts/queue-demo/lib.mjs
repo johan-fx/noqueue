@@ -73,7 +73,7 @@ export function validateEvidence(e) {
   if (assertions.some(a => a.key.startsWith('phase:') && (a.actual !== a.key.slice(6) || a.expected !== a.key.slice(6)))) throw new Error('Unverified phase value')
   const required = ['waiting', 'approaching', 'called', 'arrived', 'cancelled', 'expired'].map(p => `phase:${p}`)
   required.push('discovery', 'form', 'yield', 'cancel', 'deadline')
-  if (e.type === 'restaurant') required.push('edit:party', 'edit:space', 'resource:released')
+  if (e.type === 'restaurant') required.push('edit:party', 'edit:space', 'arrival:finalized')
   if (required.some(key => !assertions.some(a => a.key === key))) throw new Error('Missing service coverage')
   for (const c of e.chapters) {
     if (!Number.isFinite(c.duration) || c.duration < 10) throw new Error('Invalid chapter duration')

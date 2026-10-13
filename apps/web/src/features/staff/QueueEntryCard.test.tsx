@@ -111,7 +111,7 @@ it('reveals the Figma green assignment action with a check and closes before dis
   expect(props.onReveal).toHaveBeenCalledWith(null)
   expect(props.onAction).toHaveBeenCalledWith(props.entry, 'call')
 })
-it('keeps inventory restrictions on the swipe call action', () => {
+it('does not disable assignment because of a legacy inventory-readiness flag', () => {
   render(
     <QueueEntryCard
       {...props}
@@ -125,7 +125,7 @@ it('keeps inventory restrictions on the swipe call action', () => {
       }}
     />,
   )
-  expect(screen.getByRole('button', { name: 'Asignar turno' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Asignar turno' })).toBeEnabled()
 })
 it('provides a green accessible arrival action for called entries', () => {
   render(
@@ -155,7 +155,7 @@ it('does not expose lateral actions without permission or while busy', () => {
   ).not.toBeInTheDocument()
 })
 
-it('keeps completed entries in the explicit menu without lateral trays', () => {
+it('keeps completed entries final and does not expose resource-release actions', () => {
   render(
     <QueueEntryCard
       {...props}
@@ -163,7 +163,9 @@ it('keeps completed entries in the explicit menu without lateral trays', () => {
       revealed="all"
     />,
   )
-  expect(screen.getByRole('button', { name: 'Liberar recurso' })).toBeVisible()
+  expect(screen.getByText('Completado')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Liberar recurso' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: /Acciones del turno/ })).not.toBeInTheDocument()
   expect(screen.queryByText('Asignar turno')).not.toBeInTheDocument()
   expect(screen.queryByText('Cancelar turno')).not.toBeInTheDocument()
 })

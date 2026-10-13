@@ -1,33 +1,25 @@
 import { expect, it } from 'vitest'
 import { queueLifecycleSchema } from './staff'
-it('requires explicit counts and rejects duplicate group answers', () => {
-  const input = {
+it('opens a queue without inventory data and accepts old opening answers as an inert alias', () => {
+  expect(
+    queueLifecycleSchema.safeParse({ action: 'open', contextToken: 'token' }).success,
+  ).toBe(true)
+  const legacy = {
     action: 'open',
     contextToken: 'token',
-    groups: [{ spaceId: 'terrace', seats: 4, occupied: 0 }],
+    groups: [
+      { spaceId: 'terrace', seats: 4, occupied: 0 },
+      { spaceId: 'terrace', seats: 4, occupied: 2 },
+    ],
   }
-  expect(queueLifecycleSchema.safeParse(input).success).toBe(true)
-  expect(
-    queueLifecycleSchema.safeParse({
-      ...input,
-      groups: [{ spaceId: 'terrace', seats: 4 }],
-    }).success,
-  ).toBe(false)
-  expect(
-    queueLifecycleSchema.safeParse({
-      ...input,
-      groups: [...input.groups, ...input.groups],
-    }).success,
-  ).toBe(false)
+  expect(queueLifecycleSchema.safeParse(legacy).success).toBe(true)
 })
-it('accepts initial in-place confirmation without a correction reason', () => {
-  expect(
-    queueLifecycleSchema.safeParse({
-      action: 'confirm_inventory',
-      contextToken: 'token',
-      groups: [{ spaceId: 'terrace', seats: 4, occupied: 0 }],
-    }).success,
-  ).toBe(true)
+it.each([
+  { action: 'confirm_inventory', contextToken: 'token', groups: [] },
+  { action: 'release_unit', contextToken: 'token', spaceId: 'terrace', seats: 4 },
+  { action: 'occupancy', contextToken: 'token', group: { spaceId: 'terrace', seats: 4, occupied: 0 }, reason: 'legacy' },
+])('rejects retired inventory lifecycle operation $action', (command) => {
+  expect(queueLifecycleSchema.safeParse(command).success).toBe(false)
 })
 it('accepts explicit operational intelligence policy commands', () => {
   for (const action of ['disable_intelligence', 'enable_intelligence'])

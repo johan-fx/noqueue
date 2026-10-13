@@ -33,14 +33,15 @@ function observeProjection(page: Page) {
 async function expectProjectedCountdown(
   page: Page,
   projection: () => Projection | undefined,
-  expectedMinutes: number,
+  expectedMinutes?: number,
 ) {
   // The UI ticks once per second and floors seconds; allow only those two seconds.
   await expect
     .poll(async () => {
       const entry = projection()
       if (
-        entry?.etaMinutes !== expectedMinutes ||
+        !entry ||
+        (expectedMinutes !== undefined && entry.etaMinutes !== expectedMinutes) ||
         !Number.isFinite(entry.predictedAt)
       )
         return Infinity
@@ -88,7 +89,7 @@ test('Q-BROWSER-ORDER public joins and quick assignment update staff and two iso
     info,
   })
 })
-test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physical capacity', async ({
+test('Q-BROWSER-RESOURCE assignment and arrival do not depend on physical table inventory', async ({
   page,
   request,
   browser,
@@ -104,50 +105,39 @@ test('Q-BROWSER-RESOURCE reservation arrival and explicit release preserve physi
     await join(alice, t.queue, 'Alice')
     await act(page, 'Alice', 'Asignar turno')
     await expect(alice.getByText(/Es tu turno/)).toBeVisible()
-    await act(page, 'Alice', 'Confirmar llegada')
-    await expect(
-      alice.getByText('Se ha confirmado tu llegada', { exact: true }),
-    ).toBeVisible()
     const second = await newClientContext(browser, info, 'order-bob', {
       baseURL: baseURL!,
     })
     try {
       const bob = await second.newPage()
       await join(bob, t.queue, 'Bob')
+      await act(page, 'Bob', 'Asignar turno')
+      await expect(bob.getByText(/Es tu turno/)).toBeVisible()
       const list = (await (
         await page.request.get(`/api/v1/staff/queues/${t.queue}/entries`)
-      ).json()) as { id: string; displayName: string; version: number }[]
-      const row = list.find((e) => e.displayName === 'Bob')!
-      const refused = await page.request.post(
-        `/api/v1/staff/queues/${t.queue}/commands`,
-        {
-          headers: { ...t.headers, 'Idempotency-Key': crypto.randomUUID() },
-          data: { entryId: row.id, version: row.version, action: 'call' },
-        },
-      )
+      ).json()) as { displayName: string; status: string }[]
       await prove(
         info,
         evidence,
         'Q-BROWSER-RESOURCE',
-        'occupied resource rejects another call',
-        refused.status(),
-        409,
+        'two independent queue turns can be assigned without a capacity release',
+        list.filter((entry) => entry.status === 'called').length,
+        2,
       )
-      await page.getByRole('tab', { name: 'Completados' }).click()
-      await act(page, 'Alice', 'Liberar recurso')
+      await act(page, 'Alice', 'Confirmar llegada')
       await expect(
         alice.getByText('Se ha confirmado tu llegada', { exact: true }),
       ).toBeVisible()
-      await page.getByRole('tab', { name: 'Lista', exact: true }).click()
-      await act(page, 'Bob', 'Asignar turno')
-      await expect(bob.getByText(/Es tu turno/)).toBeVisible()
+      const finalList = (await (
+        await page.request.get(`/api/v1/staff/queues/${t.queue}/entries`)
+      ).json()) as { displayName: string; status: string }[]
       await prove(
         info,
         evidence,
         'Q-BROWSER-RESOURCE',
-        'release allows the next real call',
-        true,
-        true,
+        'arrival confirmation finalizes the turn without a later release command',
+        finalList.find((entry) => entry.displayName === 'Alice')?.status,
+        'completed',
       )
     } finally {
       await second.close()
@@ -231,13 +221,19 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
   }
 })
 for (const kind of ['MEAN', 'LEARNING'] as const)
-  test(`Q-BROWSER-${kind} recalculated group ETA reaches staff and customer`, async ({
+  test(
+    `Q-BROWSER-${kind} ${
+      kind === 'MEAN'
+        ? 'configuration updates the shared customer and staff ETA'
+        : 'contextual learning updates the customer and staff ETA'
+    }`,
+    async ({
     page,
     request,
     browser,
     baseURL,
     evidence,
-  }, info) => {
+    }, info) => {
     const t = await setup(page, request, baseURL!),
       guest = await newClientContext(browser, info, `${kind.toLowerCase()}-client`, {
         baseURL: baseURL!,
@@ -246,12 +242,11 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
       const first = await guest.newPage(),
         second = await guest.newPage()
       const projection = observeProjection(second)
-      await join(first, t.queue, 'First')
-      await join(second, t.queue, 'Second')
+      await join(first, t.queue, 'First', 4, 'Terrace')
+      await join(second, t.queue, 'Second', 4, 'Terrace')
       // Customer configured work includes both parties; staff uses real scheduling.
       const initialProjection = await expectProjectedCountdown(second, projection, 100)
       const expectedCustomer = kind === 'MEAN' ? 70 : 100
-      const expectedStaff = kind === 'MEAN' ? 35 : 54
       if (kind === 'MEAN') {
         const queues = (await (
           await page.request.get(`/api/v1/staff/venues/${t.venueId}/queues`)
@@ -287,12 +282,12 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
           queueId: t.queue,
           spaceId: 'terrace',
           seats: 4,
-          durations: [60, 60, 60],
+          intervals: [60, 60, 60],
         }
         expect(
           (
             await request.post(
-              '/api/v1/experiments/local/staff/queue-history',
+              '/api/v1/experiments/local/staff/assignment-history',
               { data },
             )
           ).status(),
@@ -300,47 +295,78 @@ for (const kind of ['MEAN', 'LEARNING'] as const)
         expect(
           (
             await request.post(
-              '/api/v1/experiments/local/staff/queue-history',
+              '/api/v1/experiments/local/staff/assignment-history',
               {
                 headers: pilot,
-                data: { ...data, durations: Array(32).fill(60) },
+                data: { ...data, intervals: Array(31).fill(60) },
               },
             )
           ).status(),
         ).toBe(400)
         const loaded = await request.post(
-          '/api/v1/experiments/local/staff/queue-history',
+          '/api/v1/experiments/local/staff/assignment-history',
           { headers: pilot, data },
         )
         expect(loaded.ok(), await loaded.text()).toBeTruthy()
+        const learned = (await loaded.json()) as {
+          inserted: number
+          serviceFactor: number
+          contextFactor: number
+        }
+        expect(learned).toMatchObject({ inserted: 3 })
+        expect(learned.serviceFactor).toBeGreaterThan(1)
+        expect(learned.contextFactor).toBeGreaterThan(1)
       }
       const row = page
         .getByRole('dialog', { name: 'Gestionar lista', exact: true })
         .locator('li')
         .filter({ hasText: 'Second' })
-      await expect(
-        row.getByText(`${expectedStaff} min`, { exact: true }),
-      ).toBeVisible()
-      const updatedProjection = await expectProjectedCountdown(second, projection, expectedCustomer)
+      if (kind === 'LEARNING')
+        await expect
+          .poll(() => projection()?.predictedAt)
+          .not.toBe(initialProjection.predictedAt)
+      const updatedProjection = await expectProjectedCountdown(
+        second,
+        projection,
+        kind === 'MEAN' ? expectedCustomer : undefined,
+      )
       if (kind === 'MEAN')
         expect(updatedProjection.predictedAt).not.toBe(initialProjection.predictedAt)
-      else
-        expect(updatedProjection.predictedAt).toBe(initialProjection.predictedAt)
+      else {
+        expect(updatedProjection.predictedAt).toBeGreaterThan(
+          initialProjection.predictedAt,
+        )
+        expect(updatedProjection.etaMinutes).toBeGreaterThan(
+          initialProjection.etaMinutes,
+        )
+      }
+      const staffEtaMinutes = async () => {
+        const timer = /\b(\d+):([0-5]\d)\b/.exec(await row.innerText())
+        return timer
+          ? Math.ceil((Number(timer[1]) * 60 + Number(timer[2])) / 60)
+          : -1
+      }
+      await expect.poll(staffEtaMinutes).toBe(updatedProjection.etaMinutes)
+      const staffEta = await staffEtaMinutes()
       await prove(
         info,
         evidence,
         `Q-BROWSER-${kind}`,
-        'terrace/4 customer minimum and timestamp countdown preserve real staff ETA',
-        { customer: updatedProjection.etaMinutes, staff: expectedStaff },
-        { customer: expectedCustomer, staff: expectedStaff },
+        'contextual estimate is shared by the customer countdown and staff row',
+        { customer: updatedProjection.etaMinutes, staff: staffEta },
+        {
+          customer: updatedProjection.etaMinutes,
+          staff: updatedProjection.etaMinutes,
+        },
       )
       await second.screenshot({
         path: info.outputPath('customer-estimate.png'),
       })
-    } finally {
-      await guest.close()
-    }
-  })
+      } finally {
+        await guest.close()
+      }
+    },
+  )
 
 test('Q-BROWSER-COUNTDOWN polls and returning to the tab never restart the customer deadline', async ({
   page,

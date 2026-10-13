@@ -5,8 +5,14 @@ import {
   type CustomerCommand,
 } from '@noqueue/contracts/queue'
 import { encryptDisplayName, hash, hmac, secureEqual } from './crypto'
-import { eligibleResources } from './engine'
-import { loadQueueState, recalculateQueue, commitQueueTransition, maintainQueue, type QueueModelInput } from './projection'
+import { resolveEstimateContext, compatibleSuccessor } from './adaptive-model'
+import {
+  loadQueueState,
+  recalculateQueue,
+  commitQueueTransition,
+  maintainQueue,
+  type QueueModelInput,
+} from './projection'
 import type { QueueNoticeSnapshot } from './notices'
 import {
   parseWhatsAppAction,
@@ -40,9 +46,8 @@ export async function expireArrivals(
   now = Date.now(),
 ) {
   const due = await env.DB.prepare(
-    `SELECT e.id,e.call_cycle,e.arrival_deadline_at,q.config,a.space_id
+    `SELECT e.id,e.call_cycle,e.arrival_deadline_at,q.config
      FROM queue_entry e JOIN queue q ON q.id=e.queue_id
-     LEFT JOIN queue_allocation a ON a.entry_id=e.id AND a.released_at IS NULL
      WHERE e.queue_id=? AND e.status='called' AND e.arrival_deadline_at<=?`,
   )
     .bind(queueId, now)
@@ -66,13 +71,6 @@ export async function expireArrivals(
           spaces?: Array<{ id?: string; name?: string }>
         }
         serviceName = config.name ?? serviceName
-        resourceName =
-          config.spaces?.find((space) => space.id === entry.space_id)?.name ??
-          (config.type === 'reception'
-            ? 'Recepción'
-            : config.type === 'pool'
-            ? 'Piscina / bar'
-            : null)
       }
     } catch {
       // Keep the safe service fallback; do not break an expiry transition.
@@ -88,32 +86,42 @@ export async function expireArrivals(
       arrivalDeadlineAt: entry.arrival_deadline_at,
     }
     return [
-    noticeStatement(
-      env,
-      entry.id,
-      'expired',
-      now,
-      snapshot,
-      0,
-      entry.call_cycle,
-      !!entry.config,
-    ),
-    env.DB.prepare(
-      "INSERT INTO queue_event(id,entry_id,kind,created_at) SELECT ?,id,'expired',? FROM queue_entry WHERE id=? AND status='called'",
-    ).bind(crypto.randomUUID(), now, entry.id),
-    env.DB.prepare(
-      "UPDATE queue_allocation SET released_at=?,outcome='expired' WHERE entry_id=? AND released_at IS NULL AND EXISTS(SELECT 1 FROM queue_entry WHERE id=? AND status='called')",
-    ).bind(now, entry.id, entry.id),
-    env.DB.prepare(
-      "UPDATE queue_entry SET status='expired',version=version+1 WHERE id=? AND status='called' AND arrival_deadline_at<=?",
-    ).bind(entry.id, now),
-  ]})
-  const expired = new Set(due.results.map(entry => entry.id))
-  await commitQueueTransition(env, queueId, before, {
-    config: before.config, parties: before.parties,
-    holds: before.holds, allocations: before.allocations.map(a => expired.has(a.entry_id) && a.released_at === null
-      ? { ...a, released_at: now, outcome: 'expired' } : a),
-  }, statements, now)
+      noticeStatement(
+        env,
+        entry.id,
+        'expired',
+        now,
+        snapshot,
+        0,
+        entry.call_cycle,
+        !!entry.config,
+      ),
+      env.DB.prepare(
+        "INSERT INTO queue_event(id,entry_id,kind,created_at) SELECT ?,id,'expired',? FROM queue_entry WHERE id=? AND status='called'",
+      ).bind(crypto.randomUUID(), now, entry.id),
+      env.DB.prepare(
+        "UPDATE queue_entry SET status='expired',version=version+1 WHERE id=? AND status='called' AND arrival_deadline_at<=?",
+      ).bind(entry.id, now),
+    ]
+  })
+  const expired = new Set(due.results.map((entry) => entry.id))
+  await commitQueueTransition(
+    env,
+    queueId,
+    before,
+    {
+      config: before.config,
+      parties: before.parties,
+      holds: before.holds,
+      allocations: before.allocations.map((a) =>
+        expired.has(a.entry_id) && a.released_at === null
+          ? { ...a, released_at: now, outcome: 'expired' }
+          : a,
+      ),
+    },
+    statements,
+    now,
+  )
   for (const { id } of due.results) await publishNotice(env, id, 'expired')
 }
 
@@ -196,21 +204,28 @@ export async function runCustomerCommand(
     throw new HTTPException(409, { message: 'unsupported_service' })
   const statements: D1PreparedStatement[] = []
   const after: QueueModelInput = {
-    config: state.config, allocations: state.allocations.map(item => ({ ...item })),
-    holds: state.holds, parties: state.parties.map(item => ({ ...item })),
+    config: state.config,
+    allocations: state.allocations.map((item) => ({ ...item })),
+    holds: state.holds,
+    parties: state.parties.map((item) => ({ ...item })),
   }
   let metadata: Record<string, unknown> = {}
   let notifyCancellation = false
   let notifyReadyEntryId: string | null = null
   if (input.action === 'update') {
-    after.parties = after.parties!.map(p => p.id === entry.id ? { ...p, partySize: input.partySize, preferredSpaceId: input.preferredSpaceId } : p)
-    const party = { id: entry.id, sequence: entry.sequence, ...input }
+    after.parties = after.parties!.map((p) =>
+      p.id === entry.id
+        ? {
+            ...p,
+            partySize: input.partySize,
+            preferredSpaceId: input.preferredSpaceId,
+          }
+        : p,
+    )
     if (
-      !eligibleResources(
-        party,
-        state.resources,
-        state.config.assignmentPreference,
-      ).length
+      input.preferredSpaceId &&
+      input.preferredSpaceId !== 'fastest' &&
+      !state.config.spaces.some((s) => s.id === input.preferredSpaceId)
     )
       throw new HTTPException(400, { message: 'invalid_space_preference' })
     statements.push(
@@ -229,8 +244,12 @@ export async function runCustomerCommand(
       preferredSpaceId: input.preferredSpaceId,
     }
   } else if (input.action === 'cancel') {
-    after.parties = after.parties!.filter(p => p.id !== entry.id)
-    after.allocations = after.allocations!.map(a => a.entry_id === entry.id && a.released_at === null ? { ...a, released_at: now, outcome: 'cancelled' } : a)
+    after.parties = after.parties!.filter((p) => p.id !== entry.id)
+    after.allocations = after.allocations!.map((a) =>
+      a.entry_id === entry.id && a.released_at === null
+        ? { ...a, released_at: now, outcome: 'cancelled' }
+        : a,
+    )
     const snapshot: QueueNoticeSnapshot = {
       schemaVersion: 2,
       serviceName: state.config.name,
@@ -245,7 +264,14 @@ export async function runCustomerCommand(
     if (!origin)
       statements.push(
         noticeStatement(
-          env, entry.id, 'cancelled', now, snapshot, 0, 0, !!state.config,
+          env,
+          entry.id,
+          'cancelled',
+          now,
+          snapshot,
+          0,
+          0,
+          !!state.config,
         ),
       )
     statements.push(
@@ -256,83 +282,78 @@ export async function runCustomerCommand(
         "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND kind IN ('queue_joined','approaching','delayed','improved','ready') AND status='pending'",
       ).bind(now, entry.id),
       env.DB.prepare(
-        "UPDATE queue_allocation SET released_at=?,outcome='cancelled' WHERE entry_id=? AND released_at IS NULL",
-      ).bind(now, entry.id),
-      env.DB.prepare(
         "UPDATE queue_entry SET status='cancelled',version=version+1,called_at=NULL,arrival_deadline_at=NULL,call_cycle=CASE WHEN status='called' THEN call_cycle+1 ELSE call_cycle END WHERE id=?",
       ).bind(entry.id),
     )
     notifyCancellation = !origin
     metadata = { outcome: 'cancelled' }
   } else if (entry.status === 'called') {
-    const allocation = state.allocations.find(
-      (item) => item.entry_id === entry.id && item.released_at === null,
-    )
     const calledParty = {
       id: entry.id,
       sequence: entry.sequence,
       partySize: entry.party_size,
       preferredSpaceId: entry.preferred_space_id,
     }
-    const releasedResource = allocation
-      ? state.resources.filter((resource) => resource.id === allocation.resource_id)
-      : state.config.type === 'restaurant'
-        ? []
-        : state.resources.filter(
-            (resource) =>
-              eligibleResources(
-                calledParty,
-                [resource],
-                state.config!.assignmentPreference,
-              ).length > 0,
-          )
-    const successors = state.parties
-      .filter((candidate) => candidate.sequence > entry.sequence)
-      .sort((a, b) => a.sequence - b.sequence)
-    const successor = successors.find(
-      (candidate) =>
-        eligibleResources(
-          candidate,
-          releasedResource,
-          state.config!.assignmentPreference,
-        ).length > 0,
+    const recorded = await env.DB.prepare(
+      'SELECT space_id,seats,baseline_ms,provenance FROM queue_assignment_observation WHERE entry_id=? AND call_cycle=? AND model_revision=2',
     )
+      .bind(entry.id, entry.call_cycle)
+      .first<{
+        space_id: string | null
+        seats: number | null
+        baseline_ms: number
+        provenance: 'inferred' | 'general'
+      }>()
+    const context = resolveEstimateContext(
+      calledParty,
+      state.config,
+      state.baseline,
+    )
+    if (recorded) {
+      context.spaceId = recorded.space_id
+      context.seats = recorded.seats
+      context.baselineMinutes = recorded.baseline_ms / 60000
+      context.provenance = recorded.provenance
+    }
+    const successor = state.parties
+      .filter((p) => p.sequence > entry.sequence)
+      .sort((a, b) => a.sequence - b.sequence)
+      .find((p) => compatibleSuccessor(calledParty, p, context))
     statements.push(
       env.DB.prepare(
         "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND kind='ready' AND status='pending'",
       ).bind(now, entry.id),
-      env.DB.prepare(
-        "UPDATE queue_allocation SET released_at=?,outcome='yielded' WHERE entry_id=? AND released_at IS NULL",
-      ).bind(now, entry.id),
     )
-    after.allocations = after.allocations!.map(a => a.entry_id === entry.id && a.released_at === null ? { ...a, released_at: now, outcome: 'yielded' } : a)
+    after.allocations = after.allocations!.map((a) =>
+      a.entry_id === entry.id && a.released_at === null
+        ? { ...a, released_at: now, outcome: 'yielded' }
+        : a,
+    )
     if (successor) {
-      after.parties = after.parties!.filter(p => p.id !== successor.id)
+      after.parties = after.parties!.filter((p) => p.id !== successor.id)
       after.parties.push({ ...calledParty, sequence: successor.sequence })
       after.appendedCallAt = now
-      if (allocation) after.allocations = [
-        ...after.allocations!.filter(a => a.entry_id !== successor.id),
-        { ...allocation, entry_id: successor.id, reserved_at: now, arrived_at: null, released_at: null, outcome: null },
-      ]
       const priorCycle = await env.DB.prepare(
         'SELECT call_cycle FROM queue_entry WHERE id=?',
       )
         .bind(successor.id)
         .first<{ call_cycle: number }>()
       const nextCycle = (priorCycle?.call_cycle ?? 0) + 1
-      after.assignment = { entryId:successor.id,callCycle:nextCycle,resourceId:allocation?.resource_id,
-        spaceId:allocation?.space_id ?? 'reception',seats:allocation?.seats ?? 100 }
-      const resource = allocation
-        ? state.resources.find((item) => item.id === allocation.resource_id)
-        : null
+      after.assignment = {
+        entryId: successor.id,
+        callCycle: nextCycle,
+        source: 'handoff',
+        context,
+        partySize: successor.partySize,
+        preferredSpaceId: successor.preferredSpaceId,
+      }
       const deadline = now + (state.config.graceMinutes ?? 5) * 60_000
-      const resourceName = resource
-        ? state.config.spaces.find((space) => space.id === resource.spaceId)?.name ?? null
-        : state.config.type === 'pool'
-          ? 'Piscina / bar'
-          : state.config.type === 'reception'
-            ? 'Recepción'
-            : null
+      const resourceName = null
+      statements.push(
+        env.DB.prepare(
+          "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND status='pending' AND kind IN ('queue_joined','approaching','delayed','improved')",
+        ).bind(now, successor.id),
+      )
       statements.push(
         env.DB.prepare(
           'UPDATE queue_entry SET sequence=(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) WHERE id=?',
@@ -356,19 +377,6 @@ export async function runCustomerCommand(
           "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'called',?)",
         ).bind(crypto.randomUUID(), successor.id, now),
       )
-      if (allocation && resource)
-        statements.push(
-          env.DB.prepare(
-            'INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at) VALUES (?,?,?,?,?,?,NULL) ON CONFLICT(entry_id) DO UPDATE SET resource_id=excluded.resource_id,space_id=excluded.space_id,seats=excluded.seats,reserved_at=excluded.reserved_at,arrived_at=NULL,released_at=NULL,outcome=NULL WHERE queue_allocation.released_at IS NOT NULL',
-          ).bind(
-            successor.id,
-            queueId,
-            resource.id,
-            resource.spaceId,
-            resource.seats,
-            now,
-          ),
-        )
       statements.push(
         noticeStatement(
           env,
@@ -408,25 +416,20 @@ export async function runCustomerCommand(
     }
   } else {
     const party = state.parties.find((p) => p.id === entry.id)!
-    const resources = new Set(
-      eligibleResources(
-        party,
-        state.resources,
-        state.config.assignmentPreference,
-      ).map((r) => r.id),
-    )
+    const context = resolveEstimateContext(party, state.config, state.baseline)
     const successor = state.parties.find(
       (p) =>
-        p.sequence > entry.sequence &&
-        eligibleResources(
-          p,
-          state.resources,
-          state.config!.assignmentPreference,
-        ).some((r) => resources.has(r.id)),
+        p.sequence > entry.sequence && compatibleSuccessor(party, p, context),
     )
     if (!successor)
       throw new HTTPException(409, { message: 'no_compatible_successor' })
-    after.parties = after.parties!.map(p => p.id === entry.id ? { ...p, sequence: successor.sequence } : p.id === successor.id ? { ...p, sequence: entry.sequence } : p)
+    after.parties = after.parties!.map((p) =>
+      p.id === entry.id
+        ? { ...p, sequence: successor.sequence }
+        : p.id === successor.id
+        ? { ...p, sequence: entry.sequence }
+        : p,
+    )
     statements.push(
       env.DB.prepare(
         'UPDATE queue_entry SET sequence=(SELECT MAX(sequence)+1 FROM queue_entry WHERE queue_id=?) WHERE id=?',
@@ -585,9 +588,11 @@ export async function runWhatsAppAction(
     notice.accepted_at !== null &&
     ['accepted', 'sent', 'delivered', 'read'].includes(notice.status) &&
     ((context.phase === 'waiting' &&
-      ['approaching', 'improved_wait_recommended', 'improved_wait_neutral'].includes(
-        copyVariant,
-      )) ||
+      [
+        'approaching',
+        'improved_wait_recommended',
+        'improved_wait_neutral',
+      ].includes(copyVariant)) ||
       (context.phase === 'called' &&
         ['ready', 'improved_ready'].includes(copyVariant)))
   if (!authenticated || !context) {
@@ -622,8 +627,7 @@ export async function runWhatsAppAction(
     action,
     ...context,
     replyWithinServiceWindow:
-      event.occurred_at <= now + 1_000 &&
-      event.occurred_at > now - 86_400_000,
+      event.occurred_at <= now + 1_000 && event.occurred_at > now - 86_400_000,
   }
   try {
     await runCustomerCommand(

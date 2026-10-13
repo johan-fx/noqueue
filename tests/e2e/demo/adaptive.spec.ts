@@ -71,7 +71,7 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
     check(`color:${p}`, css?.includes(expected), true)
   }
   try {
-    const t = await fixture(staff, request, baseURL!, 'restaurant', id === 'expiration' ? 'expiration' : 'main', { interval: 4, tables: id === 'learning' ? 3 : 1, approach: 2, occupied: id === 'protection' || id === 'offline' ? 1 : 0, leaveInactive: id === 'protection' })
+    const t = await fixture(staff, request, baseURL!, 'restaurant', id === 'expiration' ? 'expiration' : 'main', { interval: 4, tables: id === 'learning' ? 3 : 1, approach: 2, leaveInactive: id === 'protection' })
     e.queueId = t.queue; e.venueName = t.venueName; e.graceMinutes = t.graceMinutes
     const sql = evidenceDb(t.queue)
     const db = () => ({
@@ -117,12 +117,6 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
       await drawer.getByRole('tab', { name: 'Completados', exact: true }).click()
       await expect(row(name)).toBeVisible()
     }
-    const releaseArrived = async (name: string) => {
-      await row(name).getByRole('button', { name: /Acciones del turno/ }).click()
-      await row(name).getByRole('button', { name: 'Liberar recurso', exact: true }).click()
-      await staff.getByRole('dialog', { name: 'Liberar recurso', exact: true }).getByRole('button', { name: 'Confirmar', exact: true }).click()
-      await drawer.getByRole('tab', { name: 'Lista', exact: true }).click()
-    }
     const predecessors = ['Carlos Previo','Elena Previa','Diego Previo','Nora Previa']
     if (id === 'learning') {
       for (const name of predecessors) await supportEntry(cc.request, baseURL!, t.queue, 'restaurant', name)
@@ -162,7 +156,7 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
         await expect.poll(async () => (await snapshot()).customer?.phase, { timeout: 150000, intervals: [1000] }).toBe('approaching')
       })
       await phase('approaching'); await moment('approaching', 'Naranja · Se alcanza el margen de acercamiento de 2 minutos')
-      await wait('No se libera ninguna mesa · Esperamos la alarma del servidor', async () => {
+      await wait('No se asignan nuevos turnos · Esperamos la alarma del servidor', async () => {
         await expect.poll(async () => (await snapshot()).delay?.reason, { timeout: 100000, intervals: [1000] }).toBe('safety')
       })
       await expect(client.getByText(/Seguimos esperando a que te asignen/)).toBeVisible()
@@ -170,7 +164,7 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
       check('extension-before-old-zero', Date.now() < initial.predictedAt!, true)
       check('extension-moves-deadline', extended.predictedAt! > initial.predictedAt!, true)
       await phase('waiting'); await moment('safety', 'Prórroga automática antes de cero · Motivo visible · No hay asignación')
-      await wait('Seguimos sin liberar mesas · El nuevo plazo vuelve a acercarse', async () => {
+      await wait('Seguimos sin asignaciones · El nuevo plazo vuelve a acercarse', async () => {
         await expect.poll(async () => (await snapshot()).customer?.phase, { timeout: 190000, intervals: [1000] }).toBe('approaching')
       })
       await phase('approaching'); await moment('reapproach', 'Nuevo acercamiento · La explicación de demora permanece')
@@ -179,23 +173,18 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
       })
       e.secondExtension = await snapshot()
       await moment('second-safety', 'Segunda prórroga · El turno sigue esperando, no se cancela')
-      await staff.getByRole('button', { name: 'Opciones de la lista' }).click()
-      await staff.getByRole('menuitem', { name: 'Mesa libre', exact: true }).click()
-      await moment('release-dialog', 'Ahora el personal libera una mesa real')
-      await staff.getByRole('button', { name: 'Liberar una mesa', exact: true }).click()
       await call(name); await phase('called')
       const called=await snapshot()
       check('arrival-clock-5-minutes', called.customer!.arrivalDeadlineAt! - called.customer!.calledAt!, 300000)
       await moment('called', 'Rojo · Asignación definitiva · Comienza un reloj distinto de 5 minutos', 8)
       await arrive(name); await phase('arrived')
       await moment('arrived', 'Verde · Llegada confirmada por el personal')
-      await releaseArrived(name)
     } else if (id === 'learning') {
       const posterior = await supportEntry(cc.request, baseURL!, t.queue, 'restaurant', 'Cliente Posterior')
       for (const n of predecessors) {
         await call(n)
         await moment(`call-${n.split(' ')[0]}`, `Asignación real rápida · ${n}`)
-        await arrive(n); await releaseArrived(n)
+        await arrive(n)
       }
       const learned=db(); e.afterFast=learned
       check('four-real-assignments', learned.observations.length, 4)

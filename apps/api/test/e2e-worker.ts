@@ -260,64 +260,110 @@ app.post('/experiments/local/staff/legacy-open', async (c) => {
   return c.json({ ok: true })
 })
 
-// Synthetic historical inputs only; bounded, loopback + pilot guarded above.
-// No caller-supplied SQL, current time, projections or calculated means.
-app.post('/experiments/local/staff/queue-history', async (c) => {
+// Synthetic historical assignment intervals only; bounded, loopback + pilot
+// guarded above. This seeds the same contextual observation contract written
+// by human assignments; it never creates physical allocations or occupancy.
+app.post('/experiments/local/staff/assignment-history', async (c) => {
   const parsed = z
     .object({
       queueId: z.uuid(),
       spaceId: z.string().min(1).max(100),
       seats: z.number().int().min(1).max(100),
-      durations: z.array(z.number().int().min(1).max(1440)).min(1).max(31),
+      intervals: z.array(z.number().int().min(1).max(1440)).min(3).max(30),
     })
     .strict()
     .safeParse(await c.req.json())
   if (!parsed.success) return c.json({ error: 'invalid_fixture' }, 400)
-  const { queueId, spaceId, seats, durations } = parsed.data
-  const { loadQueueState, recalculateQueue } = await import(
+  const { queueId, spaceId, seats, intervals } = parsed.data
+  const { configuredIntervalMinutes, contextKey } = await import(
+    '../src/features/queue/adaptive-model'
+  )
+  const { commitQueueTransition, loadQueueState } = await import(
     '../src/features/queue/projection'
   )
-  const row = await c.env.DB.prepare('SELECT id FROM queue WHERE id=?')
+  const queue = await c.env.DB.prepare('SELECT id FROM queue WHERE id=?')
     .bind(queueId)
     .first()
-  if (!row) return c.json({ error: 'not_found' }, 404)
+  if (!queue) return c.json({ error: 'not_found' }, 404)
   const state = await loadQueueState(c.env, queueId)
-  const resource = state.resources.find(
-    (r) => r.spaceId === spaceId && r.seats === seats,
+  const tableType = state.config?.spaces
+    .find((space) => space.id === spaceId)
+    ?.tableTypes?.find((type) => type.seats === seats)
+  if (!tableType) return c.json({ error: 'invalid_context' }, 400)
+  const baselineMs =
+    configuredIntervalMinutes(
+      state.config,
+      state.baseline,
+      spaceId,
+      seats,
+    ) * 60_000
+  const episodeId = crypto.randomUUID()
+  let assignedAt =
+    Date.now() - intervals.reduce((total, value) => total + value * 60_000, 0)
+  const sequence = await c.env.DB.prepare(
+    'SELECT COALESCE(MAX(sequence),0) AS value FROM queue_entry WHERE queue_id=?',
   )
-  if (!resource) return c.json({ error: 'invalid_group' }, 400)
-  let time =
-    Date.now() -
-    durations.reduce((total, value) => total + (value + 1) * 60000, 0)
+    .bind(queueId)
+    .first<{ value: number }>()
   const statements: D1PreparedStatement[] = []
-  for (const duration of durations) {
-    const id = crypto.randomUUID(),
-      arrived = time,
-      released = time + duration * 60000
+  for (const [index, interval] of intervals.entries()) {
+    const id = crypto.randomUUID()
     statements.push(
       c.env.DB.prepare(
-        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,?,'en',?,(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?),'served')",
-      ).bind(id, queueId, id, id, id, id, Math.min(seats, 4), arrived, queueId),
-    )
-    statements.push(
-      c.env.DB.prepare(
-        "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at,arrived_at,released_at,outcome) VALUES (?,?,?,?,?,?,?,?,'served')",
+        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,?,'en',?,?,'completed')",
       ).bind(
         id,
         queueId,
-        resource.id,
-        spaceId,
-        seats,
-        arrived,
-        arrived,
-        released,
+        id,
+        id,
+        id,
+        id,
+        Math.min(seats, 20),
+        assignedAt,
+        (sequence?.value ?? 0) + index + 1,
       ),
     )
-    time = released + 60000
+    statements.push(
+      c.env.DB.prepare(
+        "INSERT INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,resource_id,space_id,seats,baseline_ms,interval_ms,ratio,source,provenance,model_revision) VALUES (?,1,?,?,?,NULL,?,?,?,?,?,'staff','inferred',2)",
+      ).bind(
+        id,
+        queueId,
+        episodeId,
+        assignedAt,
+        spaceId,
+        seats,
+        baselineMs,
+        interval * 60_000,
+        (interval * 60_000) / baselineMs,
+      ),
+    )
+    assignedAt += interval * 60_000
   }
+  statements.unshift(
+    c.env.DB.prepare(
+      'INSERT INTO queue_demand_episode(id,queue_id,started_at) VALUES (?,?,?)',
+    ).bind(episodeId, queueId, Date.now() - intervals.reduce((total, value) => total + value * 60_000, 0)),
+  )
   await c.env.DB.batch(statements)
-  await recalculateQueue(c.env, queueId)
-  return c.json({ ok: true, inserted: durations.length })
+  // The fixture is a modeled assignment event, so commit it against its
+  // pre-event forecast just like the production command path does.
+  const learned = await commitQueueTransition(
+    c.env,
+    queueId,
+    state,
+    {},
+    [],
+    Date.now(),
+  )
+  return c.json({
+    ok: true,
+    inserted: intervals.length,
+    serviceFactor: learned.adaptive?.factors.service,
+    contextFactor: learned.adaptive?.factors.types.get(
+      contextKey(spaceId, seats),
+    ),
+  })
 })
 
 // Deterministic current prediction fixture; never available in deployable entrypoints.

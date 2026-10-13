@@ -72,29 +72,40 @@ it('edits identical sizes independently and preserves stable identities', () => 
   )
 })
 
-it('uses points of attention for pool without editing physical legacy groups', () => {
+it('keeps pool estimation context independent from physical-resource controls', () => {
+  const confirm = vi.fn()
+  const spaces = [
+    {
+      id: 'pool',
+      name: 'Piscina',
+      tables: 2,
+      tableTypes: [{ seats: 3, count: 2 }],
+    },
+  ]
   render(
     <QueueConfigForm
       type="pool"
-      spaces={[
-        {
-          id: 'pool',
-          name: 'Piscina',
-          tables: 2,
-          tableTypes: [{ seats: 3, count: 2 }],
-        },
-      ]}
+      spaces={spaces}
       averageMinutes={60}
       saved={undefined}
-      onConfirm={vi.fn()}
+      onConfirm={confirm}
     />,
   )
   expect(
     screen.queryByRole('button', { name: 'Grupos de 3' }),
   ).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Opciones de operación' }))
-  expect(screen.getByLabelText('Puestos de atención')).toHaveValue(1)
-  expect(screen.queryByLabelText(/máximo/i)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Opciones de operación' })).not.toBeInTheDocument()
+  expect(screen.queryByLabelText('Puestos de atención')).not.toBeInTheDocument()
+  fireEvent.submit(document.getElementById('queue-config')!)
+  expect(confirm).toHaveBeenCalledWith(
+    [expect.objectContaining({
+      id: 'pool',
+      name: 'Piscina',
+      tables: 2,
+      tableTypes: [expect.objectContaining({ seats: 3, count: 2, averageMinutes: 60 })],
+    })],
+    expect.objectContaining({ estimatorVersion: 2 }),
+  )
 })
 
 it('rejects an invalid adjustment even when the operation section is collapsed', () => {

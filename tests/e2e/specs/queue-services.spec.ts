@@ -127,7 +127,6 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
       await page.request.get(`/api/v1/staff/queues/${q.id}/opening-context`)
     ).json()) as {
       contextToken: string
-      groups: { spaceId: string; seats: number }[]
     }
     const response = await page.request.post(
       `/api/v1/staff/queues/${q.id}/lifecycle`,
@@ -140,24 +139,6 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
       },
     )
     expect(response.ok(), await response.text()).toBeTruthy()
-    for (const group of context.groups) {
-      const current = (await (
-        await page.request.get(`/api/v1/staff/queues/${q.id}/opening-context`)
-      ).json()) as { contextToken: string }
-      const freed = await page.request.post(
-        `/api/v1/staff/queues/${q.id}/lifecycle`,
-        {
-          headers: { ...headers, 'Idempotency-Key': crypto.randomUUID() },
-          data: {
-            action: 'occupancy',
-            contextToken: current.contextToken,
-            group: { ...group, occupied: 0 },
-            reason: 'Fixture physical capacity update',
-          },
-        },
-      )
-      expect(freed.ok(), await freed.text()).toBeTruthy()
-    }
   }
   await page.reload()
   const restaurant = queues.find((q) => q.config.type === 'restaurant')!,
@@ -323,16 +304,13 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   ).toHaveCount(0)
   await expect(drawer.getByText('María López')).toHaveCount(0)
   await drawer.getByRole('tab', { name: 'Completados' }).click()
-  await expect(drawer.getByText('Terraza · Asignado')).toBeVisible()
-  await drawer
-    .getByRole('tabpanel', { name: 'Completados' })
-    .getByRole('button', { name: /Acciones del turno/ })
-    .click()
-  await drawer.getByRole('button', { name: 'Liberar recurso' }).click()
-  await page
-    .getByRole('dialog', { name: 'Liberar recurso' })
-    .getByRole('button', { name: 'Confirmar', exact: true })
-    .click()
+  await expect(drawer.getByText('Terraza · Preferido')).toBeVisible()
+  await expect(drawer.getByText('Completado', { exact: true })).toBeVisible()
+  await expect(
+    drawer.getByRole('tabpanel', { name: 'Completados' }).getByRole('button', {
+      name: 'Liberar recurso',
+    }),
+  ).toHaveCount(0)
   await drawer.getByRole('button', { name: 'Volver', exact: true }).click()
   // Reception public form captures enabled subtypes; no restaurant fields leak across services.
   await guest.goto(`/q/${reception.id}`)

@@ -68,7 +68,9 @@ export function PublicVenue() {
                   <p className="flex items-center gap-2 text-xs">
                     <Users className="size-4" />
                     {visualWaitingPeople(service)}{' '}
-                    {es ? 'personas en lista de espera' : 'people waiting'}
+                    {visualWaitingPeople(service) === 1
+              ? es ? 'persona en lista de espera' : 'person waiting'
+              : es ? 'personas en lista de espera' : 'people waiting'}
                   </p>
                   <p className="flex items-center gap-2 text-xs">
                     <Clock className="size-4" />

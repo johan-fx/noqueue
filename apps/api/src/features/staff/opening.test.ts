@@ -68,67 +68,30 @@ async function entry(queue: string, status = 'waiting') {
     .run()
   return id
 }
-async function open(t: Awaited<ReturnType<typeof setup>>, occupied = 1) {
+async function open(t: Awaited<ReturnType<typeof setup>>, _occupied = 1) {
   const context = await openingContext(env, t.queue)
-  const restaurant =
-    (await loadQueueState(env, t.queue)).config?.type === 'restaurant'
+  if (context.open) return
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'open',
     contextToken: context.contextToken,
-    groups: context.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: restaurant
-        ? g.count - g.allocated
-        : g.spaceId === 'terrace'
-        ? occupied
-        : 0,
-    })),
   })
-  // Fixtures first declare genuine full capacity, then explicitly record physical changes.
-  if (restaurant)
-    for (const group of context.groups) {
-      const target = group.spaceId === 'terrace' ? occupied : 0
-      if (target !== group.count - group.allocated)
-        await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-          action: 'occupancy',
-          contextToken: (await openingContext(env, t.queue)).contextToken,
-          group: {
-            spaceId: group.spaceId,
-            seats: group.seats,
-            occupied: target,
-          },
-          reason: 'Fixture physical capacity update',
-        })
-    }
 }
 
-it('opens active with occupied resources, protects holds, corrects/release counts, and closes without cancelling turns', async () => {
+it('opens without an occupancy survey and lets queue progress proceed without reservations', async () => {
   const t = await setup(),
     e = await entry(t.queue)
   await open(t)
   let state = await loadQueueState(env, t.queue)
   expect(state.config?.estimationMode).toBe('active')
-  expect(state.resources.filter((r) => r.callable)).toHaveLength(2)
-  expect(state.resources[0]?.availableAt).toBeNull()
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     entryId: e,
     version: 0,
     action: 'call',
   })
   state = await loadQueueState(env, t.queue)
-  expect(state.allocations[0]?.resource_id).not.toBe('terrace:4:0')
-  let ctx = await openingContext(env, t.queue)
-  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'occupancy',
-    contextToken: ctx.contextToken,
-    group: { spaceId: 'terrace', seats: 4, occupied: 0 },
-    reason: 'Mesa liberada',
-  })
-  ctx = await openingContext(env, t.queue)
-  expect(ctx.groups.find((g) => g.spaceId === 'terrace')?.occupied).toBe(0)
+  expect(state.allocations).toHaveLength(0)
   const waiting = await entry(t.queue)
-  ctx = await openingContext(env, t.queue)
+  const ctx = await openingContext(env, t.queue)
   expect(ctx.pendingCount).toBe(2)
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'close',
@@ -142,50 +105,35 @@ it('opens active with occupied resources, protects holds, corrects/release count
         .first<{ status: string }>()
     )?.status,
   ).toBe('waiting')
-  expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(1)
+  expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
 })
-it('rejects incomplete counts, stale contexts, bypasses, and keeps idempotent retries deduplicated', async () => {
+it('accepts legacy opening aliases and preserves stale-context/idempotent lifecycle guards', async () => {
   const t = await setup(),
     context = await openingContext(env, t.queue)
-  await expect(
-    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'open',
-      contextToken: context.contextToken,
-      groups: [],
-    }),
-  ).rejects.toThrow('full_declaration_required')
+  const key = crypto.randomUUID()
+  await runLifecycleCommand(env, t.actor, t.queue, key, {
+    action: 'open', contextToken: context.contextToken, groups: [],
+  } as never)
   await entry(t.queue)
   await expect(
     runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
       action: 'open',
       contextToken: context.contextToken,
-      groups: [],
     }),
   ).rejects.toThrow('version_conflict')
   const ctx = await openingContext(env, t.queue),
-    key = crypto.randomUUID()
-  const body = {
-    action: 'open' as const,
-    contextToken: ctx.contextToken,
-    groups: ctx.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: g.count - g.allocated,
-    })),
-  }
-  await runLifecycleCommand(env, t.actor, t.queue, key, body)
-  await runLifecycleCommand(env, t.actor, t.queue, key, body)
+    closeKey = crypto.randomUUID()
+  const body = { action: 'close' as const, contextToken: ctx.contextToken }
+  await runLifecycleCommand(env, t.actor, t.queue, closeKey, body)
+  await runLifecycleCommand(env, t.actor, t.queue, closeKey, body)
   const count = await env.DB.prepare(
-    "SELECT COUNT(*) n FROM queue_inventory_audit WHERE queue_id=? AND action='open'",
+    "SELECT COUNT(*) n FROM staff_audit WHERE target_id=? AND action='queue.open'",
   )
     .bind(t.queue)
     .first<{ n: number }>()
   expect(count?.n).toBe(1)
   await expect(
-    runLifecycleCommand(env, t.actor, t.queue, key, {
-      action: 'close',
-      contextToken: ctx.contextToken,
-    }),
+    runLifecycleCommand(env, t.actor, t.queue, closeKey, { action: 'open', contextToken: ctx.contextToken }),
   ).rejects.toThrow('idempotency_conflict')
   const current = await openingContext(env, t.queue),
     state = await loadQueueState(env, t.queue)
@@ -193,40 +141,24 @@ it('rejects incomplete counts, stale contexts, bypasses, and keeps idempotent re
     configureQueue(env, t.actor, t.queue, {
       ...state.config,
       version: current.version,
-      open: false,
-    }),
-  ).rejects.toThrow('lifecycle_command_required')
-  await expect(
-    configureQueue(env, t.actor, t.queue, {
-      ...state.config,
-      spaces: [
-        {
-          ...config.spaces[0]!,
-          tables: 3,
-          tableTypes: [{ seats: 4, count: 3 }],
-        },
-      ],
-      version: current.version,
       open: true,
     }),
-  ).rejects.toThrow('close_before_topology_change')
+  ).rejects.toThrow('lifecycle_command_required')
+  await configureQueue(env, t.actor, t.queue, {
+    ...state.config,
+    spaces: [{ ...config.spaces[0]!, tables: 3, tableTypes: [{ seats: 4, count: 3 }] }],
+    version: current.version,
+    open: false,
+  })
 })
-it('waits for legacy entries to drain, but does not silently activate existing open queues', async () => {
+it('does not wait for legacy entries or inventory to activate the queue model', async () => {
   const t = await setup(),
     legacy = await entry(t.queue, 'completed')
   await open(t)
   expect((await loadQueueState(env, t.queue)).config?.estimationMode).toBe(
-    'shadow',
-  )
-  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    entryId: legacy,
-    version: 0,
-    action: 'release',
-  })
-  expect((await loadQueueState(env, t.queue)).config?.estimationMode).toBe(
     'active',
   )
-  expect((await openingContext(env, t.queue)).groups[0]?.occupied).toBe(1)
+  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(legacy).first<{status:string}>())?.status).toBe('completed')
   const old = await setup()
   await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
     .bind(old.queue)
@@ -234,17 +166,15 @@ it('waits for legacy entries to drain, but does not silently activate existing o
   await recalculateQueue(env, old.queue)
   expect(
     (await loadQueueState(env, old.queue)).config?.estimationMode,
-  ).not.toBe('active')
+  ).toBe('active')
 })
-it('rejects opening with missing configuration and rejects commercial-only actors', async () => {
+it('opens with incomplete table-type metadata and still rejects commercial-only actors', async () => {
   const t = await setup({
     ...config,
     spaces: [{ id: 'terrace', name: 'Terraza', tables: 2 }],
   })
-  await expect(open(t)).rejects.toThrow('configuration_missing')
-  expect((await openingContext(env, t.queue)).readiness.reasons).toEqual(
-    expect.arrayContaining(['configuration_missing']),
-  )
+  await open(t)
+  expect((await openingContext(env, t.queue)).readiness.reasons).toEqual([])
   await expect(
     runLifecycleCommand(env, t.sales, t.queue, crypto.randomUUID(), {
       action: 'close',
@@ -252,30 +182,24 @@ it('rejects opening with missing configuration and rejects commercial-only actor
     }),
   ).rejects.toThrow('not_found')
 })
-it('serializes competing openings and invalidates contexts after new reservations or corrections', async () => {
+it('serializes competing openings and invalidates stale lifecycle contexts without inventory corrections', async () => {
   const t = await setup(),
     ctx = await openingContext(env, t.queue)
   const coordinator = env.QUEUE_COORDINATOR.getByName(t.queue)
   const body = {
     action: 'open' as const,
     contextToken: ctx.contextToken,
-    groups: ctx.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: g.count - g.allocated,
-    })),
   }
   const results = await Promise.all([
     coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), body),
     coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), body),
   ])
   expect(results.map((r) => r.status).sort()).toEqual([200, 409])
-  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+  const retired = await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'release_unit',
     contextToken: (await openingContext(env, t.queue)).contextToken,
-    spaceId: 'terrace',
-    seats: 4,
-  })
+  } as never).catch((error) => error)
+  expect(retired).toMatchObject({ status: 410, message: 'operation_retired' })
   const id = await entry(t.queue),
     beforeCall = await openingContext(env, t.queue)
   await coordinator.staffCommand(t.actor, t.queue, crypto.randomUUID(), {
@@ -283,58 +207,40 @@ it('serializes competing openings and invalidates contexts after new reservation
     version: 0,
     action: 'call',
   })
-  expect(
-    (
-      await coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), {
-        action: 'occupancy',
-        contextToken: beforeCall.contextToken,
-        group: { spaceId: 'salon', seats: 4, occupied: 1 },
-        reason: 'Count changed',
-      })
-    ).status,
-  ).toBe(409)
+  expect((await coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), {
+    action: 'pause', contextToken: beforeCall.contextToken,
+  })).status).toBe(409)
   const current = await openingContext(env, t.queue)
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'occupancy',
+    action: 'pause',
     contextToken: current.contextToken,
-    group: { spaceId: 'terrace', seats: 4, occupied: 1 },
-    reason: 'Count corrected',
   })
-  expect((await openingContext(env, t.queue)).contextToken).not.toBe(
-    current.contextToken,
-  )
+  expect((await openingContext(env, t.queue)).open).toBe(false)
 })
-it('supports all occupied resources without learning false durations and protects them even while closed', async () => {
+it('allows assignments despite historic occupancy and allows contextual configuration changes', async () => {
   const t = await setup(),
     ctx = await openingContext(env, t.queue)
+  // Legacy external-occupancy records remain readable but are never assignment gates.
+  for (let i = 0; i < 2; i++)
+    await env.DB.prepare('INSERT INTO queue_external_occupancy(queue_id,resource_id,space_id,seats,recorded_at) VALUES (?,?,?,?,?)')
+      .bind(t.queue, `terrace:4:${i}`, 'terrace', 4, Date.now()).run()
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'open',
     contextToken: ctx.contextToken,
-    groups: ctx.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: g.count,
-    })),
   })
   const id = await entry(t.queue)
   await recalculateQueue(env, t.queue)
   let state = await loadQueueState(env, t.queue)
-  expect(state.projections[0]?.quality).toBe('unknown')
   expect(state.allocations).toHaveLength(0)
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
       entryId: id,
       version: 0,
       action: 'call',
-    }),
-  ).rejects.toThrow('no_free_compatible_resource')
-  await expect(
-    env.DB.prepare(
-      "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,'terrace:4:0','terrace',4,?)",
-    )
-      .bind(id, t.queue, Date.now())
-      .run(),
-  ).rejects.toThrow('resource_already_occupied')
+    })
+  state = await loadQueueState(env, t.queue)
+  expect(state.allocations).toHaveLength(0)
+  expect(state.holds).toHaveLength(0)
+  expect((await env.DB.prepare('SELECT COUNT(*) n FROM queue_external_occupancy WHERE queue_id=?').bind(t.queue).first<{n:number}>())?.n).toBe(2)
   let context = await openingContext(env, t.queue)
   await configureQueue(env, t.actor, t.queue, {
     ...state.config,
@@ -347,7 +253,8 @@ it('supports all occupied resources without learning false durations and protect
   })
   state = await loadQueueState(env, t.queue)
   expect(state.config?.estimationMode).toBe('active')
-  expect(state.resources[0]?.occupancyMinutes).toBeNull() // Configured cadence is not meal duration.
+  expect(state.holds).toHaveLength(0)
+  expect((await env.DB.prepare('SELECT COUNT(*) n FROM queue_external_occupancy WHERE queue_id=?').bind(t.queue).first<{n:number}>())?.n).toBe(2)
   context = await openingContext(env, t.queue)
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'close',
@@ -361,7 +268,7 @@ it('supports all occupied resources without learning false durations and protect
       version: context.version,
       open: false,
     }),
-  ).rejects.toThrow('occupied_resource_configuration')
+  ).resolves.toBeDefined()
 })
 it('allows queue operators without configuration permission and deduplicates projection intents on replay', async () => {
   const t = await setup()
@@ -404,7 +311,7 @@ it('allows queue operators without configuration permission and deduplicates pro
 })
 
 it.each(['manual_disabled', 'legacy_pending'] as const)(
-  'enforces confirmed capacity independently of intelligent ordering (%s)',
+  'assigns multiple turns regardless of legacy occupancy or intelligence policy (%s)',
   async (pending) => {
     const t = await setup({
       ...config,
@@ -422,67 +329,31 @@ it.each(['manual_disabled', 'legacy_pending'] as const)(
     if (pending === 'legacy_pending') await entry(t.queue, 'completed')
     await open(t, 1)
     expect((await loadQueueState(env, t.queue)).config?.estimationMode).toBe(
-      'shadow',
+      pending === 'manual_disabled' ? 'shadow' : 'active',
     )
     const first = await entry(t.queue),
       second = await entry(t.queue)
-    await expect(
-      runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-        entryId: first,
-        version: 0,
-        action: 'call',
-        overrideReason: 'Explicit override',
-      }),
-    ).rejects.toThrow('no_free_compatible_resource')
-    expect(
-      (
-        await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
-          .bind(first)
-          .first<{ status: string }>()
-      )?.status,
-    ).toBe('waiting')
-    const context = await openingContext(env, t.queue)
-    await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'occupancy',
-      contextToken: context.contextToken,
-      group: { spaceId: 'terrace', seats: 4, occupied: 0 },
-      reason: 'Table released',
-    })
-    // Priority requires a reason even with manual or shadow estimation.
     await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      entryId: second,
-      version: 0,
-      action: 'call',
-      overrideReason: 'Explicit priority',
+      entryId: first, version: 0, action: 'call',
     })
-    expect(
-      (await loadQueueState(env, t.queue)).allocations.some(
-        (a) => a.entry_id === second,
-      ),
-    ).toBe(true)
-    await expect(
-      runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-        entryId: first,
-        version: 0,
-        action: 'call',
-      }),
-    ).rejects.toThrow('no_free_compatible_resource')
+    await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      entryId: second, version: 0, action: 'call',
+    })
+    expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
   },
 )
-it('rejects restaurant assignments without compatible known inventory', async () => {
+it('allows restaurant assignment without known inventory or a matching table type', async () => {
   const t = await setup(),
     id = await entry(t.queue)
   await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?').bind(t.queue).run()
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
       entryId: id,
       version: 0,
       action: 'call',
-    }),
-  ).rejects.toThrow('no_free_compatible_resource')
+    })
   expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
 })
-it('repairs projection failure after the lifecycle commit with the same key without repeating inventory writes', async () => {
+it('repairs projection failure after opening commit with the same key without duplicate audit', async () => {
   const t = await setup(),
     id = await entry(t.queue),
     context = await openingContext(env, t.queue),
@@ -490,11 +361,6 @@ it('repairs projection failure after the lifecycle commit with the same key with
   const body = {
     action: 'open' as const,
     contextToken: context.contextToken,
-    groups: context.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: g.count,
-    })),
   }
   const projection = await import('../queue/projection')
   const fail = vi
@@ -515,7 +381,7 @@ it('repairs projection failure after the lifecycle commit with the same key with
   expect(
     (
       await env.DB.prepare(
-        "SELECT COUNT(*) n FROM queue_inventory_audit WHERE queue_id=? AND action='open'",
+        "SELECT COUNT(*) n FROM staff_audit WHERE target_id=? AND action='queue.open'",
       )
         .bind(t.queue)
         .first<{ n: number }>()
@@ -529,82 +395,38 @@ it('repairs projection failure after the lifecycle commit with the same key with
         .bind(id)
         .first<{ quality: string }>()
     )?.quality,
-  ).toBe('unknown')
+  ).toBeTruthy()
 })
-it('requires resurvey after a closed managed topology change, including after all retained occupancy drains', async () => {
+it('allows contextual table changes without freeing resources and still protects pending zone references', async () => {
   const t = await setup(),
-    existing = await entry(t.queue)
-  await open(t, 1)
-  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    entryId: existing,
-    version: 0,
-    action: 'call',
-  })
-  let context = await openingContext(env, t.queue)
-  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'close',
-    contextToken: context.contextToken,
-  })
-  context = await openingContext(env, t.queue)
-  const old = (await loadQueueState(env, t.queue)).config!
+    waiting = await entry(t.queue)
+  await env.DB.prepare('UPDATE queue_entry SET preferred_space_id=\'terrace\' WHERE id=?').bind(waiting).run()
+  await open(t)
+  const before = await loadQueueState(env, t.queue)
+  const context = await openingContext(env, t.queue)
   await configureQueue(env, t.actor, t.queue, {
-    ...old,
-    open: false,
+    ...before.config,
     version: context.version,
-    spaces: [
-      ...old.spaces,
-      {
-        id: 'new',
-        name: 'New room',
-        tables: 1,
-        tableTypes: [{ seats: 4, count: 1 }],
-      },
-    ],
+    open: true,
+    spaces: before.config!.spaces.map((space) => space.id === 'terrace'
+      ? { ...space, tables: 9, tableTypes: [{ seats: 4, count: 9, averageMinutes: 33 }] }
+      : space),
   })
-  const waiting = await entry(t.queue)
-  const call = () =>
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      entryId: waiting,
-      version: 0,
-      action: 'call',
-    })
-  await expect(call()).rejects.toThrow('inventory_refresh_required')
-  // Existing arrivals/releases remain available while admissions are closed.
+  const updated = await loadQueueState(env, t.queue)
+  expect(updated.config?.spaces.find((space) => space.id === 'terrace')?.tables).toBe(9)
+  const current = await openingContext(env, t.queue)
+  await expect(configureQueue(env, t.actor, t.queue, {
+    ...updated.config,
+    spaces: updated.config!.spaces.filter(space => space.id !== 'terrace'),
+    version: current.version,
+    open: true,
+  })).rejects.toThrow('preferred_space_in_use')
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    entryId: existing,
-    version: 1,
-    action: 'complete',
+    entryId: waiting, version: 0, action: 'call',
   })
-  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    entryId: existing,
-    version: 2,
-    action: 'release',
-  })
-  context = await openingContext(env, t.queue)
-  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'occupancy',
-    contextToken: context.contextToken,
-    group: { spaceId: 'terrace', seats: 4, occupied: 0 },
-    reason: 'All tables released',
-  })
-  expect((await openingContext(env, t.queue)).open).toBe(false)
-  expect((await openingContext(env, t.queue)).inventoryConfirmed).toBe(false)
-  // Even after entry retention cleanup removes allocation history, invalidation remains durable.
-  await env.DB.prepare('DELETE FROM queue_entry WHERE id=?')
-    .bind(existing)
-    .run()
-  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(0)
   expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
-  await expect(call()).rejects.toThrow('inventory_refresh_required')
-  context = await openingContext(env, t.queue)
-  expect(context.readiness.reasons).toContain('inventory_refresh_required')
-  await open(t, 0)
-  await call()
-  expect((await loadQueueState(env, t.queue)).allocations[0]?.entry_id).toBe(
-    waiting,
-  )
 })
-it('confirms inventory in place while preserving admissions and allocations', async () => {
+it('rejects the retired inventory confirmation command without changing legacy records', async () => {
   const t = await setup(),
     reserved = await entry(t.queue, 'called'),
     waiting = await entry(t.queue)
@@ -626,17 +448,14 @@ it('confirms inventory in place while preserving admissions and allocations', as
       occupied: 0,
     })),
   }
-  await runLifecycleCommand(env, t.actor, t.queue, key, body)
-  await runLifecycleCommand(env, t.actor, t.queue, key, body)
-  await expectDirectorySnapshot(t.queue)
-  const after = await loadQueueState(env, t.queue),
-    current = await openingContext(env, t.queue)
+  await expect(runLifecycleCommand(env, t.actor, t.queue, key, body as never))
+    .rejects.toMatchObject({ status: 410, message: 'operation_retired' })
+  const after = await loadQueueState(env, t.queue), current = await openingContext(env, t.queue)
   expect(current.open).toBe(false)
-  expect(current.queueState).toBe('inactive')
   expect(after.allocations).toEqual(before.allocations)
-  expect(after.config?.resourceStateKnown).toBe(true)
-  expect(after.config?.estimationMode).toBe('active')
-  expect(current.readiness.reasons).not.toContain('inventory_required')
+  expect(after.holds).toEqual(before.holds)
+  expect(after.config?.resourceStateKnown).toBe(before.config?.resourceStateKnown)
+  expect(after.config?.estimationMode).toBe(before.config?.estimationMode)
   expect(
     (
       await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
@@ -644,14 +463,9 @@ it('confirms inventory in place while preserving admissions and allocations', as
         .first<{ status: string }>()
     )?.status,
   ).toBe('waiting')
-  await expect(
-    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      ...body,
-      contextToken: current.contextToken,
-    }),
-  ).rejects.toThrow('inventory_already_confirmed')
+  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(waiting).first<{status:string}>())?.status).toBe('waiting')
 })
-it('rejects stale initial confirmations and repairs an invalidated inventory without closing or duplicating a committed write', async () => {
+it('retires stale legacy inventory confirmations without closing or modifying the queue', async () => {
   const t = await setup({ ...config, intelligencePolicy: 'disabled' })
   await open(t, 1)
   let ctx = await openingContext(env, t.queue)
@@ -670,7 +484,6 @@ it('rejects stale initial confirmations and repairs an invalidated inventory wit
       },
     ],
   })
-  // Shadow queues may change topology while enabled, invalidating known capacity.
   const stale = await openingContext(env, t.queue)
   await entry(t.queue)
   const command = (context: typeof stale) => ({
@@ -682,70 +495,25 @@ it('rejects stale initial confirmations and repairs an invalidated inventory wit
       occupied: g.occupied,
     })),
   })
-  await expect(
-    runLifecycleCommand(
-      env,
-      t.actor,
-      t.queue,
-      crypto.randomUUID(),
-      command(stale),
-    ),
-  ).rejects.toThrow('version_conflict')
+  await expect(runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), command(stale) as never))
+    .rejects.toMatchObject({status:410,message:'operation_retired'})
   ctx = await openingContext(env, t.queue)
-  const body = command(ctx),
-    key = crypto.randomUUID(),
-    projection = await import('../queue/projection')
-  const fail = vi
-    .spyOn(projection, 'recalculateQueue')
-    .mockRejectedValueOnce(new Error('post_commit_projection_failure'))
-  try {
-    await expect(
-      runLifecycleCommand(env, t.actor, t.queue, key, body),
-    ).rejects.toThrow('post_commit_projection_failure')
-  } finally {
-    fail.mockRestore()
-  }
-  await runLifecycleCommand(env, t.actor, t.queue, key, body)
+  await expect(runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), command(ctx) as never))
+    .rejects.toMatchObject({status:410,message:'operation_retired'})
   const current = await openingContext(env, t.queue)
   expect(current.open).toBe(true)
-  expect(current.inventoryConfirmed).toBe(true)
   expect(current.readiness.reasons).toEqual([])
-  expect(current.groups[0]?.occupied).toBe(1)
-  expect(
-    (
-      await env.DB.prepare(
-        "SELECT COUNT(*) n FROM queue_inventory_audit WHERE queue_id=? AND action='confirm_inventory'",
-      )
-        .bind(t.queue)
-        .first<{ n: number }>()
-    )?.n,
-  ).toBe(1)
-  await expect(
-    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'occupancy',
-      contextToken: current.contextToken,
-      group: { spaceId: 'terrace', seats: 4, occupied: 0 },
-      reason: '',
-    }),
-  ).rejects.toThrow('invalid_inventory')
+  expect(current.groups).toHaveLength(0)
+  expect(await env.DB.prepare('SELECT * FROM queue_inventory_audit WHERE queue_id=?').bind(t.queue).all()).toMatchObject({results:[]})
 })
-it('serializes competing initial confirmations and refuses incomplete configuration', async () => {
+it('opens with incomplete legacy topology and keeps inventory confirmation out of operation', async () => {
   const t = await setup(),
     coordinator = env.QUEUE_COORDINATOR.getByName(t.queue)
   await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?').bind(t.queue).run()
   const context = await openingContext(env, t.queue)
-  const body = {
-    action: 'confirm_inventory' as const,
-    contextToken: context.contextToken,
-    groups: context.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: 0,
-    })),
-  }
   const results = await Promise.all([
-    coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), body),
-    coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), body),
+    coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), { action:'open', contextToken: context.contextToken }),
+    coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), { action:'open', contextToken: context.contextToken }),
   ])
   expect(results.map((r) => r.status).sort()).toEqual([200, 409])
   const incomplete = await setup({
@@ -755,21 +523,11 @@ it('serializes competing initial confirmations and refuses incomplete configurat
   await env.DB.prepare('UPDATE queue SET open=1 WHERE id=?')
     .bind(incomplete.queue)
     .run()
-  await expect(
-    runLifecycleCommand(
-      env,
-      incomplete.actor,
-      incomplete.queue,
-      crypto.randomUUID(),
-      {
-        action: 'confirm_inventory',
-        contextToken: (
-          await openingContext(env, incomplete.queue)
-        ).contextToken,
-        groups: [],
-      },
-    ),
-  ).rejects.toThrow('configuration_missing')
+  const incompleteContext = await openingContext(env, incomplete.queue)
+  await runLifecycleCommand(env, incomplete.actor, incomplete.queue, crypto.randomUUID(), {
+    action: 'open', contextToken: incompleteContext.contextToken,
+  })
+  expect((await openingContext(env, incomplete.queue)).open).toBe(true)
 })
 it.each([null, 0, 1])(
   'defaults to automatic management independent of old deployment policy %s',
@@ -820,7 +578,7 @@ it('persists an explicit operational opt-out without losing inventory and restor
   expect(state.config?.intelligencePolicy).toBe('automatic')
   expect(state.config?.estimationMode).toBe('active')
 })
-it('keeps opt-out through configuration and reopen, preserves capacity, and requires valid inventory when returning automatic', async () => {
+it('keeps opt-out through configuration without making assignment depend on capacity inventory', async () => {
   const t = await setup(),
     setPolicy = async (
       action: 'disable_intelligence' | 'enable_intelligence',
@@ -860,20 +618,17 @@ it('keeps opt-out through configuration and reopen, preserves capacity, and requ
   await open(t, 2)
   expect((await openingContext(env, t.queue)).readiness.state).toBe('disabled')
   const id = await entry(t.queue)
-  // The salon remains the only unheld resource; consume it and reject the next call even while disabled.
+  // Explicitly disabled estimation still cannot block the staff queue operation.
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     entryId: id,
     version: 0,
     action: 'call',
   })
   const next = await entry(t.queue)
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      entryId: next,
-      version: 0,
-      action: 'call',
-    }),
-  ).rejects.toThrow('no_free_compatible_resource')
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    entryId: next, version: 0, action: 'call',
+  })
+  expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
   ctx = await openingContext(env, t.queue)
   state = await loadQueueState(env, t.queue)
   await configureQueue(env, t.actor, t.queue, {
@@ -895,20 +650,9 @@ it('keeps opt-out through configuration and reopen, preserves capacity, and requ
   )
   await setPolicy('enable_intelligence')
   ctx = await openingContext(env, t.queue)
-  expect(ctx.readiness.state).toBe('pending')
-  expect(ctx.readiness.reasons).toContain('inventory_refresh_required')
-  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'confirm_inventory',
-    contextToken: ctx.contextToken,
-    groups: ctx.groups.map((g) => ({
-      spaceId: g.spaceId,
-      seats: g.seats,
-      occupied: g.occupied,
-    })),
-  })
   expect((await openingContext(env, t.queue)).readiness.state).toBe('active')
 })
-it('activates an old confirmed shadow inventory without resurvey, but does not infer unknown inventory', async () => {
+it('activates legacy queues without treating unknown inventory as a readiness blocker', async () => {
   const t = await setup()
   await open(t, 1)
   const config = (await loadQueueState(env, t.queue)).config!,
@@ -927,7 +671,7 @@ it('activates an old confirmed shadow inventory without resurvey, but does not i
     .run()
   await recalculateQueue(env, unknown.queue)
   expect((await openingContext(env, unknown.queue)).readiness.state).toBe(
-    'pending',
+    'active',
   )
 })
 it('rejects stale policy snapshots and replays a post-commit policy change only once', async () => {
@@ -962,7 +706,7 @@ it('rejects stale policy snapshots and replays a post-commit policy change only 
   expect(
     (
       await env.DB.prepare(
-        "SELECT COUNT(*) n FROM queue_inventory_audit WHERE queue_id=? AND action='disable_intelligence'",
+        "SELECT COUNT(*) n FROM staff_audit WHERE target_id=? AND action='queue.disable_intelligence'",
       )
         .bind(t.queue)
         .first<{ n: number }>()
@@ -1028,15 +772,8 @@ it('persists encrypted service details, binds projection/calls, audits manual jo
   expect(row!.preferred_space_id).toBe('terrace')
   expect((await loadQueueState(env, t.queue)).projections[0]).toMatchObject({
     resourceId: null,
-    callable: false,
+    callable: true,
   })
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      entryId: row!.id,
-      version: 0,
-      action: 'call',
-    }),
-  ).rejects.toThrow('no_free_compatible_resource')
   expect(
     (await joinQueue(env, t.queue, key, input, false, t.actor)).body,
   ).toEqual({
@@ -1046,6 +783,14 @@ it('persists encrypted service details, binds projection/calls, audits manual jo
       serverNow: expect.any(Number),
     },
   })
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+      entryId: row!.id,
+      version: 0,
+      action: 'call',
+    })
+  const assignment = await env.DB.prepare('SELECT space_id,seats,provenance,source FROM queue_assignment_observation WHERE entry_id=?')
+    .bind(row!.id).first<{space_id:string|null;seats:number|null;provenance:string;source:string}>()
+  expect(assignment).toMatchObject({space_id:'terrace',seats:4,provenance:'inferred',source:'staff'})
   expect(
     (await env.DB.prepare(
       "SELECT COUNT(*) AS n FROM staff_audit WHERE target_id=? AND action='queue.join'",
@@ -1065,9 +810,8 @@ it('persists encrypted service details, binds projection/calls, audits manual jo
     preferredSpaceId: 'fastest',
   })
   expect(fastest.status).toBe(201)
-  expect((await loadQueueState(env, t.queue)).projections[1]).toMatchObject({
-    resourceId: 'salon:4:0',
-    callable: true,
+  expect((await loadQueueState(env, t.queue)).adaptiveProjections[0]).toMatchObject({
+    resourceId: null,
   })
 })
 it('validates service details and protects active preferred spaces from removal or incompatible changes', async () => {
@@ -1082,7 +826,6 @@ it('validates service details and protects active preferred spaces from removal 
   }
   for (const details of [
     { preferredSpaceId: 'missing' },
-    { preferredSpaceId: 'terrace', partySize: 8 },
     { receptionService: 'check_in' as const },
   ]) {
     expect(
@@ -1094,6 +837,11 @@ it('validates service details and protects active preferred spaces from removal 
       ).status,
     ).toBe(400)
   }
+  // A zone is still respected, but a party larger than every configured type
+  // falls back to the general cadence instead of being rejected.
+  expect((await joinQueue(env, t.queue, crypto.randomUUID(), {
+    ...input, preferredSpaceId: 'terrace', partySize: 8,
+  })).status).toBe(201)
   await joinQueue(env, t.queue, crypto.randomUUID(), {
     ...input,
     preferredSpaceId: 'terrace',
@@ -1330,7 +1078,7 @@ it('recovers committed manual joins after WhatsApp is disabled without sending a
   ).toBe(1)
 })
 
-it('freezes arrival deadlines, rejects late arrival, audits restoration and safely recalls released allocations', async () => {
+it('freezes arrival deadlines, expires unreached calls, and completes present customers without releasing resources', async () => {
   const t = await setup()
   await open(t, 0)
   const first = await entry(t.queue),
@@ -1408,11 +1156,6 @@ it('freezes arrival deadlines, rejects late arrival, audits restoration and safe
     { action: 'call', entryId: second, version: 0 },
     now + 300001,
   )
-  const occupied = await env.DB.prepare(
-    'SELECT resource_id FROM queue_allocation WHERE entry_id=?',
-  )
-    .bind(second)
-    .first<{ resource_id: string }>()
   await expect(
     runQueueCommand(
       env,
@@ -1441,16 +1184,11 @@ it('freezes arrival deadlines, rejects late arrival, audits restoration and safe
     t.actor,
     t.queue,
     crypto.randomUUID(),
-    { action: 'call', entryId: first, version: 3 },
+    { action: 'call', entryId: first, version: 3, arrivalMode: 'present' },
     now + 300003,
   )
-  const allocation = await env.DB.prepare(
-    'SELECT resource_id,released_at FROM queue_allocation WHERE entry_id=?',
-  )
-    .bind(first)
-    .first<{ resource_id: string; released_at: number | null }>()
-  expect(allocation?.released_at).toBeNull()
-  expect(allocation?.resource_id).not.toBe(occupied?.resource_id)
+  expect((await env.DB.prepare('SELECT status,arrival_deadline_at FROM queue_entry WHERE id=?').bind(first).first())?.status).toBe('completed')
+  expect((await env.DB.prepare('SELECT * FROM queue_allocation WHERE entry_id=?').bind(first).first())).toBeNull()
   expect(
     (
       await env.DB.prepare(
@@ -1468,7 +1206,7 @@ it('freezes arrival deadlines, rejects late arrival, audits restoration and safe
         .bind(first)
         .first()
     )?.arrival_deadline_at,
-  ).toBe(now + 300003 + 600000)
+  ).toBeNull()
 })
 
 it('round-trips the legacy turn threshold without treating it as an active notice policy', async () => {
@@ -1540,13 +1278,7 @@ it('preserves the promised arrival window when grace is reduced, with a legacy f
       .bind(id)
       .first(),
   ).toEqual({ status: 'called', arrival_deadline_at: now + 300000 })
-  expect(
-    await env.DB.prepare(
-      'SELECT released_at FROM queue_allocation WHERE entry_id=?',
-    )
-      .bind(id)
-      .first(),
-  ).toEqual({ released_at: null })
+  expect(await env.DB.prepare('SELECT * FROM queue_allocation WHERE entry_id=?').bind(id).first()).toBeNull()
 
   // Calls created before deadline activation retain the existing manual grace policy.
   await env.DB.prepare(
@@ -1585,13 +1317,7 @@ it('preserves the promised arrival window when grace is reduced, with a legacy f
       .bind(id)
       .first(),
   ).toEqual({ status: 'no_show' })
-  expect(
-    await env.DB.prepare(
-      'SELECT released_at FROM queue_allocation WHERE entry_id=?',
-    )
-      .bind(id)
-      .first(),
-  ).toEqual({ released_at: now + 120000 })
+  expect(await env.DB.prepare('SELECT * FROM queue_allocation WHERE entry_id=?').bind(id).first()).toBeNull()
 })
 
 it.each(['customer', 'staff'] as const)(
@@ -1665,11 +1391,7 @@ it.each(['customer', 'staff'] as const)(
         ).body,
       ).toEqual({ error: 'invalid_transition' })
     }
-    expect(
-      (await loadQueueState(env, t.queue)).allocations.filter(
-        (a) => a.released_at === null,
-      ),
-    ).toHaveLength(1)
+    expect((await loadQueueState(env, t.queue)).allocations).toHaveLength(0)
   },
 )
 
@@ -1715,13 +1437,7 @@ it('expires once when a due alarm races a staff arrival through the coordinator'
     .bind(id)
     .all()
   expect(events.results).toEqual([{ kind: 'expired' }])
-  const allocation = await env.DB.prepare(
-    'SELECT released_at,outcome FROM queue_allocation WHERE entry_id=?',
-  )
-    .bind(id)
-    .first<{ released_at: number; outcome: string }>()
-  expect(allocation?.outcome).toBe('expired')
-  expect(allocation!.released_at).toBeGreaterThanOrEqual(deadline)
+  expect(await env.DB.prepare('SELECT * FROM queue_allocation WHERE entry_id=?').bind(id).first()).toBeNull()
 })
 
 async function expectDirectorySnapshot(queueId: string) {
@@ -1815,7 +1531,7 @@ it('failed provisioning snapshot insertion leaves no organization or service fro
   await env.DB.exec('DROP TRIGGER reject_directory')
 })
 
-it('declares full without a survey, preserves holds and allocations, and resumes without refilling', async () => {
+it('declares active without a survey, retains legacy records, and resumes without inventory work', async () => {
   const t = await setup()
   const e = await entry(t.queue)
   const allocated = await entry(t.queue, 'called')
@@ -1834,7 +1550,7 @@ it('declares full without a survey, preserves holds and allocations, and resumes
     contextToken: (await openingContext(env, t.queue)).contextToken,
   })
   expect((await openingContext(env, t.queue)).queueState).toBe('active')
-  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(2)
+  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(0)
   expect(
     (
       await env.DB.prepare(
@@ -1844,19 +1560,14 @@ it('declares full without a survey, preserves holds and allocations, and resumes
         .first<{ recorded_at: number }>()
     )?.recorded_at,
   ).toBe(200)
-  await expect(
-    runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'call',
-      entryId: e,
-      version: 0,
-    }),
-  ).rejects.toThrow('no_free_compatible_resource')
-  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+  await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'call', entryId: e, version: 0,
+  })
+  const retired = await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'release_unit',
     contextToken: (await openingContext(env, t.queue)).contextToken,
-    spaceId: 'salon',
-    seats: 4,
-  })
+  } as never).catch(error => error)
+  expect(retired).toMatchObject({status:410,message:'operation_retired'})
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'pause',
     contextToken: (await openingContext(env, t.queue)).contextToken,
@@ -1865,10 +1576,12 @@ it('declares full without a survey, preserves holds and allocations, and resumes
     action: 'resume',
     contextToken: (await openingContext(env, t.queue)).contextToken,
   })
-  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(1)
-  expect((await loadQueueState(env, t.queue)).allocations[0]?.reserved_at).toBe(
-    100,
-  )
+  expect((await loadQueueState(env, t.queue)).holds).toHaveLength(0)
+  expect(
+    await env.DB.prepare('SELECT reserved_at FROM queue_allocation WHERE entry_id=?')
+      .bind(allocated)
+      .first(),
+  ).toEqual({ reserved_at: 100 })
 })
 it('does not activate an acknowledged reminder and automatically opens new pool services', async () => {
   const t = await setup()
@@ -1911,7 +1624,7 @@ it('publishes independent admission fields and rejects fresh joins until restaur
         partySize: 5,
       })
     ).status,
-  ).toBe(400)
+  ).toBe(201)
 })
 
 it('additive admission migration preserves tickets, allocations and external occupancy', async () => {
@@ -1925,6 +1638,18 @@ it('additive admission migration preserves tickets, allocations and external occ
     crypto.randomUUID(),
     { action: 'call', entryId: ticket, version: 0 },
   )
+  // Preserve legacy persistence compatibility without treating a new call as
+  // a physical allocation/occupancy mutation.
+  await env.DB.prepare(
+    "INSERT INTO queue_allocation(entry_id,queue_id,resource_id,space_id,seats,reserved_at) VALUES (?,?,'terrace:4:0','terrace',4,?)",
+  )
+    .bind(ticket, restaurant.queue, Date.now())
+    .run()
+  await env.DB.prepare(
+    "INSERT INTO queue_external_occupancy(queue_id,resource_id,space_id,seats,recorded_at) VALUES (?,'terrace:4:1','terrace',4,?)",
+  )
+    .bind(restaurant.queue, Date.now())
+    .run()
   const pool = await setup({ ...config, type: 'pool', spaces: [] })
   const before = await env.DB.prepare('SELECT * FROM queue_entry WHERE id=?')
     .bind(ticket)
@@ -1984,7 +1709,7 @@ it('additive admission migration preserves tickets, allocations and external occ
   expect((await openingContext(env, fresh.queue)).queueState).toBe('active')
 })
 
-it('rejects non-full legacy restaurant activation without admission, occupancy or audit writes', async () => {
+it('accepts legacy open payloads but ignores their occupancy declarations', async () => {
   const t = await setup()
   const before = await openingContext(env, t.queue)
   const snapshot = async () => ({
@@ -2019,37 +1744,28 @@ it('rejects non-full legacy restaurant activation without admission, occupancy o
     ).results,
   })
   const saved = await snapshot()
-  const full = before.groups.map((g) => ({
+  const groups = before.groups.map((g) => ({
     spaceId: g.spaceId,
     seats: g.seats,
-    occupied: g.count - g.allocated,
+    occupied: 0,
   }))
-  for (const groups of [
-    full.map((g) => ({ ...g, occupied: 0 })),
-    full.map((g, i) => (i ? g : { ...g, occupied: 1 })),
-    full.slice(0, 1),
-    [full[0]!, full[0]!],
-    [full[0]!, { ...full[1]!, spaceId: 'wrong' }],
-  ]) {
-    await expect(
-      runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-        action: 'open',
-        contextToken: before.contextToken,
-        groups,
-      }),
-    ).rejects.toMatchObject({
-      status: 409,
-      message: 'full_declaration_required',
-    })
-    expect(await snapshot()).toEqual(saved)
-  }
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'open', contextToken: before.contextToken, groups,
+  } as never)
+  const current = await openingContext(env, t.queue)
+  expect(current.queueState).toBe('active')
+  expect(current.groups).toHaveLength(0)
+  const after = await snapshot()
+  expect(after.holds).toEqual(saved.holds)
+  expect(after.inventory).toEqual(saved.inventory)
+  expect(after.admission).not.toBeNull()
   expect(await openingContext(env, t.queue)).toMatchObject({
-    queueState: 'inactive',
-    canJoin: false,
+    queueState: 'active',
+    canJoin: true,
   })
 })
 
-it('accepts full legacy restaurant declarations while retaining allocations and hold timestamps', async () => {
+it('accepts legacy opening payloads while preserving historical allocations and holds', async () => {
   const t = await setup()
   const ticket = await entry(t.queue, 'called')
   await env.DB.prepare(
@@ -2073,12 +1789,10 @@ it('accepts full legacy restaurant declarations while retaining allocations and 
       action: 'open' as const,
       contextToken: context.contextToken,
       groups: context.groups.map((g) => ({
-        spaceId: g.spaceId,
-        seats: g.seats,
-        occupied: g.count - g.allocated,
+        spaceId: g.spaceId, seats: g.seats, occupied: g.count - g.allocated,
       })),
     }
-  await runLifecycleCommand(env, t.actor, t.queue, key, input)
+  await runLifecycleCommand(env, t.actor, t.queue, key, input as never)
   expect(await openingContext(env, t.queue)).toMatchObject({
     queueState: 'active',
     canJoin: true,
@@ -2095,37 +1809,25 @@ it('accepts full legacy restaurant declarations while retaining allocations and 
       .bind(t.queue, 'terrace:4:1')
       .first(),
   ).toEqual({ recorded_at: 77 })
-  expect(
-    (await openingContext(env, t.queue)).groups.map(
-      (g) => g.occupied + g.allocated,
-    ),
-  ).toEqual([2, 1])
+  expect((await openingContext(env, t.queue)).groups).toHaveLength(0)
   await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
     action: 'pause',
     contextToken: (await openingContext(env, t.queue)).contextToken,
   })
-  await runLifecycleCommand(env, t.actor, t.queue, key, input)
+  await runLifecycleCommand(env, t.actor, t.queue, key, input as never)
   expect((await openingContext(env, t.queue)).queueState).toBe('paused')
 })
 
-it('rejects legacy restaurant activation with incomplete resource topology', async () => {
+it('opens legacy restaurants even when resource topology is incomplete', async () => {
   const t = await setup({
     ...config,
     spaces: [{ id: 'unknown', name: 'Unknown', tables: 1 }],
   })
   const context = await openingContext(env, t.queue)
-  await expect(
-    runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-      action: 'open',
-      contextToken: context.contextToken,
-      groups: context.groups.map((g) => ({
-        spaceId: g.spaceId,
-        seats: g.seats,
-        occupied: g.count,
-      })),
-    }),
-  ).rejects.toMatchObject({ status: 409, message: 'configuration_missing' })
-  expect((await openingContext(env, t.queue)).queueState).toBe('inactive')
+  await runLifecycleCommand(env, t.actor, t.queue, crypto.randomUUID(), {
+    action: 'open', contextToken: context.contextToken,
+  })
+  expect((await openingContext(env, t.queue)).queueState).toBe('active')
 })
 
 it('migration conservatively pauses every existing automatic value except exactly one and expires only scheduled windows', async () => {
@@ -2220,7 +1922,7 @@ it('recovers committed zero-occupancy legacy requests without activating a later
     .bind(t.queue)
     .first()
   await expect(
-    runLifecycleCommand(env, t.actor, t.queue, key, input),
+    runLifecycleCommand(env, t.actor, t.queue, key, input as never),
   ).resolves.toEqual({ ok: true })
   expect(
     await env.DB.prepare('SELECT * FROM queue_admission WHERE queue_id=?')

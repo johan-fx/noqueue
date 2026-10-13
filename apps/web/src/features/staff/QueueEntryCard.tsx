@@ -33,7 +33,7 @@ import {
 const statusLabels: Record<string, string> = {
   waiting: 'En espera',
   called: 'Pendiente de llegada',
-  completed: 'En servicio',
+  completed: 'Completado',
   served: 'Completado',
   cancelled: 'Cancelado',
   no_show: 'No presentado',
@@ -63,21 +63,27 @@ export function QueueEntryCard({
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
   const wait = entry.waitEstimate
-  const waitRemaining = wait?.predictedAt != null &&
+  const waitRemaining =
+    wait?.predictedAt != null &&
     Number.isFinite(wait.predictedAt) &&
     ['estimated', 'provisional'].includes(wait.estimateQuality)
       ? wait.predictedAt - now
       : null
-  const waitLabel = waitRemaining == null
-    ? null
-    : waitRemaining <= 0
-      ? online ? 'Actualizando…' : 'Sin conexión'
+  const waitLabel =
+    waitRemaining == null
+      ? null
+      : waitRemaining <= 0
+      ? online
+        ? 'Actualizando…'
+        : 'Sin conexión'
       : formatCountdown(waitRemaining)
-  const waitTitle = wait?.estimateQuality === 'provisional'
-    ? 'Espera provisional'
-    : 'Espera estimada'
-  const actions =
+  const waitTitle =
+    wait?.estimateQuality === 'provisional'
+      ? 'Espera provisional'
+      : 'Espera estimada'
+  const actions = (
     entry.allowedActions ?? entryActions(entry.status, queue.config.type)
+  ).filter((action) => action !== 'release')
   const operable = canOperate && !busy && actions.length > 0
   const active = ['waiting', 'called'].includes(entry.status)
   const draggable = operable && active
@@ -161,8 +167,7 @@ export function QueueEntryCard({
       { duration: reducedMotion ? 0 : 0.18, ease: 'easeOut' },
     )
   }
-  const callDisabled =
-    busy || queue.readiness?.reasons.includes('inventory_refresh_required')
+  const callDisabled = busy
   const ReceptionIcon =
     entry.receptionService === 'check_in'
       ? LogIn
@@ -381,8 +386,14 @@ export function QueueEntryCard({
               </span>
             )}
             {entry.status === 'called' && entry.arrivalDeadlineAt != null && (
-              <Badge variant="secondary" className="tabular-nums" title="Tiempo restante para llegar"
-                aria-label={`Tiempo restante para llegar: ${formatCountdown(entry.arrivalDeadlineAt - now)}`}>
+              <Badge
+                variant="secondary"
+                className="tabular-nums"
+                title="Tiempo restante para llegar"
+                aria-label={`Tiempo restante para llegar: ${formatCountdown(
+                  entry.arrivalDeadlineAt - now,
+                )}`}
+              >
                 <Clock className="size-3" aria-hidden="true" />
                 {formatCountdown(entry.arrivalDeadlineAt - now)}
               </Badge>
@@ -399,13 +410,7 @@ export function QueueEntryCard({
             <Button
               key={action}
               variant="outline"
-              disabled={
-                busy ||
-                (action === 'call' &&
-                  queue.readiness?.reasons.includes(
-                    'inventory_refresh_required',
-                  ))
-              }
+              disabled={busy}
               onClick={() => act(action)}
             >
               {queueActionLabels[action]}

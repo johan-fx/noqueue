@@ -7,7 +7,7 @@ const phases = ['waiting', 'approaching', 'called', 'arrived', 'cancelled', 'exp
 function evidence(type = 'reception') {
   const chapters = ['main', 'alternatives', 'expiration'].map((id, index) => ({ id, fixture: { queueId: `queue-${index}`, venueId: `venue-${index}`, graceMinutes: id === 'expiration' ? 1 : type === 'restaurant' ? 5 : 2 }, duration: 40, cuts: [], videos: [{role:'staff',path:`s${index}.webm`,offset:4}, {role:'customer',path:`c${index}.webm`,offset:2}], moments: [{event:'chapter',caption:'Capítulo de prueba',at:0,hold:5}], assertions: [{key:'chapter',actual:id,expected:id}] }))
   const assertions = [...phases.map(phase=>({key:`phase:${phase}`,actual:phase,expected:phase})), ...['discovery','form','yield','cancel','deadline'].map(key=>({key,actual:true,expected:true}))]
-  if (type === 'restaurant') assertions.push(...['edit:party','edit:space','resource:released'].map(key=>({key,actual:true,expected:true})))
+  if (type === 'restaurant') assertions.push(...['edit:party','edit:space','arrival:finalized'].map(key=>({key,actual:true,expected:true})))
   return {status:'passed',type,chapters,assertions}
 }
 test('preflight checks existing binary capabilities, never installs', () => {
@@ -127,11 +127,11 @@ test('row proof centers both adjacent rows above the nested footer clipping edge
 })
 test('quick fixtures align opening state through fresh-token lifecycle and prove staff header',()=>{
   const source=readFileSync('tests/e2e/demo/fixtures.ts','utf8')
-  assert.match(source,/for \(const action of \['pause', 'resume'\]\)/)
-  assert.match(source,/effective.queueState\)\.toBe\('active'\)/)
-  assert.match(source,/effective.canJoin\)\.toBe\(true\)/)
+  assert.match(source,/for\s*\(\s*const action of \[\s*["']pause["']\s*,\s*["']resume["']\s*\]\s*\)/)
+  assert.match(source,/effective\.queueState\)\.toBe\(["']active["']\)/)
+  assert.match(source,/effective\.canJoin\)\.toBe\(true\)/)
   assert.match(source,/currentQueue!\.open\)\.toBe\(1\)/)
-  assert.match(source,/getByText\('Abierto', \{ exact: true \}\)/)
+  assert.match(source,/getByText\(["']Abierto["'],\s*\{\s*exact:\s*true\s*\}\)/)
 })
 test('recorded flow requires rendered phase proof and full exchanged-row proof before holds',()=>{
   const flow=readFileSync('tests/e2e/demo/queue-order.spec.ts','utf8')

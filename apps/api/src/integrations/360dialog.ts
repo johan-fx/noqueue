@@ -1,3 +1,4 @@
+import { visibleWaitingCount } from '@noqueue/contracts/queue'
 import { lifecycleV3, renderLifecycleV3, v3TemplateReady } from './whatsapp-copy-v3'
 import { isOpenStagingV4 } from './whatsapp-policy'
 import {
@@ -82,9 +83,9 @@ export function sandboxLifecycleCopy(
   if (message.locale === 'es') {
     switch (message.notice) {
       case 'queue_joined':
-        return `${header}: estás en la lista. Quedan ${context.ahead} turnos por delante. Tiempo estimado: ${context.eta}. ${context.link} ${footer}`
+        return `${header}: estás en la lista. ${context.ahead === '1' ? 'Queda 1 turno' : `Quedan ${context.ahead} turnos`} por delante. Tiempo estimado: ${context.eta}. ${context.link} ${footer}`
       case 'approaching':
-        return `${header}: tu turno se acerca; todavía no está asignado. Quedan ${context.ahead} turnos por delante. Tiempo estimado: ${context.eta}. ${context.link} ${footer}`
+        return `${header}: tu turno se acerca; todavía no está asignado. ${context.ahead === '1' ? 'Queda 1 turno' : `Quedan ${context.ahead} turnos`} por delante. Tiempo estimado: ${context.eta}. ${context.link} ${footer}`
       case 'delayed':
         return `${header}: el tiempo estimado ha cambiado. Nueva estimación: ${context.eta}. ${context.link} ${footer}`
       case 'improved':
@@ -103,9 +104,9 @@ export function sandboxLifecycleCopy(
   }
   switch (message.notice) {
     case 'queue_joined':
-      return `${header}: you are on the list. ${context.ahead} turns are ahead of you. Estimated wait: ${context.eta}. ${context.link} ${footer}`
+      return `${header}: you are on the list. ${context.ahead === '1' ? '1 turn is' : `${context.ahead} turns are`} ahead of you. Estimated wait: ${context.eta}. ${context.link} ${footer}`
     case 'approaching':
-      return `${header}: your turn is approaching but has not been assigned. ${context.ahead} turns are ahead of you. Estimated wait: ${context.eta}. ${context.link} ${footer}`
+      return `${header}: your turn is approaching but has not been assigned. ${context.ahead === '1' ? '1 turn is' : `${context.ahead} turns are`} ahead of you. Estimated wait: ${context.eta}. ${context.link} ${footer}`
     case 'delayed':
       return `${header}: your estimated wait has changed. New estimate: ${context.eta}. ${context.link} ${footer}`
     case 'improved':
@@ -319,7 +320,7 @@ export function createWhatsAppSender(
           ? message.locale === 'es'
             ? 'no disponible'
             : 'not available'
-          : String(message.ahead)
+          : String(visibleWaitingCount(message.ahead))
       const eta =
         message.etaMinutes == null || message.estimateQuality === 'unknown'
           ? message.locale === 'es'

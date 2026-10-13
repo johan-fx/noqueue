@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw'
 import { joinQueue } from './entries'
 import { dispatchNotificationSerialized } from './notifications'
 import { runQueueCommand } from '../staff/commands'
-import { recalculateQueue } from './projection'
+import { readProjection, recalculateQueue } from './projection'
 import { noticeStatement, type QueueNoticeSnapshot } from './notices'
 import type { ServiceInput } from '@noqueue/contracts/staff'
 import { serviceWindow } from '../staff/availability'
@@ -322,7 +322,7 @@ it('accepts a current adaptive safety delay once and records the accepted safety
   await dispatchNotificationSerialized(dispatchEnv, delayed!.id)
   expect(sends).toBe(1)
 })
-it('rejects an adaptive delay whose frozen projection revision is obsolete', async () => {
+it('rejects a legacy adaptive delay whose frozen projection revision is obsolete', async () => {
   const row = await joined('2', { estimatorVersion: 2 })
   const now = Date.now()
   await env.DB.batch([
@@ -343,6 +343,7 @@ it('rejects an adaptive delay whose frozen projection revision is obsolete', asy
     .first<{ id: string; revision: number; payload_snapshot: string }>()
   expect(delayed).not.toBeNull()
   const obsolete = JSON.parse(delayed!.payload_snapshot) as QueueNoticeSnapshot
+  delete obsolete.extensionSequence // Pre-0023 snapshots remain revision-bound.
   obsolete.estimationRevision = Math.max(0, delayed!.revision - 1)
   await env.DB.prepare(
     'UPDATE notification_outbox SET revision=?,payload_snapshot=? WHERE id=?',
@@ -572,62 +573,55 @@ it('freezes the canonical v4 joined projection and dispatches it successfully', 
   ).toEqual({ status: 'accepted' })
 })
 
-it('uses a provisional configured minimum without inventing actual restaurant availability', async () => {
+it('uses the canonical serial estimate without claiming restaurant availability', async () => {
   const row = await joined('4', {
     type: 'restaurant',
     resourceStateKnown: false,
     waitingBefore: 1,
   })
-  const projection = await env.DB.prepare(
-    'SELECT position,eta_minutes,predicted_at,quality,revision FROM queue_projection WHERE entry_id=?',
-  )
-    .bind(row.entry_id)
-    .first<{
-      position: number
-      eta_minutes: number
-      predicted_at: number | null
-      quality: 'estimated' | 'provisional' | 'unknown'
-      revision: number
-    }>()
+  const projection = await readProjection(env, row.entry_id, true)
   const frozen = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot
-  expect(projection).toMatchObject({ quality: 'unknown', eta_minutes: 0, predicted_at: null })
+  expect(projection).toMatchObject({
+    estimatorVersion: 2,
+    estimateQuality: 'provisional',
+    etaMinutes: 60,
+    callable: true,
+    resourceId: null,
+  })
+  expect(projection?.predictedAt).toEqual(expect.any(Number))
   expect(frozen).toMatchObject({
     ahead: 1,
     etaMinutes: 60,
     predictedAt: expect.any(Number),
     estimateQuality: 'provisional',
   })
-  expect(row.revision).toBe(projection!.revision)
+  expect(row.revision).toBe(projection!.estimationRevision)
 })
 
-it('preserves the real resource forecast while a longer sequential customer minimum prevails', async () => {
+it('ignores legacy availability holds and keeps WhatsApp aligned with the canonical ETA', async () => {
   const row = await joined('4', {
     type: 'restaurant',
     resourceStateKnown: true,
     waitingBefore: 1,
     blockedMinutes: 15,
   })
-  const projection = await env.DB.prepare(
-    'SELECT position,eta_minutes,predicted_at,quality,revision FROM queue_projection WHERE entry_id=?',
-  )
-    .bind(row.entry_id)
-    .first<{
-      position: number
-      eta_minutes: number
-      predicted_at: number | null
-      quality: 'estimated' | 'provisional' | 'unknown'
-      revision: number
-    }>()
+  const projection = await readProjection(env, row.entry_id, true)
   const frozen = JSON.parse(row.payload_snapshot) as QueueNoticeSnapshot
-  expect(projection).toMatchObject({ quality: 'estimated', eta_minutes: 45 })
-  expect(projection!.predicted_at).not.toBeNull()
+  expect(projection).toMatchObject({
+    estimatorVersion: 2,
+    estimateQuality: 'provisional',
+    etaMinutes: 60,
+    callable: true,
+    resourceId: null,
+  })
+  expect(projection?.predictedAt).toEqual(expect.any(Number))
   expect(frozen).toMatchObject({
     ahead: 1,
     etaMinutes: 60,
     predictedAt: expect.any(Number),
     estimateQuality: 'provisional',
   })
-  expect(row.revision).toBe(projection!.revision)
+  expect(row.revision).toBe(projection!.estimationRevision)
 })
 
 it('repairs a durable v4 join intent if projection finalization was interrupted', async () => {
@@ -661,9 +655,9 @@ it('repairs a durable v4 join intent if projection finalization was interrupted'
       if (property === 'prepare')
         return (sql: string) => {
           if (
-            sql.includes(
-              'UPDATE notification_outbox SET payload_snapshot=?,revision=?,updated_at=?',
-            )
+            sql.includes('UPDATE notification_outbox') &&
+            sql.includes('payload_snapshot') &&
+            sql.includes('revision')
           )
             finalizationPrepared = true
           return target.prepare(sql)
@@ -822,7 +816,7 @@ it('renders historical missing-version snapshots as exact v2 despite current v3 
   )
   expect(sent).toHaveLength(1)
   expect(sent[0]?.text?.body).toContain(
-    ': estás en la lista. Quedan 0 turnos por delante. Tiempo estimado: 30 min.',
+    ': estás en la lista. Queda 1 turno por delante. Tiempo estimado: 30 min.',
   )
   expect(sent[0]?.text?.body).not.toContain('Ya estás en la cola.')
 })

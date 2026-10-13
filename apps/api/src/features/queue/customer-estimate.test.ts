@@ -6,6 +6,7 @@ import { readEntrySnapshot } from './entries'
 import { hash } from './crypto'
 import { publicService } from './public-context'
 import { assignmentContext } from '../staff/assignment'
+import { serviceWindow } from '../staff/availability'
 
 afterEach(() => vi.restoreAllMocks())
 async function fixture(type: 'reception' | 'restaurant' = 'reception', count = 3) {
@@ -20,35 +21,39 @@ async function fixture(type: 'reception' | 'restaurant' = 'reception', count = 3
     spaces: type === 'restaurant' ? [{ id: 'room', name: 'Room', tables: 3, tableTypes: [{ seats: 4, count: 3, averageMinutes: 4 }] }] : [],
   }
   await env.DB.prepare("INSERT INTO queue(id,venue_id,name,config,capacity,average_minutes,open) VALUES (?,'demo-venue','Minimum',?,99,4,1)").bind(queueId, JSON.stringify(config)).run()
-  await env.DB.prepare("INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,'continuous', 'active',?)").bind(queueId, now).run()
+  await env.DB.prepare('INSERT INTO queue_admission(queue_id,window_id,override_state,activated_at) VALUES (?,? ,\'active\',?)').bind(queueId, serviceWindow(config, 'Europe/Madrid', new Date(now)).windowId, now).run()
   const ids = Array.from({ length: count }, () => crypto.randomUUID())
   for (const [i, id] of ids.entries())
     await env.DB.prepare("INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,2,'en',?,?,'continuous')").bind(id, queueId, id, id, await hash(id), id, now, i + 1).run()
   return { now, queueId, config, ids, read: (i: number) => readEntrySnapshot(env, ids[i]!) }
 }
-it('starts customers at 4/8/12 with parallel free resources without changing staff truth', async () => {
+it('uses the same serial 4/8/12 forecast for customers and staff regardless of resource inventory', async () => {
   const f = await fixture()
   await recalculateQueue(env, f.queueId, f.now)
   expect((await Promise.all(f.ids.map((_, i) => f.read(i)))).map(e => e?.etaMinutes)).toEqual([4, 8, 12])
-  expect((await loadQueueState(env, f.queueId, f.now)).projections.map(p => p.etaMinutes)).toEqual([0, 0, 0])
+  expect((await loadQueueState(env, f.queueId, f.now)).projections.map(p => p.etaMinutes)).toEqual([4, 8, 12])
+  expect((await loadQueueState(env, f.queueId, f.now)).resources).toEqual([])
   expect((await f.read(0))?.initialEtaMinutes).toBe(4)
 })
-it('keeps a 250-minute customer waiting above threshold 200 and approaches at the inclusive boundary', async () => {
+it('approaches at the inclusive threshold before any assignment safety review is due', async () => {
   const f = await fixture('reception', 5)
-  const config = { ...f.config, averageMinutes: 50, approachMinutes: 200 }
+  const config = { ...f.config, averageMinutes: 50, approachMinutes: 249 }
   await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId).run()
   await recalculateQueue(env, f.queueId, f.now)
   expect(await f.read(4)).toMatchObject({ etaMinutes: 250, customer: { phase: 'waiting' } })
-  vi.spyOn(Date, 'now').mockReturnValue(f.now + 50 * 60000)
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 60000)
   await recalculateQueue(env, f.queueId, Date.now())
-  expect(await f.read(4)).toMatchObject({ etaMinutes: 200, customer: { phase: 'approaching' } })
+  expect(await f.read(4)).toMatchObject({ etaMinutes: 249, customer: { phase: 'approaching' } })
 })
-it('supplies finite provisional waits for occupied tables without enabling assignment', async () => {
+it('keeps occupied historical inventory out of both the estimate and assignment gate', async () => {
   const f = await fixture('restaurant')
   for (let i = 0;i < 3;i++) await env.DB.prepare('INSERT INTO queue_external_occupancy(queue_id,resource_id,space_id,seats,recorded_at) VALUES (?, ?, ?,4,?)').bind(f.queueId, `room:4:${i}`, 'room', f.now).run()
   await recalculateQueue(env, f.queueId, f.now)
   expect(await f.read(0)).toMatchObject({ etaMinutes: 4, estimateQuality: 'provisional', predictedAt: f.now + 240000 })
-  expect((await assignmentContext(await loadQueueState(env, f.queueId, f.now), f.ids[0]!, f.now)).available).toBe(false)
+  const state = await loadQueueState(env, f.queueId, f.now)
+  expect(state.allocations).toEqual([])
+  expect(state.resources).toEqual([])
+  expect((await assignmentContext(state, f.ids[0]!, f.now)).available).toBe(true)
 })
 it('keeps deadlines stable on clock refresh and adjusts only changed configured work', async () => {
   const f = await fixture()
@@ -59,9 +64,15 @@ it('keeps deadlines stable on clock refresh and adjusts only changed configured 
   const before = await loadQueueState(env, f.queueId, f.now + 60000)
   await commitQueueTransition(env, f.queueId, before, { ...before, parties: before.parties.slice(1) }, [env.DB.prepare("UPDATE queue_entry SET status='cancelled' WHERE id=?").bind(f.ids[0])], f.now + 60000)
   expect((await f.read(1))?.predictedAt).toBe(f.now + 4 * 60000)
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 2 * 60000)
+  await recalculateQueue(env, f.queueId, Date.now())
+  expect((await f.read(1))?.predictedAt).toBe(f.now + 4 * 60000)
   vi.spyOn(Date, 'now').mockReturnValue(f.now + 20 * 60000)
   await recalculateQueue(env, f.queueId, f.now + 20 * 60000)
-  expect((await f.read(1))?.predictedAt).toBe(f.now + 4 * 60000)
+  expect((await f.read(1))?.predictedAt).toBe(f.now + 30 * 60000)
+  expect((await env.DB.prepare('SELECT delay_reason FROM queue_adaptive_projection WHERE entry_id=?').bind(f.ids[1]).first())?.delay_reason).toBe('safety')
+  await recalculateQueue(env, f.queueId, f.now + 20 * 60000)
+  expect((await f.read(1))?.predictedAt).toBe(f.now + 30 * 60000)
 })
 it('returns public mean customer waits and the configured minimum for empty active queues', async () => {
   const f = await fixture('reception', 2)
@@ -70,18 +81,24 @@ it('returns public mean customer waits and the configured minimum for empty acti
   await env.DB.prepare("UPDATE queue_entry SET status='cancelled' WHERE queue_id=?").bind(f.queueId).run()
   expect(await publicService(env, f.queueId)).toMatchObject({ averageWaitMinutes: 4, averageWaitQuality: 'provisional' })
 })
-it('counts down to zero for later customers despite continuously advancing free-slot operational forecasts', async () => {
+it('keeps serial deadlines stable until a safety review and never advances them by resource slots', async () => {
   const f = await fixture()
   const config = { ...f.config, stations: 1 }
   await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId).run()
   await recalculateQueue(env, f.queueId, f.now)
   const anchor = await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[1]).first()
-  for (const minutes of [1, 4, 8, 12, 20, 30]) {
-    vi.spyOn(Date, 'now').mockReturnValue(f.now + minutes * 60000)
-    await recalculateQueue(env, f.queueId, Date.now())
-    expect((await f.read(1))?.predictedAt).toBe(f.now + 8 * 60000)
-    expect((await f.read(1))?.etaMinutes).toBe(Math.max(0, 8 - minutes))
-  }
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 60000)
+  await recalculateQueue(env, f.queueId, Date.now())
+  expect((await f.read(1))?.predictedAt).toBe(f.now + 8 * 60000)
+  expect((await f.read(1))?.etaMinutes).toBe(7)
+  // With no assignments by the first slot's deadline, safety review protects
+  // downstream estimates rather than letting the queue run into zero.
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 4 * 60000)
+  await recalculateQueue(env, f.queueId, Date.now())
+  expect((await f.read(1))?.predictedAt).toBe(f.now + 12 * 60000)
+  expect((await env.DB.prepare('SELECT delay_reason FROM queue_adaptive_projection WHERE entry_id=?').bind(f.ids[1]).first())?.delay_reason).toBe('safety')
+  await recalculateQueue(env, f.queueId, Date.now())
+  expect((await f.read(1))?.predictedAt).toBe(f.now + 12 * 60000)
   expect(await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[1]).first()).toEqual(anchor)
   expect((await env.DB.prepare("SELECT COUNT(*) n FROM notification_outbox WHERE entry_id=? AND kind IN ('delayed','improved','ready')").bind(f.ids[1]).first())?.n).toBe(0)
 })
@@ -99,6 +116,9 @@ it('keeps legacy unknown backfill silent and does not rewrite historical anchors
 it('starts a new joined turn and its frozen WhatsApp at the same minimum, approaches only once', async () => {
   const { joinQueue } = await import('./entries')
   const f = await fixture('reception', 0)
+  // Opening/activating the service initializes v2 before the first customer;
+  // this prevents first-join activation from being mistaken for migration.
+  await recalculateQueue(env, f.queueId, f.now)
   const result = await joinQueue(env, f.queueId, crypto.randomUUID(), { partySize: 1, locale: 'en', whatsapp: { consent: true, phone: '+34600000000', version: 'whatsapp-queue-updates-v1' } })
   expect(result.status).toBe(201)
   expect(result.body).toMatchObject({ etaMinutes: 4, initialEtaMinutes: 4, estimateQuality: 'provisional' })
@@ -114,7 +134,7 @@ it('rolls back minimum initialization with projection and operational changes', 
   await expect(commitQueueTransition(env, f.queueId, before, { ...before, config: { ...f.config, averageMinutes: 8 } }, [env.DB.prepare('INSERT INTO customer_command(entry_id,request_key,request_hash,result,created_at) VALUES (NULL,NULL,NULL,NULL,NULL)')], f.now)).rejects.toThrow()
   expect((await env.DB.prepare('SELECT COUNT(*) n FROM queue_projection WHERE entry_id IN (SELECT id FROM queue_entry WHERE queue_id=?)').bind(f.queueId).first())?.n).toBe(0)
 })
-it('takes a credible later occupied-resource forecast and new operational changes after minimum elapsed', async () => {
+it('uses configured cadence changes, not historic occupancy, to rebase estimates', async () => {
   const f = await fixture('restaurant', 1)
   const occupied = crypto.randomUUID()
   await env.DB.prepare("INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,2,'en',?,0,'completed')").bind(occupied, f.queueId, occupied, occupied, occupied, occupied, f.now).run()
@@ -124,14 +144,15 @@ it('takes a credible later occupied-resource forecast and new operational change
   await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId).run()
   await recalculateQueue(env, f.queueId, f.now)
   expect(await f.read(0)).toMatchObject({ etaMinutes: 20 })
-  vi.spyOn(Date, 'now').mockReturnValue(f.now + 25 * 60000)
-  await recalculateQueue(env, f.queueId, Date.now())
-  expect(await f.read(0)).toMatchObject({ etaMinutes: 0, estimateQuality: 'provisional' })
+  const firstPrediction = (await f.read(0))?.predictedAt
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 60000)
   const before = await loadQueueState(env, f.queueId, Date.now())
   const next = { ...config, spaces: [{ ...config.spaces[0]!, tableTypes: [{ seats: 4, count: 3, averageMinutes: 40 }] }] }
   await commitQueueTransition(env, f.queueId, before, { ...before, config: next }, [env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(next), f.queueId)], Date.now())
-  expect(await f.read(0)).toMatchObject({ etaMinutes: 15 })
-  expect((await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[0]).first())?.predicted_at).toBe(f.now + 20 * 60000)
+  expect(await f.read(0)).toMatchObject({ etaMinutes: 39 })
+  expect((await f.read(0))?.predictedAt).toBe(firstPrediction! + 20 * 60000)
+  expect((await loadQueueState(env, f.queueId, Date.now())).resources).toEqual([])
+  expect((await env.DB.prepare('SELECT COUNT(*) n FROM queue_allocation WHERE entry_id=?').bind(occupied).first())?.n).toBe(1)
 })
 it('corrects configured-work changes when raw scheduling stays unchanged, and obsoletes compensated intents', async () => {
   const f = await fixture()
@@ -157,56 +178,49 @@ it('corrects configured-work changes when raw scheduling stays unchanged, and ob
   expect(await f.read(1)).toMatchObject({ etaMinutes: 8 })
   expect((await env.DB.prepare("SELECT COUNT(*) n FROM notification_outbox WHERE entry_id=? AND kind='improved'").bind(f.ids[1]).first())?.n).toBe(0)
 })
-it('initializes the first credible operational forecast without resetting the existing minimum', async () => {
+it('ignores legacy availability adjustments when estimating a serial queue', async () => {
   const f = await fixture('restaurant', 1)
   for (let i = 0;i < 3;i++) await env.DB.prepare('INSERT INTO queue_external_occupancy(queue_id,resource_id,space_id,seats,recorded_at) VALUES (?, ?, ?,4,?)').bind(f.queueId, `room:4:${i}`, 'room', f.now).run()
   await recalculateQueue(env, f.queueId, f.now)
   const before = await loadQueueState(env, f.queueId, f.now + 60000)
   const next = { ...f.config, adjustments: [{ spaceId: 'room', seats: 4, kind: 'availability' as const, minutes: 10, reason: 'Test known release', expiresAt: f.now + 15 * 60000 }] }
   vi.spyOn(Date, 'now').mockReturnValue(f.now + 60000)
-  await commitQueueTransition(env, f.queueId, before, { ...before, holds: [], config: next }, [env.DB.prepare('DELETE FROM queue_external_occupancy WHERE queue_id=?').bind(f.queueId), env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(next), f.queueId)], Date.now())
-  expect(await f.read(0)).toMatchObject({ etaMinutes: 14, predictedAt: f.now + 15 * 60000 })
-  expect((await env.DB.prepare('SELECT customer_minimum_at FROM queue_projection WHERE entry_id=?').bind(f.ids[0]).first())?.customer_minimum_at).toBe(f.now + 4 * 60000)
-  for (let i = 2;i < 10;i++) { vi.spyOn(Date, 'now').mockReturnValue(f.now + i * 60000); await recalculateQueue(env, f.queueId, Date.now()) }
-  expect((await f.read(0))?.predictedAt).toBe(f.now + 15 * 60000)
-})
-it('rebases a real resource block after the minimum expired without adding clock time to provenance', async () => {
-  const f = await fixture('reception', 1)
-  await env.DB.prepare("INSERT INTO consent VALUES (?,?,'demo-org','queue_updates','test-only',?,NULL)").bind(crypto.randomUUID(), f.ids[0], f.now).run()
-  await recalculateQueue(env, f.queueId, f.now)
-  await env.DB.prepare('INSERT INTO queue_notification_state(entry_id,last_accepted_predicted_at,updated_at,last_accepted_operational_delta_ms,last_accepted_customer_minimum_at) VALUES (?,?,?,0,?)').bind(f.ids[0], f.now + 4 * 60000, f.now, f.now + 4 * 60000).run()
-  const change = async (at: number, deadline: number) => {
-    vi.spyOn(Date, 'now').mockReturnValue(f.now + at * 60000)
-    const before = await loadQueueState(env, f.queueId, Date.now())
-    const config = { ...f.config, adjustments: [{ spaceId: 'reception', seats: 100, kind: 'availability' as const, minutes: deadline - at, reason: 'Real resource block', expiresAt: f.now + deadline * 60000 }] }
-    await commitQueueTransition(env, f.queueId, before, { ...before, config }, [env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId)], Date.now())
-  }
-  await change(30, 40)
-  expect(await f.read(0)).toMatchObject({ predictedAt: f.now + 40 * 60000, etaMinutes: 10 })
-  expect(await env.DB.prepare('SELECT operational_forecast_delta_ms,customer_minimum_at FROM queue_projection WHERE entry_id=?').bind(f.ids[0]).first()).toEqual({ operational_forecast_delta_ms: 10 * 60000, customer_minimum_at: f.now + 4 * 60000 })
-  expect((await env.DB.prepare("SELECT COUNT(*) n FROM notification_outbox WHERE entry_id=? AND kind='delayed'").bind(f.ids[0]).first())?.n).toBe(1)
-  vi.spyOn(Date, 'now').mockReturnValue(f.now + 31 * 60000)
+  await commitQueueTransition(env, f.queueId, before, { ...before, config: next }, [env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(next), f.queueId)], Date.now())
+  expect(await f.read(0)).toMatchObject({ etaMinutes: 3, predictedAt: f.now + 4 * 60000 })
+  expect(await env.DB.prepare('SELECT predicted_at,cadence_ms FROM queue_adaptive_projection WHERE entry_id=?').bind(f.ids[0]).first()).toMatchObject({ predicted_at: f.now + 4 * 60000, cadence_ms: 4 * 60000 })
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 2 * 60000)
   await recalculateQueue(env, f.queueId, Date.now())
-  expect(await f.read(0)).toMatchObject({ predictedAt: f.now + 40 * 60000, etaMinutes: 9 })
-  expect((await env.DB.prepare("SELECT COUNT(*) n FROM notification_outbox WHERE entry_id=? AND kind='delayed'").bind(f.ids[0]).first())?.n).toBe(1)
-  await env.DB.prepare('UPDATE queue_notification_state SET last_accepted_predicted_at=?,last_accepted_operational_delta_ms=? WHERE entry_id=?').bind(f.now + 40 * 60000, 10 * 60000, f.ids[0]).run()
-  await change(32, 35)
-  expect(await f.read(0)).toMatchObject({ predictedAt: f.now + 35 * 60000, etaMinutes: 3 })
-  expect((await env.DB.prepare("SELECT COUNT(*) n FROM notification_outbox WHERE entry_id=? AND kind='improved'").bind(f.ids[0]).first())?.n).toBe(1)
-  expect((await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[0]).first())?.predicted_at).toBe(f.now)
+  expect((await f.read(0))?.predictedAt).toBe(f.now + 4 * 60000)
+  expect((await env.DB.prepare('SELECT COUNT(*) n FROM queue_external_occupancy WHERE queue_id=?').bind(f.queueId).first())?.n).toBe(3)
 })
-it('initializes unknown-to-credible customer availability without deriving raw causality from an old anchor', async () => {
+it('ignores a legacy availability hold before the no-progress safety review', async () => {
+  const f = await fixture('reception', 1)
+  await recalculateQueue(env, f.queueId, f.now)
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 60000)
+  const before = await loadQueueState(env, f.queueId, Date.now())
+  const config = { ...f.config, adjustments: [{ spaceId: 'reception', seats: 100, kind: 'availability' as const, minutes: 40, reason: 'Legacy resource hold', expiresAt: f.now + 15 * 60000 }] }
+  await commitQueueTransition(env, f.queueId, before, { ...before, config }, [env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId)], Date.now())
+  expect(await f.read(0)).toMatchObject({ predictedAt: f.now + 4 * 60000, etaMinutes: 3 })
+  expect((await env.DB.prepare('SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?').bind(f.ids[0]).first())?.operational_forecast_delta_ms).toBe(0)
+  expect((await env.DB.prepare('SELECT cadence_ms FROM queue_adaptive_projection WHERE entry_id=?').bind(f.ids[0]).first())?.cadence_ms).toBe(4 * 60000)
+})
+it('preserves historical occupancy but does not let it create an ETA floor', async () => {
   const f = await fixture('restaurant', 1)
   await recalculateQueue(env, f.queueId, f.now)
-  vi.spyOn(Date, 'now').mockReturnValue(f.now + 30 * 60000)
+  const initialDeadline = (await f.read(0))?.predictedAt
+  const anchor = await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[0]).first()
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 60000)
   const before = await loadQueueState(env, f.queueId, Date.now())
   const holds = [0, 1, 2].map(i => ({ resource_id: `room:4:${i}`, space_id: 'room', seats: 4 }))
   await commitQueueTransition(env, f.queueId, before, { ...before, holds }, holds.map(h => env.DB.prepare('INSERT INTO queue_external_occupancy(queue_id,resource_id,space_id,seats,recorded_at) VALUES (?,?,?,?,?)').bind(f.queueId, h.resource_id, h.space_id, h.seats, Date.now())), Date.now())
-  vi.spyOn(Date, 'now').mockReturnValue(f.now + 40 * 60000)
+  expect((await f.read(0))?.predictedAt).toBe(initialDeadline)
+  vi.spyOn(Date, 'now').mockReturnValue(f.now + 2 * 60000)
   const unknown = await loadQueueState(env, f.queueId, Date.now())
   const config = { ...f.config, adjustments: [{ spaceId: 'room', seats: 4, kind: 'availability' as const, minutes: 10, reason: 'New credible availability', expiresAt: f.now + 50 * 60000 }] }
-  await commitQueueTransition(env, f.queueId, unknown, { ...unknown, holds: [], config }, [env.DB.prepare('DELETE FROM queue_external_occupancy WHERE queue_id=?').bind(f.queueId), env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId)], Date.now())
-  expect(await f.read(0)).toMatchObject({ predictedAt: f.now + 50 * 60000, etaMinutes: 10 })
+  await commitQueueTransition(env, f.queueId, unknown, { ...unknown, config }, [env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(config), f.queueId)], Date.now())
+  expect((await f.read(0))?.predictedAt).toBe(initialDeadline)
   expect((await env.DB.prepare('SELECT operational_forecast_delta_ms FROM queue_projection WHERE entry_id=?').bind(f.ids[0]).first())?.operational_forecast_delta_ms).toBe(0)
-  expect((await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[0]).first())?.predicted_at).toBe(f.now)
+  expect((await env.DB.prepare('SELECT predicted_at FROM queue_forecast_anchor WHERE entry_id=?').bind(f.ids[0]).first())?.predicted_at).toEqual(anchor?.predicted_at)
+  expect((await env.DB.prepare('SELECT COUNT(*) n FROM queue_external_occupancy WHERE queue_id=?').bind(f.queueId).first())?.n).toBe(3)
+  expect((await loadQueueState(env, f.queueId, Date.now())).resources).toEqual([])
 })

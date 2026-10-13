@@ -1,42 +1,25 @@
+import { forecastInterval } from './adaptive-model'
 import type { ServiceInput } from '@noqueue/contracts/staff'
-import {
-  eligibleResources,
-  type Party,
-  type Projection,
-  type Resource,
-} from './engine'
+import { type Party, type Projection, type Resource } from './engine'
 
 /** Configured service work, never learned durations or fictitious occupancy. */
 export function configuredCustomerWork(
   parties: Party[],
-  resources: Resource[],
+  _resources: Resource[],
   config: ServiceInput | null,
   baseline: number,
 ) {
-  const configured = resources.map((resource) => ({
-    ...resource,
-    averageMinutes:
-      config?.type === 'restaurant'
-        ? config.spaces
-          .find((space) => space.id === resource.spaceId)
-          ?.tableTypes?.find((type) => type.seats === resource.seats)
-          ?.averageMinutes ?? config.averageMinutes
-        : config?.averageMinutes ?? baseline,
-  }))
   let total = 0
   return new Map(
     [...parties]
       .sort((a, b) => a.sequence - b.sequence)
       .map((party) => {
-        const candidates = eligibleResources(
-          party,
-          configured,
-          config?.assignmentPreference,
-        )
-        const minutes = candidates.length
-          ? Math.min(...candidates.map((resource) => resource.averageMinutes))
-          : config?.averageMinutes ?? baseline
-        total += minutes * 60000
+        total += forecastInterval(party, config, baseline, {
+          service: 1,
+          learned: false,
+          zones: new Map(),
+          types: new Map(),
+        }).cadenceMs
         return [party.id, total] as const
       }),
   )
@@ -55,17 +38,17 @@ export function customerMinimum(
 ): CustomerMinimum {
   return prior
     ? {
-      ...prior,
-      minimumAt:
-        prior.minimumAt +
-        (adjust ? configuredWorkMs - prior.configuredWorkMs : 0),
-      configuredWorkMs: adjust ? configuredWorkMs : prior.configuredWorkMs,
-    }
+        ...prior,
+        minimumAt:
+          prior.minimumAt +
+          (adjust ? configuredWorkMs - prior.configuredWorkMs : 0),
+        configuredWorkMs: adjust ? configuredWorkMs : prior.configuredWorkMs,
+      }
     : {
-      minimumAt: now + configuredWorkMs,
-      configuredWorkMs,
-      initialEtaMinutes: Math.ceil(configuredWorkMs / 60000),
-    }
+        minimumAt: now + configuredWorkMs,
+        configuredWorkMs,
+        initialEtaMinutes: Math.ceil(configuredWorkMs / 60000),
+      }
 }
 
 /** Rebase credible real changes; keep clock-only refreshes on their stable deadline. */
@@ -77,8 +60,8 @@ export function stableOperationalAt(
   return rawAt === null
     ? null
     : priorAt === null || (beforeRawAt !== undefined && beforeRawAt !== rawAt)
-      ? rawAt
-      : priorAt
+    ? rawAt
+    : priorAt
 }
 
 /** Available-now operational forecasts cannot restart an elapsed customer clock. */
@@ -98,9 +81,9 @@ export function customerEstimate(
     }
   const operational =
     raw.quality !== 'unknown' &&
-      raw.predictedAt !== null &&
-      Number.isFinite(raw.predictedAt) &&
-      raw.predictedAt > now
+    raw.predictedAt !== null &&
+    Number.isFinite(raw.predictedAt) &&
+    raw.predictedAt > now
       ? raw.predictedAt
       : null
   const predictedAt = Math.max(minimumAt, operational ?? -Infinity)
@@ -120,11 +103,15 @@ function customerOperationalSql(alias: string) {
 /** Matching SQL for bounded public aggregation; no historical scan or recalc. */
 export function customerDeadlineSql(now: number, alias = 'p') {
   const raw = customerOperationalSql(alias)
-  return `CASE WHEN ${alias}.estimator_version=2 THEN (SELECT ap.predicted_at FROM queue_adaptive_projection ap WHERE ap.entry_id=${alias}.entry_id) WHEN ${alias}.customer_minimum_at IS NOT NULL THEN MAX(${alias}.customer_minimum_at,CASE WHEN ${raw}>${Math.trunc(now)} THEN ${raw} ELSE ${alias}.customer_minimum_at END) WHEN ${alias}.quality!='unknown' THEN ${alias}.predicted_at END`
+  return `CASE WHEN ${alias}.estimator_version=2 THEN (SELECT ap.predicted_at FROM queue_adaptive_projection ap WHERE ap.entry_id=${alias}.entry_id) WHEN ${alias}.customer_minimum_at IS NOT NULL THEN MAX(${alias}.customer_minimum_at,CASE WHEN ${raw}>${Math.trunc(
+    now,
+  )} THEN ${raw} ELSE ${alias}.customer_minimum_at END) WHEN ${alias}.quality!='unknown' THEN ${alias}.predicted_at END`
 }
 export function customerProvisionalSql(now: number, alias = 'p') {
   const raw = customerOperationalSql(alias)
-  return `CASE WHEN ${alias}.estimator_version=2 THEN (SELECT ap.quality!='estimated' FROM queue_adaptive_projection ap WHERE ap.entry_id=${alias}.entry_id) ELSE (${alias}.quality!='estimated' OR ( (${alias}.customer_minimum_at IS NOT NULL AND (${raw} IS NULL OR ${raw}<=${alias}.customer_minimum_at OR ${raw}<=${Math.trunc(now)})))) END`
+  return `CASE WHEN ${alias}.estimator_version=2 THEN (SELECT ap.quality!='estimated' FROM queue_adaptive_projection ap WHERE ap.entry_id=${alias}.entry_id) ELSE (${alias}.quality!='estimated' OR ( (${alias}.customer_minimum_at IS NOT NULL AND (${raw} IS NULL OR ${raw}<=${alias}.customer_minimum_at OR ${raw}<=${Math.trunc(
+    now,
+  )})))) END`
 }
 export function publicCustomerAverage(input: {
   sum: number
@@ -142,9 +129,14 @@ export function publicCustomerAverage(input: {
     }
   const mean = input.count ? Math.round(input.sum / input.count) : 0
   return {
-    averageWaitMinutes: input.adaptive && input.count ? Math.max(1, mean) : Math.max(input.configuredMinutes, mean),
+    averageWaitMinutes:
+      input.adaptive && input.count
+        ? Math.max(1, mean)
+        : Math.max(input.configuredMinutes, mean),
     averageWaitQuality:
-      !input.count || input.provisional || (!input.adaptive && mean < input.configuredMinutes)
+      !input.count ||
+      input.provisional ||
+      (!input.adaptive && mean < input.configuredMinutes)
         ? ('provisional' as const)
         : ('estimated' as const),
   }

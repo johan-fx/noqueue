@@ -6,6 +6,9 @@ import { noticeStatement, type QueueNoticeSnapshot } from './notices'
 type Reason = 'safety' | 'resources' | 'cadence' | 'configuration'
 type Prior = {
   entry_id: string
+  call_cycle: number
+  extension_sequence: number
+  pending_extension: number
   estimator_version: number
   revision: number
   position: number
@@ -41,7 +44,10 @@ export async function adaptiveProjectionStatements(
     config = state.config!
   const statements = [...learning.statements]
   const rows = await env.DB.prepare(
-    `SELECT e.id AS entry_id,p.estimator_version,p.revision,p.position,a.quality,p.resource_id,p.callable,
+    `SELECT e.id AS entry_id,e.call_cycle,
+    COALESCE((SELECT MAX(x.extension_sequence) FROM queue_wait_extension x WHERE x.entry_id=e.id),0) AS extension_sequence,
+    EXISTS(SELECT 1 FROM notification_outbox x WHERE x.entry_id=e.id AND x.kind='delayed' AND x.status IN ('pending','sending') AND x.call_cycle=e.call_cycle AND json_extract(x.payload_snapshot,'$.extensionSequence') IS NOT NULL) AS pending_extension,
+    p.estimator_version,p.revision,p.position,a.quality,p.resource_id,p.callable,
     a.predicted_at,a.cadence_ms,a.safety_review_at,a.delay_reason,a.delay_since,a.delay_baseline_at,
     a.approach_episode,a.approach_armed,a.correction_reason,a.safety_revision,a.notice_baseline_at,
     n.last_accepted_predicted_at,n.last_correction_accepted_at,n.last_accepted_safety_revision,
@@ -59,13 +65,15 @@ export async function adaptiveProjectionStatements(
   let previousAt: number | null = null,
     previousRaw: number | null = null
   let propagatedSafety = false
-  const modeledReleases = new Map<string, number>()
   for (const p of state.adaptiveProjections) {
     const prior = priors.get(p.id)
     const initialized =
-      prior?.estimator_version === 2 && prior.predicted_at != null
+      !learning.transitioning &&
+      prior?.estimator_version === 2 &&
+      prior.predicted_at != null
     const old = beforeProjections.get(p.id)
-    const activation = !initialized && !!prior
+    const activation =
+      learning.transitioning || (!initialized && !!prior?.predicted_at)
     // An actual assignment establishes the next cadence origin. Subtracting
     // the completed slot from an already elapsed deadline would count progress
     // twice (4/8/12 at t=0 must become 8/12 after the first call at t=4).
@@ -74,20 +82,13 @@ export async function adaptiveProjectionStatements(
         ? p.predictedAt
         : initialized
         ? prior.predicted_at! + (old ? p.predictedAt - old.predictedAt : 0)
-        : p.predictedAt +
+        : p.predictedAt -
+          (learning.transitioning
+            ? Math.max(0, now - learning.lastProgressAt)
+            : 0) +
           (!activation && previousAt !== null && previousRaw !== null
             ? previousAt - previousRaw
             : 0)
-    // Reconcile serial dispatch and resource release independently. A known release
-    // is an absolute lower bound, not another duration to add to the queue wait.
-    const resource = state.resources.find((r) => r.id === p.resourceId)
-    const resourceFloor = Math.max(
-      resource?.availableAt ?? -Infinity,
-      p.resourceId ? modeledReleases.get(p.resourceId) ?? -Infinity : -Infinity,
-    )
-    // A free-now slot must not slide the deadline on every clock refresh.
-    if (before || !initialized)
-      predictedAt = Math.max(predictedAt, resourceFloor)
     const beforePropagation = predictedAt
     if (previousAt !== null)
       predictedAt = Math.max(predictedAt, previousAt + p.cadenceMs)
@@ -103,7 +104,7 @@ export async function adaptiveProjectionStatements(
           : before?.adaptive?.factor !== learning.factor ||
             before?.parties.length !== state.parties.length
           ? 'cadence'
-          : 'resources'
+          : 'cadence'
     if (safetyPropagation) reason = 'safety'
     let delayReason = initialized ? prior.delay_reason : null
     let delaySince = initialized ? prior.delay_since : null
@@ -116,12 +117,7 @@ export async function adaptiveProjectionStatements(
         S,
         now - learning.lastProgressAt,
       )
-      predictedAt = Math.max(
-        predictedAt,
-        p.predictedAt,
-        now + remaining,
-        resourceFloor,
-      )
+      predictedAt = Math.max(predictedAt, p.predictedAt, now + remaining)
       reason = 'safety'
     }
     const moved = initialized && predictedAt !== prior.predicted_at
@@ -145,6 +141,9 @@ export async function adaptiveProjectionStatements(
       reason = 'safety'
     const quality =
       delayReason === 'safety' || reviewDue ? 'provisional' : p.quality
+    const extended = initialized && learning.active && predictedAt > formerAt
+    const extensionSequence = (prior?.extension_sequence ?? 0) + Number(extended)
+    const callCycle = prior?.call_cycle ?? 0
     const A = (config.approachMinutes ?? 10) * 60000
     let armed = initialized ? !!prior.approach_armed : true
     let episode = initialized ? prior.approach_episode : 0
@@ -153,7 +152,8 @@ export async function adaptiveProjectionStatements(
       episode++
     }
     const approach =
-      learning.active && armed && predictedAt - now <= A && !activation
+      learning.active && armed && predictedAt - now <= A && !activation &&
+      !extended && !prior?.pending_extension
     if (approach || (activation && predictedAt - now <= A)) armed = false
     const reviewAt = learning.active ? predictedAt - S : null
     const changed =
@@ -177,6 +177,7 @@ export async function adaptiveProjectionStatements(
       )
     const snapshot: QueueNoticeSnapshot = {
       schemaVersion: 2,
+      ...(extended ? { extensionSequence } : {}),
       estimatorVersion: 2,
       estimationRevision: revision,
       correctionReason: reason,
@@ -191,7 +192,7 @@ export async function adaptiveProjectionStatements(
       resourceName: null,
       arrivalDeadlineAt: null,
     }
-    const correction =
+    const evaluatedCorrection =
       initialized && learning.active
         ? evaluateAdaptiveNotice({
             previousAcceptedAt:
@@ -206,19 +207,30 @@ export async function adaptiveProjectionStatements(
             lastAcceptedSafetyRevision: prior.last_accepted_safety_revision,
           })
         : null
-    // Retire outdated unsent snapshots before coalescing to the current situation.
+    // Delivery history must not hide a later extension, even after an improvement.
+    const correction = extended ? 'delayed' : evaluatedCorrection === 'improved' ? 'improved' : null
+    if (extended)
+      statements.push(env.DB.prepare(
+        `INSERT INTO queue_wait_extension(entry_id,call_cycle,extension_sequence,previous_at,predicted_at,reason,created_at) VALUES (?,?,?,?,?,?,?)`,
+      ).bind(p.id, callCycle, extensionSequence, formerAt, predictedAt, reason, now))
+    // Event-based delays survive unrelated revisions and subsequent extensions.
+    // Other snapshots remain revision-bound; inactive/cycle changes retire all.
     statements.push(
       env.DB.prepare(
         `UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND status='pending'
-      AND kind IN ('approaching','delayed','improved') AND (revision<>? OR ?=0 OR json_extract(payload_snapshot,'$.estimatorVersion') IS NULL)`,
-      ).bind(now, p.id, revision, Number(learning.active)),
+      AND kind IN ('approaching','delayed','improved') AND (
+        ?=0 OR ?=1 OR call_cycle<>? OR
+        ((kind<>'delayed' OR json_extract(payload_snapshot,'$.extensionSequence') IS NULL)
+          AND (revision<>? OR json_extract(payload_snapshot,'$.estimatorVersion') IS NULL)))`,
+      ).bind(now, p.id, Number(learning.active), Number(activation), callCycle, revision),
     )
     if (
+      !activation &&
       (approach ||
         (prior?.pending_approach &&
           predictedAt - now <= A &&
           learning.active)) &&
-      correction !== 'delayed'
+      correction !== 'delayed' && !prior?.pending_extension
     )
       statements.push(
         noticeStatement(
@@ -228,7 +240,7 @@ export async function adaptiveProjectionStatements(
           now,
           snapshot,
           revision,
-          0,
+          callCycle,
           true,
         ),
       )
@@ -241,7 +253,7 @@ export async function adaptiveProjectionStatements(
           now,
           snapshot,
           revision,
-          0,
+          callCycle,
           true,
         ),
       )
@@ -256,10 +268,10 @@ export async function adaptiveProjectionStatements(
       ).bind(
         p.id,
         p.position,
-        raw.etaMinutes,
-        raw.predictedAt,
-        raw.quality,
-        raw.resourceId,
+        snapshot.etaMinutes,
+        predictedAt,
+        quality,
+        null,
         Number(raw.callable),
         revision,
         now,
@@ -306,7 +318,7 @@ export async function adaptiveProjectionStatements(
       env.DB.prepare(
         `UPDATE notification_outbox SET payload_snapshot=json_patch(payload_snapshot,?),revision=?
       WHERE entry_id=? AND kind='queue_joined' AND (status='pending' OR json_extract(payload_snapshot,'$.projectionPending')=1) AND payload_version=2
-      AND (json_extract(payload_snapshot,'$.projectionPending')=1 OR json_extract(payload_snapshot,'$.estimatorVersion') IS NULL)`,
+      AND (json_extract(payload_snapshot,'$.projectionPending')=1 OR json_extract(payload_snapshot,'$.estimatorVersion') IS NULL OR ?=1)`,
       ).bind(
         JSON.stringify({
           ...snapshot,
@@ -317,17 +329,13 @@ export async function adaptiveProjectionStatements(
         }),
         revision,
         p.id,
+        Number(learning.transitioning),
       ),
     )
     propagatedSafety =
       reviewDue || safetyPropagation || delayReason === 'safety'
     previousAt = predictedAt
     previousRaw = p.predictedAt
-    if (resource?.occupancyMinutes && p.resourceId)
-      modeledReleases.set(
-        p.resourceId,
-        predictedAt + resource.occupancyMinutes * 60000,
-      )
   }
   // Use the prospective party set: entry status updates have not committed yet.
   statements.push(

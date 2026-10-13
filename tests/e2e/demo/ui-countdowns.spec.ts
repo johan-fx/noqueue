@@ -42,7 +42,7 @@ test('real waiting and arrival countdowns match customer, with the delay above t
   try {
     // One minute is fixture configuration, not a sped-up browser or server clock.
     const f = await fixture(staff, request, baseURL!, 'restaurant', 'expiration',
-      { interval: 1, tables: 1, approach: 0, occupied: 0 })
+      { interval: 1, tables: 1, approach: 0 })
     await client.goto(`/q/${f.queue}`)
     await client.getByLabel('Nombre', { exact: true }).fill('María Cliente')
     await client.getByRole('button', { name: 'Más comensales' }).click()

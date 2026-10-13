@@ -141,21 +141,24 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         arrivalDeadlineAt: detail.arrival_deadline_at,
         arrivedAt: detail.arrived_at,
         phase,
-        ...(detail.service_ended ? { cancellationReason: 'service_ended' as const } : {}),
+        ...(detail.service_ended
+          ? { cancellationReason: 'service_ended' as const }
+          : {}),
         actions:
           phase === 'waiting' || phase === 'approaching'
             ? service.type === 'restaurant'
               ? ['update', 'cancel', 'yield']
               : ['cancel', 'yield']
             : phase === 'called'
-              ? ['cancel', 'yield']
+            ? ['cancel', 'yield']
             : [],
       }
     }
   }
   return entrySchema.parse({
     customer,
-    initialEtaMinutes: projection?.initialEtaMinutes ?? row.progress_initial_eta_minutes,
+    initialEtaMinutes:
+      projection?.initialEtaMinutes ?? row.progress_initial_eta_minutes,
     code: entry.code,
     position: entry.status === 'waiting' ? row.position : 0,
     etaMinutes: 0,
@@ -180,10 +183,7 @@ export function manualJoinRequiresWhatsapp(env: CloudflareBindings) {
 }
 export type JoinSource = 'legacy' | 'public-service' | 'public-queue'
 
-function whatsappAdmissionReady(
-  env: CloudflareBindings,
-  locale: 'es' | 'en',
-) {
+function whatsappAdmissionReady(env: CloudflareBindings, locale: 'es' | 'en') {
   if (
     env.WHATSAPP_ENABLED !== 'true' ||
     !env.D360DIALOG_API_KEY ||
@@ -210,8 +210,8 @@ function whatsappAdmissionReady(
     const templates = env as CloudflareBindings &
       Partial<
         Record<
-          'WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_ES' |
-            'WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_EN',
+          | 'WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_ES'
+          | 'WHATSAPP_QUEUE_V2_QUEUE_JOINED_TEMPLATE_EN',
           string
         >
       >
@@ -230,10 +230,13 @@ function whatsappAdmissionReady(
 }
 
 function recipientAllowed(env: CloudflareBindings, phone: string) {
-  return isOpenStagingV4(env) || (env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
-    .split(',')
-    .map((value) => value.trim())
-    .includes(phone)
+  return (
+    isOpenStagingV4(env) ||
+    (env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
+      .split(',')
+      .map((value) => value.trim())
+      .includes(phone)
+  )
 }
 
 export function publicWhatsappAdmissionError(
@@ -282,7 +285,11 @@ export async function joinQueue(
     if (existing.request_hash !== requestHash)
       return { status: 409, body: { error: 'idempotency_conflict' } }
     await recalculateQueue(env, queueId)
-    const latest = await env.DB.prepare('SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?').bind(existing.id).first<StoredEntry>()
+    const latest = await env.DB.prepare(
+      'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?',
+    )
+      .bind(existing.id)
+      .first<StoredEntry>()
     return {
       status: 200,
       body: {
@@ -407,31 +414,12 @@ export async function joinQueue(
     )
       return { status: 400, body: { error: 'invalid_reception_service' } }
     if (
-      config.type === 'restaurant' &&
-      !config.spaces.some((space) =>
-        space.tableTypes?.some(
-          (type) => type.count > 0 && type.seats >= input.partySize,
-        ),
-      )
+      input.preferredSpaceId &&
+      input.preferredSpaceId !== 'fastest' &&
+      (config.type !== 'restaurant' ||
+        !config.spaces.some((space) => space.id === input.preferredSpaceId))
     )
-      return { status: 400, body: { error: 'invalid_party_size' } }
-    if (input.preferredSpaceId) {
-      const spaces =
-        input.preferredSpaceId === 'fastest'
-          ? config.spaces
-          : config.spaces.filter((space) => space.id === input.preferredSpaceId)
-      if (
-        config.type !== 'restaurant' ||
-        !spaces.some(
-          (space) =>
-            !space.tableTypes?.length ||
-            space.tableTypes.some(
-              (type) => type.count > 0 && type.seats >= input.partySize,
-            ),
-        )
-      )
-        return { status: 400, body: { error: 'invalid_space_preference' } }
-    }
+      return { status: 400, body: { error: 'invalid_space_preference' } }
     if (
       queue.tenant_status !== 'active' ||
       !(await admissionState(env, queueId))?.canJoin ||
@@ -463,22 +451,35 @@ export async function joinQueue(
     ],
   }
   const projectionState = await loadQueueState(env, queueId, now, afterModel)
-  const rawJoinedProjection = projectionState.projections.find((p) => p.id === id)
+  const rawJoinedProjection = projectionState.projections.find(
+    (p) => p.id === id,
+  )
   const work = configuredCustomerWork(
     projectionState.parties,
     projectionState.resources,
     projectionState.config,
     projectionState.baseline,
   ).get(id)!
-  const adaptiveJoined = projectionState.adaptiveProjections.find(p => p.id === id)
+  const adaptiveJoined = projectionState.adaptiveProjections.find(
+    (p) => p.id === id,
+  )
   const joinedEstimate = adaptiveJoined
-    ? { predictedAt:adaptiveJoined.predictedAt,etaMinutes:Math.ceil((adaptiveJoined.predictedAt-now)/60000),estimateQuality:adaptiveJoined.quality }
+    ? {
+        predictedAt: adaptiveJoined.predictedAt,
+        etaMinutes: Math.ceil((adaptiveJoined.predictedAt - now) / 60000),
+        estimateQuality: adaptiveJoined.quality,
+      }
     : rawJoinedProjection
     ? customerEstimate(rawJoinedProjection, now + work, now)
     : undefined
-  const joinedProjection = rawJoinedProjection && joinedEstimate
-    ? { ...rawJoinedProjection, ...joinedEstimate, quality: joinedEstimate.estimateQuality }
-    : undefined
+  const joinedProjection =
+    rawJoinedProjection && joinedEstimate
+      ? {
+          ...rawJoinedProjection,
+          ...joinedEstimate,
+          quality: joinedEstimate.estimateQuality,
+        }
+      : undefined
   const joinedV4Snapshot: QueueNoticeSnapshot | null =
     selectedCopyVersion === 4 && queue.config
       ? {
@@ -497,8 +498,8 @@ export async function joinQueue(
           predictedAt: joinedProjection?.predictedAt ?? null,
           estimateQuality: joinedProjection?.quality ?? 'unknown',
           operationalForecastDeltaMs: 0,
-        ...(adaptiveJoined ? {projectionPending:true} : {}),
-        customerMinimumAt: now + work,
+          ...(adaptiveJoined ? { projectionPending: true } : {}),
+          customerMinimumAt: now + work,
           resourceName: null,
           arrivalDeadlineAt: null,
         }
@@ -564,7 +565,14 @@ export async function joinQueue(
         now,
       ),
       !experiment && selectedCopyVersion !== 2 && !queue.config
-        ? unavailableCopyStatement(env, id, 'queue_joined', now, `joined:${id}`, id)
+        ? unavailableCopyStatement(
+            env,
+            id,
+            'queue_joined',
+            now,
+            `joined:${id}`,
+            id,
+          )
         : joinedV4Snapshot
         ? env.DB.prepare(
             'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot,revision) VALUES (?,?,?,?,?,?,2,?,1)',
@@ -578,15 +586,15 @@ export async function joinQueue(
             JSON.stringify(joinedV4Snapshot),
           )
         : env.DB.prepare(
-        'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind) VALUES (?,?,?,?,?,?)',
-      ).bind(
-        id,
-        id,
-        `joined:${id}`,
-        env.WHATSAPP_ENABLED === 'true' ? 'pending' : 'cancelled',
-        now,
-        experiment ? 'confirmation' : 'queue_joined',
-      ),
+            'INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind) VALUES (?,?,?,?,?,?)',
+          ).bind(
+            id,
+            id,
+            `joined:${id}`,
+            env.WHATSAPP_ENABLED === 'true' ? 'pending' : 'cancelled',
+            now,
+            experiment ? 'confirmation' : 'queue_joined',
+          ),
     )
     if (experiment)
       statements.push(
@@ -605,7 +613,7 @@ export async function joinQueue(
       const snapshot: QueueNoticeSnapshot = {
         schemaVersion: 2,
         operationalForecastDeltaMs: 0,
-        ...(adaptiveJoined ? {projectionPending:true} : {}),
+        ...(adaptiveJoined ? { projectionPending: true } : {}),
         customerMinimumAt: now + work,
         approachRecommended:
           customerPhase(
@@ -659,7 +667,9 @@ export async function joinQueue(
   // Recalculation may close this service after admission committed the ticket.
   const latest = await env.DB.prepare(
     'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?',
-  ).bind(id).first<StoredEntry>()
+  )
+    .bind(id)
+    .first<StoredEntry>()
   return {
     status: 201,
     body: {

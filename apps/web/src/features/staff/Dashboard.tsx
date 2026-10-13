@@ -153,9 +153,11 @@ export function Dashboard(props: DashboardProps) {
   } | null>(null)
   const commandLock = useRef(false)
   const commandTrigger = useRef<HTMLElement | null>(null)
-  const commandRequest = useRef<
-    { body: string; key: string; intent?: string } | null
-  >(null)
+  const commandRequest = useRef<{
+    body: string
+    key: string
+    intent?: string
+  } | null>(null)
   const [commandError, setCommandError] = useState('')
   const [commandStale, setCommandStale] = useState(false)
   const [overrideReason, setOverrideReason] = useState('')
@@ -221,7 +223,8 @@ export function Dashboard(props: DashboardProps) {
   ) {
     const targetQueue = queuesRef.current.find((item) => item.id === queueId)
     return (
-      entry.allowedActions ?? entryActions(entry.status, targetQueue?.config.type)
+      entry.allowedActions ??
+      entryActions(entry.status, targetQueue?.config.type)
     ).includes(action)
   }
   useEffect(() => {
@@ -405,7 +408,8 @@ export function Dashboard(props: DashboardProps) {
     }
   }
   function selectCommand(entry: StaffEntry, action: EntryCommand['action']) {
-    if (!queue || commandLock.current || selectedRef.current !== queue.id) return
+    if (!queue || commandLock.current || selectedRef.current !== queue.id)
+      return
     const trigger = document.activeElement as HTMLElement
     // Entry actions collapse their tray before opening confirmation. Return to
     // the persistent disclosure, not an inert or unmounted action button.
@@ -487,7 +491,7 @@ export function Dashboard(props: DashboardProps) {
       snapshot.action === 'call' &&
       currentEntry.assignment?.available === false
     ) {
-      setCommandError('No hay una mesa compatible libre. Si una mesa ya está libre, registra su disponibilidad en «Mesa libre» → «Liberar una mesa».')
+      setCommandError('El turno ya no permite esta acción. Actualiza la lista.')
       return
     }
     commandLock.current = true
@@ -574,15 +578,6 @@ export function Dashboard(props: DashboardProps) {
     }
   }
   const nextEntry = entries.find((entry) => entry.status === 'waiting')
-  function openQueueOperation(action: NonNullable<typeof lifecycle>['action']) {
-    if (!queue || busy || saving || lifecycle) return
-    setLifecycle({
-      queueId: queue.id,
-      action,
-      trigger: menuTrigger.current,
-      insideDrawer: true,
-    })
-  }
   const lifecycleQueue = queues.find((item) => item.id === lifecycle?.queueId)
   const lifecycleSheet =
     lifecycle && lifecycleQueue ? (
@@ -818,14 +813,6 @@ export function Dashboard(props: DashboardProps) {
                       >
                         Configuración avanzada
                       </DropdownMenuItem>
-                      {queue.config.type === 'restaurant' &&
-                        queue.inventoryConfirmed && (
-                          <DropdownMenuItem
-                            onClick={() => openQueueOperation('release_unit')}
-                          >
-                            Mesa libre
-                          </DropdownMenuItem>
-                        )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 )}
@@ -934,9 +921,7 @@ export function Dashboard(props: DashboardProps) {
                   <p className="flex items-center gap-1 text-xs text-muted-foreground">
                     <UsersIcon className="size-4" aria-hidden="true" />
                     {pendingEntry.partySize} personas
-                    {pendingEntry.space
-                      ? ` · ${pendingEntry.space.name}`
-                      : ''}
+                    {pendingEntry.space ? ` · ${pendingEntry.space.name}` : ''}
                   </p>
                 )}
                 {pendingQueue?.config.type === 'reception' &&
@@ -955,15 +940,8 @@ export function Dashboard(props: DashboardProps) {
               {pending?.action === 'call' && (
                 <div className="space-y-4">
                   <p>
-                    {!pendingEntry
-                      ? 'El turno ya no permite esta acción.'
-                      : pendingEntry.assignment?.available === false
-                        ? 'No hay una mesa compatible libre. Si una mesa ya está libre, registra su disponibilidad en «Mesa libre» → «Liberar una mesa».'
-                      : `Disponibilidad compatible${
-                          pendingEntry.assignment?.spaceName
-                            ? ` · ${pendingEntry.assignment.spaceName}`
-                            : ''
-                        }. El sistema asignará la mesa.`}
+                    Al asignar confirmas que puedes atender este turno. El
+                    cliente tendrá el plazo configurado para presentarse.
                   </p>
                   <div className="flex items-center gap-2">
                     <Checkbox
@@ -978,21 +956,6 @@ export function Dashboard(props: DashboardProps) {
                       Cliente ya presente
                     </label>
                   </div>
-                  {pendingEntry?.assignment?.priorityRequired && (
-                    <label className="space-y-2 text-sm">
-                      Motivo de prioridad (obligatorio)
-                      <input
-                        className="w-full rounded border p-2"
-                        value={overrideReason}
-                        minLength={3}
-                        maxLength={300}
-                        disabled={busy}
-                        onChange={(event) =>
-                          setOverrideReason(event.target.value)
-                        }
-                      />
-                    </label>
-                  )}
                 </div>
               )}
               <SheetFooter className="gap-3 px-0">
@@ -1008,9 +971,7 @@ export function Dashboard(props: DashboardProps) {
                     commandStale ||
                     pendingActionUnavailable ||
                     (pending?.action === 'call' &&
-                      (pendingEntry?.assignment?.available === false ||
-                        (!!pendingEntry?.assignment?.priorityRequired &&
-                          overrideReason.trim().length < 3)))
+                      pendingEntry?.assignment?.available === false)
                   }
                   onClick={() => void command()}
                 >

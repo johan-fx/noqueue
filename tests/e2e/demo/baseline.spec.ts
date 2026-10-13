@@ -3,7 +3,7 @@ import { fixture, supportEntry } from './fixtures.js'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { performance } from 'node:perf_hooks'
 const sleep=(ms:number)=>new Promise(r=>setTimeout(r,ms))
-test('three real public countdowns with free resources',async({browser,request,baseURL},info)=>{
+test('three real public countdowns use the sequential queue estimate',async({browser,request,baseURL},info)=>{
  const root=process.env.QUEUE_DEMO_DIR!
  await mkdir(`${root}/raw`,{recursive:true,mode:0o700});await mkdir(`${root}/frames`,{recursive:true,mode:0o700})
  const opts={baseURL:baseURL!,viewport:{width:390,height:844},isMobile:true,hasTouch:true,serviceWorkers:'block' as const,recordVideo:{dir:`${root}/raw`,size:{width:390,height:844}}}
@@ -12,7 +12,7 @@ test('three real public countdowns with free resources',async({browser,request,b
  const e:any={id:'baseline',status:'running',duration:0,moments:[],waits:[],assertions:[],videos:[],errors:[],telemetry:[]}
  const removed:number[]=[];let start=0
  try{
-  const f=await fixture(staff,request,baseURL!,'restaurant','main',{interval:4,tables:3,approach:2,occupied:0})
+  const f=await fixture(staff,request,baseURL!,'restaurant','main',{interval:4,tables:3,approach:2})
   const entries=[]
   for(const name of ['Primer Cliente','Segundo Cliente','Tercer Cliente'])entries.push(await supportEntry(cc.request,baseURL!,f.queue,'restaurant',name))
   await staff.reload();await staff.getByRole('button',{name:'Ver lista',exact:true}).click()
@@ -29,7 +29,7 @@ test('three real public countdowns with free resources',async({browser,request,b
    e.assertions.push({key:`customer-${i+1}-minutes`,actual,expected});expect.soft(actual).toBe(expected)
    const text=await client.getByRole('progressbar').innerText()
    e.telemetry.push({at:(performance.now()-start)/1000,ui:{text},server:body})
-   e.moments.push({event:`customer-${i+1}`,caption:`Cliente ${i+1} · Previsión inicial ${expected} minutos (menos el tiempo transcurrido) · 3 mesas libres`,at:(performance.now()-start)/1000,hold:7})
+   e.moments.push({event:`customer-${i+1}`,caption:`Cliente ${i+1} · Previsión inicial ${expected} minutos (menos el tiempo transcurrido) · estimación secuencial`,at:(performance.now()-start)/1000,hold:7})
    await Promise.all([staff,client].map((p,j)=>p.screenshot({path:`${root}/frames/baseline-customer-${i+1}-${j}.png`})))
    await sleep(7000)
   }

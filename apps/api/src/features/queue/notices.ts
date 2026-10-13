@@ -34,6 +34,8 @@ export type QueueNoticeSnapshot = {
   correctionReason?: 'safety' | 'resources' | 'cadence' | 'configuration'
   safetyRevision?: number
   approachEpisode?: number
+  /** Durable extension identity; unrelated projection revisions do not invalidate it. */
+  extensionSequence?: number
   predictedAt: number | null
   estimateQuality: 'estimated' | 'provisional' | 'unknown'
   resourceName: string | null
@@ -75,6 +77,7 @@ const queueNoticeSnapshotSchema = z.object({
   correctionReason: z.enum(['safety', 'resources', 'cadence', 'configuration']).optional(),
   safetyRevision: z.number().int().nonnegative().optional(),
   approachEpisode: z.number().int().nonnegative().optional(),
+  extensionSequence: z.number().int().positive().optional(),
   predictedAt: z.number().finite().nullable(),
   estimateQuality: z.enum(['estimated', 'provisional', 'unknown']),
   resourceName: z.string().nullable(),
@@ -209,7 +212,9 @@ export function noticeStatement(
   // Caller must derive this from actual queue configuration, never display fallbacks.
   configuredService = false,
 ) {
-  const idempotencyKey = snapshot
+  const idempotencyKey = kind === 'delayed' && snapshot?.extensionSequence !== undefined
+    ? `${entryId}:delayed:extension:${snapshot.extensionSequence}:c${callCycle}`
+    : snapshot
     ? `${entryId}:${kind}:v2:r${revision}:c${callCycle}`
     : `${entryId}:${kind}`
   if ((copyVersion(env) === 3 || copyVersion(env) === 4) && !configuredService)

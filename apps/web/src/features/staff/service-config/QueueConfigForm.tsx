@@ -13,7 +13,6 @@ import {
   AccordionContent,
 } from '@/components/ui/accordion'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { QueueOperations } from './QueueOperations'
 import { emptyService } from './model'
 import { issuesFor } from './validate'
 
@@ -82,18 +81,7 @@ export function QueueConfigForm({
   )
   const [error, setError] = useState('')
   const draft = useWatch({ control: form.control, name: 'spaces' })
-  const operations = (
-    <Accordion>
-      <AccordionItem value="operations" className="border-t pt-2">
-        <AccordionTrigger className="text-muted-foreground">
-          Opciones de operación
-        </AccordionTrigger>
-        <AccordionContent className="pt-4">
-          <QueueOperations form={form} spaceId={selected} />
-        </AccordionContent>
-      </AccordionItem>
-    </Accordion>
-  )
+  const operations = null
   return (
     <form
       id="queue-config"
@@ -117,9 +105,7 @@ export function QueueConfigForm({
           ].includes(item.path),
         )
         if (issue) {
-          setError(
-            'Revisa los tiempos, el motivo y la caducidad de los ajustes antes de confirmar.',
-          )
+          setError('Revisa los tiempos antes de confirmar.')
           return
         }
         setError('')
@@ -160,21 +146,37 @@ export function QueueConfigForm({
         </p>
       </Field>
       <p className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
-        El sistema ajusta automáticamente estas estimaciones según el ritmo
-        real de asignación de turnos.
+        El sistema ajusta automáticamente estas estimaciones según el ritmo real
+        de asignación de turnos.
       </p>
       <fieldset className="space-y-4 rounded-lg border p-4">
         <legend className="px-1 font-medium">Avisos de turno</legend>
         <p className="text-sm text-muted-foreground">
           El aviso de acercamiento se activa cuando la espera restante es igual
           o inferior a este límite. Los cambios de estimación comparan la hora
-          prevista, no el simple paso del tiempo.
+          prevista, no el simple paso del tiempo. Cada nueva prórroga se avisa
+          sin aplicar el mínimo ni el intervalo de los avisos de mejora.
         </p>
         {(
           [
-            ['approachMinutes', 'Minutos restantes para aviso de acercamiento', 10, 1440],
-            ['etaChangeThresholdMinutes', 'Cambio mínimo de estimación (min)', 5, 60],
-            ['notificationCooldownMinutes', 'Intervalo mínimo entre cambios (min)', 10, 120],
+            [
+              'approachMinutes',
+              'Minutos restantes para aviso de acercamiento',
+              10,
+              1440,
+            ],
+            [
+              'etaChangeThresholdMinutes',
+              'Mejora mínima para avisar (min)',
+              5,
+              60,
+            ],
+            [
+              'notificationCooldownMinutes',
+              'Intervalo mínimo entre avisos de mejora (min)',
+              10,
+              120,
+            ],
           ] as const
         ).map(([name, label, fallback, max]) => (
           <Field key={name}>
@@ -262,8 +264,8 @@ export function QueueConfigForm({
                         />
                       </Field>
                       <p className="text-xs text-muted-foreground">
-                        Se usa como referencia inicial para este tamaño de grupo y
-                        espacio; el estimador aprende del tiempo real entre
+                        Se usa como referencia inicial para este tamaño de grupo
+                        y espacio; el estimador aprende del tiempo real entre
                         asignaciones.
                       </p>
                     </AccordionContent>

@@ -7,7 +7,8 @@
     "./health": "./src/health.ts",
     "./queue": "./src/queue.ts",
     "./staff": "./src/staff.ts",
-    "./discovery": "./src/discovery.ts"
+    "./discovery": "./src/discovery.ts",
+    "./metrics": "./src/metrics.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

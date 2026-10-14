@@ -1,3 +1,6 @@
+import { recordCaptureState } from './features/metrics/reconcile'
+import { runMetricsCut, purgeMetrics } from './features/metrics/processor'
+import { advanceMetricsBackfill, backfillMetricsQueue } from './features/metrics/backfill'
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
 import { cleanupVenueLogos } from './features/staff/logo'
 import {
@@ -183,6 +186,9 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       }),
     )
   }
+  metricsBackfill(queueId: string) {
+    return this.serialize(() => backfillMetricsQueue(this.env, queueId))
+  }
   experiment(action: 'seed' | 'advance', key: string) {
     return this.serialize(() => changeExperiment(this.env, action, key))
   }
@@ -262,7 +268,16 @@ export default {
       }
     }
   },
-  async scheduled(_controller, env) {
+  async scheduled(controller, env) {
+    if (controller.cron === '*/15 * * * *') {
+      await recordCaptureState(env)
+      if (env.METRICS_CAPTURE_ENABLED === 'true') {
+        await advanceMetricsBackfill(env)
+        await runMetricsCut(env)
+        await purgeMetrics(env)
+      }
+      return
+    }
     await backfillDirectoryConfigs(env)
     const queues = await env.DB.prepare(
       `SELECT q.id FROM queue q

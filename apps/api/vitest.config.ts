@@ -8,6 +8,7 @@ export default defineConfig({
       wrangler: { configPath: './test/wrangler.json' },
       miniflare: {
         bindings: {
+          METRICS_CAPTURE_ENABLED: process.env.METRICS_TEST_CAPTURE ?? 'false',
           GEOAPIFY_API_KEY: 'test-only-geocode-key',
           BETTER_AUTH_SECRET: 'test-only-better-auth-secret-at-least-32-bytes',
           AUTH_EMAIL_API_KEY: 'test-mail-key',

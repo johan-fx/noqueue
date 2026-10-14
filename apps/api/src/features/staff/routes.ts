@@ -1,3 +1,5 @@
+import { metricsQuerySchema } from '@noqueue/contracts/metrics'
+import { readMetrics, metricsVenuePage } from '../metrics/read'
 import { touchVenueConfiguration } from './configuration'
 import { validateQueueIds, replaceQueueAssignments } from './queue-assignments'
 import { venueLogosEnabled } from '../../lib/venue-logo'
@@ -238,7 +240,7 @@ staffRoutes.get('/me', async (c) => {
     user: { id: user.id, email: user.email, username: user.username },
     commercial: isCommercial(user.role),
     platformAdmin: user.role === 'platform_admin',
-    features: { venueLogos: venueLogosEnabled(c.env) },
+    features: { venueLogos: venueLogosEnabled(c.env), metrics: isCommercial(user.role) && c.env.METRICS_DASHBOARD_ENABLED === 'true' },
     venues: venues.results.map((row) => ({
       id: row.id, name: row.name, organizationId: row.organizationId,
       organizationName: row.organizationName, role: row.role,
@@ -262,6 +264,16 @@ staffRoutes.post('/commercial/organizations', async (c) => {
     parsed.data,
   )
   return c.json(result, 201)
+})
+staffRoutes.get('/commercial/metrics/venues', async (c) => {
+  const page = z.coerce.number().int().min(1).max(100000).safeParse(c.req.query('page') ?? 1)
+  if (!page.success) return c.json({ error: 'invalid_page' }, 400)
+  return c.json(await metricsVenuePage(c.env, c.get('actor'), page.data))
+})
+staffRoutes.get('/commercial/metrics', async (c) => {
+  const query = metricsQuerySchema.safeParse(c.req.query())
+  if (!query.success) return c.json({ error: 'invalid_metrics_query' }, 400)
+  return c.json(await readMetrics(c.env, c.get('actor'), query.data))
 })
 staffRoutes.get('/commercial/organizations', async (c) => {
   commercial(c.get('actor').role)

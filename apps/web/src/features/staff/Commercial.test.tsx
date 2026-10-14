@@ -163,24 +163,63 @@ it('shows pagination when there are at least 25 establishments', async () => {
 })
 
 it('shows administration tabs and real service metadata', async () => {
-  vi.mocked(api).mockResolvedValue({
-    items: [customer],
-    page: 1,
-    hasMore: false,
+  const count = {
+    generated: 0,
+    completed: 0,
+    cancelled: 0,
+    noShow: 0,
+    pending: 0,
+    unknown: 0,
+    waitSumMs: 0,
+    waitSamples: 0,
+    meanWaitMs: null,
+    attentionRate: null,
+    activeServices: 0,
+    activeVenues: 0,
+  }
+  const metricValue = {
+    value: null,
+    sampleSize: 0,
+    comparison: { value: null, unit: 'percent', reason: 'unavailable' },
+  }
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.includes('/commercial/metrics/venues'))
+      return { items: [{ id: 'hotel', name: 'Hotel', timezone: 'Europe/Madrid' }], page: 1, hasMore: false }
+    if (path.includes('/commercial/metrics?'))
+      return {
+        period: { from: '2026-09-14', to: '2026-10-13', timezone: 'Europe/Madrid', provisional: false, previous: { from: '2026-08-15', to: '2026-09-13' } },
+        summary: count,
+        executive: { completed: metricValue, meanWaitMs: metricValue, attentionRate: metricValue, activeServices: metricValue },
+        trend: [],
+        patterns: { overall: { serviceType: 'overall', peakHour: null, peakWaitMs: null, peakQueuePeople: null, startMinute: null, endMinute: null, observedDays: 0 }, services: [] },
+        services: [],
+        venues: { items: [], page: 1, pageSize: 20, total: 0 },
+        coverage: { status: 'complete', since: null, historical: false, volume: 'complete', wait: 'complete', occupancy: 'complete' },
+        freshness: { lastCompleteAt: null, nextRefreshAt: Date.now() + 900000, updating: false, delayed: false },
+      }
+    return { items: [customer], page: 1, hasMore: false }
   })
   render(
-    <MemoryRouter>
+    <MemoryRouter initialEntries={['/staff?page=2&q=Hotel&status=active']}>
       <Commercial />
+      <CurrentRoute />
     </MemoryRouter>,
   )
   expect(await screen.findByText('3 Servicios')).toBeVisible()
   expect(screen.getByRole('heading', { name: 'Administración' })).toBeVisible()
   expect(screen.getByText('Fecha de actualización no disponible')).toBeVisible()
+  expect(api).not.toHaveBeenCalledWith(expect.stringMatching(/\/commercial\/metrics/), expect.anything(), expect.anything(), expect.anything(), expect.anything())
   fireEvent.click(screen.getByRole('tab', { name: 'Métricas' }))
   expect(
-    screen.getByText('Las métricas estarán disponibles próximamente'),
+    await screen.findByRole('heading', { name: 'Métricas ejecutivas' }),
   ).toBeVisible()
-  expect(api).toHaveBeenCalledTimes(1)
+  expect(api).toHaveBeenCalledWith('/commercial/metrics/venues?page=1', 'GET', undefined, undefined, expect.any(AbortSignal))
+  expect(api).toHaveBeenCalledWith(expect.stringMatching(/^\/commercial\/metrics\?from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}&page=1$/), 'GET', undefined, undefined, expect.any(AbortSignal))
+  expect(screen.queryByText('Las métricas estarán disponibles próximamente')).not.toBeInTheDocument()
+  expect(screen.getByTestId('current-route')).toHaveTextContent('page=2')
+  expect(screen.getByTestId('current-route')).toHaveTextContent('q=Hotel')
+  expect(screen.getByTestId('current-route')).toHaveTextContent('status=active')
+  expect(screen.getByTestId('current-route')).toHaveTextContent('tab=metrics')
 })
 it('preserves server-side search and status through pagination', async () => {
   vi.mocked(api).mockResolvedValue({
@@ -620,3 +659,11 @@ it.each(['custom', 'history'] as const)(
     }
   },
 )
+
+it('keeps capture independent from a dashboard visibility rollback', async () => {
+  vi.mocked(api).mockResolvedValue({ items: [], page: 1, hasMore: false })
+  render(<MemoryRouter initialEntries={['/staff?tab=metrics']}><Commercial metricsEnabled={false} /></MemoryRouter>)
+  await waitFor(() => expect(api).toHaveBeenCalled())
+  expect(screen.queryByRole('tab', { name: 'Métricas' })).not.toBeInTheDocument()
+  expect(vi.mocked(api).mock.calls.some(([path]) => path.includes('/metrics'))).toBe(false)
+})

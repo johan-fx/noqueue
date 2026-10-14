@@ -121,6 +121,7 @@ export async function expireArrivals(
     },
     statements,
     now,
+    'arrival.expired',
   )
   for (const { id } of due.results) await publishNotice(env, id, 'expired')
 }
@@ -499,7 +500,7 @@ export async function runCustomerCommand(
       ).bind(now, origin.webhookEventId),
     )
   }
-  await commitQueueTransition(env, queueId, state, after, statements, now)
+  await commitQueueTransition(env, queueId, state, after, statements, now, `customer.${input.action}`)
   if (notifyCancellation) await publishNotice(env, entry.id, 'cancelled')
   if (notifyReadyEntryId) await publishNotice(env, notifyReadyEntryId, 'ready')
   if (origin?.replyWithinServiceWindow)

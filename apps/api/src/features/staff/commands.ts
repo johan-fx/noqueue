@@ -408,6 +408,7 @@ export async function runQueueCommand(
       ),
     ],
     now,
+    `staff.${input.action}`,
   )
   if (input.action === 'call' && input.arrivalMode !== 'present')
     await publishNotice(env, input.entryId, 'ready')

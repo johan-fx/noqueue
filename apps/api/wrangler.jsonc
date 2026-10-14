@@ -63,9 +63,11 @@
     ]
   },
   "triggers": {
-    "crons": ["* * * * *"]
+    "crons": ["* * * * *", "*/15 * * * *"]
   },
   "vars": {
+    "METRICS_CAPTURE_ENABLED": "true",
+    "METRICS_DASHBOARD_ENABLED": "true",
     "WHATSAPP_MODE": "sandbox",
     "WHATSAPP_ENABLED": "false",
     "CONFIRMATION_EXPERIMENT_ENABLED": "false",

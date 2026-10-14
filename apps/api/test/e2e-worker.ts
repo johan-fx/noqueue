@@ -1,3 +1,4 @@
+import { processMetrics } from '../src/features/metrics/processor'
 import './http-only-platform'
 
 // Local-only entrypoint. Never referenced by deployable Wrangler configuration.
@@ -224,6 +225,19 @@ app.post('/experiments/local/staff/identity', async (c) => {
   })
   await c.env.DB.prepare('DELETE FROM rateLimit').run()
   return c.json({ id: created.user.id })
+})
+// Deterministically advance the real analytical pipeline in isolated E2E state only.
+app.post('/experiments/local/staff/metrics-process', async (c) => {
+  const { queueId } = z.object({ queueId: z.uuid() }).parse(await c.req.json())
+  const coordinator = c.env.QUEUE_COORDINATOR.getByName(queueId)
+  await coordinator.metricsBackfill(queueId)
+  await coordinator.metricsBackfill(queueId)
+  for (let i = 0; i < 20; i++) {
+    await processMetrics(c.env)
+    const control = await c.env.DB.prepare('SELECT target_at FROM metrics_control WHERE id=1').first<{ target_at: number | null }>()
+    if (control?.target_at === null) return c.json({ ok: true })
+  }
+  return c.json({ error: 'metrics_cut_incomplete' }, 503)
 })
 app.get('/experiments/local/staff/mail', (c) =>
   c.json({ text: staffMail.get(c.req.query('email') ?? '') ?? '' }),

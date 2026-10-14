@@ -64,3 +64,46 @@ instead of sending guests to the Capacitor origin or `localhost`.
 Native links open via Capacitor Browser; registration and QR remain public web pages,
 not additional native routes. Build the web app with the configured public origin,
 then run `pnpm mobile:sync` to register the plugin in the existing native projects.
+
+## Admin metrics (local implementation)
+
+Metrics use D1 creation-date cohorts, a transactional entry/revision journal and
+incremental daily/hourly aggregates. Completion means **confirmed arrival**, not
+end of service. Wait means first actual call minus admission; attention divides
+completed by resolved entries. Pending/unknown entries remain in reconciliation.
+Occupancy is real waiting-person time divided by observed queue time, not a sum
+of queue lengths. UTC bucket identities distinguish repeated local hours.
+
+- Apply additive migration `0027_admin_metrics.sql` before enabling capture.
+- `METRICS_CAPTURE_ENABLED=true` controls capture/backfill/processing independently
+  of `METRICS_DASHBOARD_ENABLED=true`, which exposes the staff metrics API and tab.
+  Both default on in local Wrangler vars; neither is enabled in remote env vars.
+- `*/15 * * * *` is a separate branch in the existing Worker. The one-minute
+  operational task is unchanged. A 30-second watermark margin avoids in-flight
+  commands. Work drains bounded pages within a 20-second wall-clock budget and resumes via persisted cursor, lease and fencing.
+- Backfill runs bounded batches through the existing coordinator's serialization,
+  **without operational refresh**. `metrics_backfill` records progress per queue;
+  unknown historical service types and missing occupancy remain explicitly partial.
+  Imported historical timestamps use the timezone available at import (not an
+  assertion of the historical timezone); that limitation is returned in coverage notes.
+- `metrics_control.last_complete_at` advances only after the cut is integrated.
+  A stale cut (>30 minutes), unfinished backfill and capture gaps are exposed as
+  incomplete/updating data; reads never fall back to operational histories.
+- Closed dirty partitions within the retained detail horizon are reconciled in
+  bounded batches. Older aggregates are never rebuilt from truncated detail.
+- Aggregates retain 13 calendar months; processed detail retains 90 days. Pending
+  and restorable expired entry state survives longer. Operational retention is
+  untouched. Purges are bounded and can require multiple scheduled runs.
+
+For a **future authorized staging rollout**: apply the migration, enable capture,
+observe backfill and cut progress, compare reconciliation/sample counts, verify
+D1 rows read/written and actual Worker CPU against the account's real limits,
+then enable the dashboard. Local tests do not establish remote CPU or Free-plan
+compatibility. Do not enable remotely until that budget has been checked.
+To roll back the UI, disable only `METRICS_DASHBOARD_ENABLED`; retain capture and
+all tables. Disabling capture records a conservative coverage gap on the next
+metrics tick; re-enabling schedules a bounded state repair. Do not delete tables
+or silently reconstruct old aggregates.
+
+Verification: `pnpm --filter @noqueue/api exec vitest run src/features/metrics`
+plus the web Commercial/CommercialMetrics tests and standard type/lint/build.

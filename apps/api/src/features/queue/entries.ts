@@ -650,7 +650,7 @@ export async function joinQueue(
       )
     }
   }
-  await commitQueueTransition(env, queueId, before, afterModel, statements, now)
+  await commitQueueTransition(env, queueId, before, afterModel, statements, now, actor ? 'staff.join' : 'public.join')
   // Maintenance can become due while admission commits; run it before the response.
   await maintainQueue(env, queueId)
   // Publishing is best-effort only after the durable transaction. The scheduled sweep repairs this gap.

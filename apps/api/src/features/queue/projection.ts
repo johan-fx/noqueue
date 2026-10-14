@@ -267,12 +267,22 @@ export async function commitQueueTransition(
   afterModel: QueueModelInput,
   statements: D1PreparedStatement[],
   now: number,
+  analyticsOrigin = 'queue.transition',
 ) {
+  const hasOperationalWrites = statements.length > 0
   const after = await loadQueueState(env, queueId, now, afterModel)
   statements.push(
     ...(await projectionStatements(env, queueId, after, now, before)),
   )
-  if (statements.length) await env.DB.batch(statements)
+  if (statements.length) {
+    // Context and journal triggers participate in the same atomic D1 transaction.
+    // No operational history scan, and no capture from unrelated maintenance SQL.
+    if (env.METRICS_CAPTURE_ENABLED === 'true' && hasOperationalWrites) {
+      statements.unshift(env.DB.prepare('INSERT INTO metrics_context(queue_id,at,origin) VALUES(?,?,?)').bind(queueId, now, analyticsOrigin))
+      statements.push(env.DB.prepare('DELETE FROM metrics_context WHERE queue_id=?').bind(queueId))
+    }
+    await env.DB.batch(statements)
+  }
   return after
 }
 async function projectionStatements(

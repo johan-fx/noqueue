@@ -1,4 +1,6 @@
 interface CloudflareBindings {
+  METRICS_CAPTURE_ENABLED?: string
+  METRICS_DASHBOARD_ENABLED?: string
   VENUE_LOGOS: R2Bucket
   // Runtime bindings can be omitted for a deliberate partial rollout.
   VENUE_LOGOS_ENABLED?: string

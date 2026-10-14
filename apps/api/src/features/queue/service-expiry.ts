@@ -149,6 +149,7 @@ export async function maintainServiceEntries(
       ).bind(queueId, now),
     ],
     now,
+    'service.ended',
   )
   for (const { id } of dueEntries.results)
     await publishNotice(env, id, 'service_ended')

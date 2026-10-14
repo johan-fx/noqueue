@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import type {
   CommercialEstablishmentPage,
   CommercialEstablishmentSummary,
@@ -53,6 +53,8 @@ import { ApiError, api, errorMessage } from './api'
 import { getVenueLogo, putVenueLogo } from './logo-api'
 import type { VenueLogoState } from '@noqueue/contracts/staff'
 
+const LazyCommercialMetrics = lazy(() => import('./CommercialMetrics'))
+
 type PendingLogoUpload = {
   venueId: string
   file: File
@@ -77,7 +79,7 @@ function listParams(
   return next
 }
 
-export function Commercial({ logoUploadEnabled = true }: { logoUploadEnabled?: boolean }) {
+export function Commercial({ logoUploadEnabled = true, metricsEnabled = true }: { logoUploadEnabled?: boolean; metricsEnabled?: boolean }) {
   const [search, setSearch] = useSearchParams()
   const rawPage = search.get('page') ?? '1'
   const number = Number(rawPage)
@@ -102,7 +104,7 @@ export function Commercial({ logoUploadEnabled = true }: { logoUploadEnabled?: b
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
   const menuTriggerRef = useRef<HTMLElement | null>(null)
-  const [tab, setTab] = useState('establishments')
+  const tab = metricsEnabled && search.get('tab') === 'metrics' ? 'metrics' : 'establishments'
   const [menuOpen, setMenuOpen] = useState(false)
   const [hasMore, setHasMore] = useState(false)
   const [revision, setRevision] = useState(0)
@@ -348,7 +350,12 @@ export function Commercial({ logoUploadEnabled = true }: { logoUploadEnabled?: b
       {message && <p role="status">{message}</p>}
       <Tabs
         value={tab}
-        onValueChange={(value) => setTab(String(value))}
+        onValueChange={(value) => {
+          const nextTab = String(value)
+          const next = new URLSearchParams(searchRef.current)
+          next.set('tab', nextTab)
+          setSearch(next, { replace: true })
+        }}
         className="gap-[30px]"
       >
         <TabsList
@@ -361,12 +368,12 @@ export function Commercial({ logoUploadEnabled = true }: { logoUploadEnabled?: b
           >
             Establecimientos
           </TabsTrigger>
-          <TabsTrigger
+          {metricsEnabled && <TabsTrigger
             value="metrics"
             className="h-auto flex-none rounded-none border-0 px-0 pt-0 pb-[13px] text-sm font-normal leading-[1.2] after:bottom-0!"
           >
             Métricas
-          </TabsTrigger>
+          </TabsTrigger>}
         </TabsList>
         <TabsContent value="establishments" className="space-y-[30px]">
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -716,9 +723,11 @@ export function Commercial({ logoUploadEnabled = true }: { logoUploadEnabled?: b
           )}
         </TabsContent>
         <TabsContent value="metrics">
-          <p className="py-10 text-center text-muted-foreground">
-            Las métricas estarán disponibles próximamente
-          </p>
+          {tab === 'metrics' && (
+            <Suspense fallback={<p role="status" className="py-10 text-center text-muted-foreground">Cargando panel de métricas…</p>}>
+              <LazyCommercialMetrics />
+            </Suspense>
+          )}
         </TabsContent>
       </Tabs>
       <AlertDialog

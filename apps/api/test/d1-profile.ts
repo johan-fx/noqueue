@@ -1,7 +1,7 @@
 import type { env } from 'cloudflare:workers'
 
 export function profileD1(bindings: typeof env) {
-  const costs: Array<{ sql: string; rowsRead: number }> = []
+  const costs: Array<{ sql: string; rowsRead: number; rowsWritten: number; durationMs: number }> = []
   const statements = new WeakMap<
     D1PreparedStatement,
     { statement: D1PreparedStatement; sql: string }
@@ -18,7 +18,7 @@ export function profileD1(bindings: typeof env) {
           return async (...args: unknown[]) => {
             const result =
               key === 'run' ? await target.run() : await target.all()
-            costs.push({ sql, rowsRead: result.meta.rows_read })
+            costs.push({ sql, rowsRead: result.meta.rows_read, rowsWritten: result.meta.rows_written, durationMs: result.meta.duration })
             return key === 'first'
               ? typeof args[0] === 'string'
                 ? result.results[0]?.[args[0]] ?? null
@@ -48,6 +48,8 @@ export function profileD1(bindings: typeof env) {
             costs.push({
               sql: originals[index]?.sql ?? 'unprofiled batch statement',
               rowsRead: result.meta.rows_read,
+              rowsWritten: result.meta.rows_written,
+              durationMs: result.meta.duration,
             })
           return results
         }

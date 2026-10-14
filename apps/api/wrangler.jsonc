@@ -153,6 +153,7 @@
     },
     "staging": {
       "name": "noqueue-api-staging",
+      "triggers": { "crons": ["* * * * *"] },
       "workers_dev": false,
       "preview_urls": false,
       "vars": {
@@ -162,6 +163,7 @@
         "STAGING_EXPERIMENT_APPROVED": "false",
         "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
         "PUBLIC_APP_ORIGIN": "https://staging.noqueue-app.com",
+        "METRICS_CRON_RECOVERY_ENABLED": "true",
         "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
         "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
         "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",

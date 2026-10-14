@@ -1,6 +1,5 @@
-import { recordCaptureState } from './features/metrics/reconcile'
-import { runMetricsCut, purgeMetrics } from './features/metrics/processor'
-import { advanceMetricsBackfill, backfillMetricsQueue } from './features/metrics/backfill'
+import { recoverScheduledMetrics, runScheduledMetrics, stagingMetricsRecoveryEnabled } from './features/metrics/scheduled'
+import { backfillMetricsQueue } from './features/metrics/backfill'
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
 import { cleanupVenueLogos } from './features/staff/logo'
 import {
@@ -270,12 +269,7 @@ export default {
   },
   async scheduled(controller, env) {
     if (controller.cron === '*/15 * * * *') {
-      await recordCaptureState(env)
-      if (env.METRICS_CAPTURE_ENABLED === 'true') {
-        await advanceMetricsBackfill(env)
-        await runMetricsCut(env)
-        await purgeMetrics(env)
-      }
+      if (!stagingMetricsRecoveryEnabled(env)) await runScheduledMetrics(env)
       return
     }
     await backfillDirectoryConfigs(env)
@@ -313,5 +307,6 @@ export default {
     ])
     // Low-priority asset maintenance must not delay queue expiry/notifications.
     try { await cleanupVenueLogos(env) } catch { console.error('venue_logo_cleanup_failed') }
+    if (controller.cron === '* * * * *') await recoverScheduledMetrics(env)
   },
 } satisfies ExportedHandler<CloudflareBindings>

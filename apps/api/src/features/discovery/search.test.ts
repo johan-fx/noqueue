@@ -4,7 +4,7 @@ import { directoryConfigStatement } from './configuration'
 import { env } from 'cloudflare:workers'
 import { describe, expect, it } from 'vitest'
 import { searchServices } from './search'
-import { publicSearchSchema } from '@noqueue/contracts/discovery'
+import { publicSearchResponseSchema, publicSearchSchema } from '@noqueue/contracts/discovery'
 const now = Date.now()
 async function fixture(latitude = 40.416, longitude = -3.704, complete = true) {
   const actor = crypto.randomUUID(),
@@ -44,6 +44,7 @@ async function fixture(latitude = 40.416, longitude = -3.704, complete = true) {
     open = true,
     stale = false,
     type = 'restaurant',
+    averageMinutes = 30,
   ) {
     const id = crypto.randomUUID(),
       entry = crypto.randomUUID()
@@ -51,7 +52,7 @@ async function fixture(latitude = 40.416, longitude = -3.704, complete = true) {
       name: `${prefix} ${name}`,
       type,
       capacity: 10,
-      averageMinutes: 30,
+      averageMinutes,
       graceMinutes: 5,
       twentyFourHours: true,
       cutoffMinutes: 0,
@@ -61,8 +62,8 @@ async function fixture(latitude = 40.416, longitude = -3.704, complete = true) {
     })
     await env.DB.batch([
       env.DB.prepare(
-        'INSERT INTO queue(id,venue_id,name,capacity,average_minutes,open,config) VALUES (?,?,?,10,30,?,?)',
-      ).bind(id, venue, `${prefix} ${name}`, open ? 1 : 0, source),
+        'INSERT INTO queue(id,venue_id,name,capacity,average_minutes,open,config) VALUES (?,?,?,10,?,?,?)',
+      ).bind(id, venue, `${prefix} ${name}`, averageMinutes, open ? 1 : 0, source),
       directoryConfigStatement(env, id, source),
     ])
     await env.DB.prepare(
@@ -166,6 +167,26 @@ describe('D1 service discovery', () => {
     expect(result.items.find(i => i.id === empty)).toMatchObject({ waitMinutes: 30, averageWaitQuality: 'provisional' })
     expect(result.items.find(i => i.id === stale)).toMatchObject({ waitMinutes: null, averageWaitQuality: 'unknown' })
     expect(result.items.find(i => i.id === closed)).toBeUndefined()
+  })
+  it('rounds a fractional adaptive configured fallback in discovery and satisfies the response schema', async () => {
+    const f = await fixture()
+    const id = await f.service('Fractional cadence', null, true, false, 'restaurant', 4)
+    // Three slower-than-configured observations produce a fractional adaptive
+    // cadence factor; completed turns keep the active queue empty so discovery
+    // exercises the configured fallback rather than the measured mean.
+    for (let i = 0; i < 3; i++) {
+      const entry = crypto.randomUUID()
+      await env.DB.prepare(
+        "INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,status) VALUES (?,?,?,?,?,?,1,'es',?,?,'completed')",
+      ).bind(entry, id, entry, 'hash', entry, entry, now + i, i + 1).run()
+      await env.DB.prepare(
+        'INSERT INTO queue_assignment_observation(entry_id,call_cycle,queue_id,episode_id,assigned_at,baseline_ms,interval_ms,ratio) VALUES (?,1,?,\'fractional-cadence\',?,240000,420000,1.75)',
+      ).bind(entry, id, now + i).run()
+    }
+
+    const result = await search({ recentIds: [id] })
+    expect(result.items[0]).toMatchObject({ waitMinutes: 5, averageWaitQuality: 'provisional' })
+    expect(publicSearchResponseSchema.parse(result)).toEqual(result)
   })
   it('computes exact Haversine including coincident points before radius filtering and pagination', async () => {
     const far = await fixture(40.5, -3.704),

@@ -44,6 +44,10 @@ export type AdmissionStatus = {
   waitingTurns: number
   initialWaitingMarker: boolean
 }
+/** Present a wait in whole minutes; keep forecast/deadline calculations precise. */
+export function roundWaitMinutes(minutes: number): number {
+  return Math.round(minutes)
+}
 /** Public discovery lists only physically open services with an active list. */
 export function isActivePublicList(service: {
   serviceOpen?: boolean | undefined

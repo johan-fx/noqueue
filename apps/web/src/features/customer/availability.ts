@@ -1,4 +1,4 @@
-import { visibleWaitingCount, type AdmissionStatus } from '@noqueue/contracts/queue'
+import { roundWaitMinutes, visibleWaitingCount, type AdmissionStatus } from '@noqueue/contracts/queue'
 import type { Locale } from './shared'
 
 export type PresentationStatus = {
@@ -33,10 +33,11 @@ export function waitingTurnsText(
 /** Navigation copy stays compact; detailed state/quality can label the estimate. */
 export function publicWaitText(estimate: number | null, locale: Locale, compact = false) {
   if (estimate === null) return compact ? '—' : locale === 'es' ? 'Sin estimación disponible' : 'No estimate available'
-  if (compact) return `${estimate}min`
+  const minutes = roundWaitMinutes(estimate)
+  if (compact) return `${minutes}min`
   return locale === 'es'
-    ? `Ahora, media de espera ${estimate} ${estimate === 1 ? 'minuto' : 'minutos'}`
-    : `Current average wait ${estimate} ${estimate === 1 ? 'minute' : 'minutes'}`
+    ? `Ahora, media de espera ${minutes} ${minutes === 1 ? 'minuto' : 'minutos'}`
+    : `Current average wait ${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`
 }
 export function availabilityText(
   service: PresentationStatus,
@@ -64,6 +65,6 @@ export function availabilityText(
       ? es
         ? 'Sin estimación'
         : 'No estimate'
-    : `${estimate} min${service.averageWaitQuality === 'provisional' ? es ? ' · Estimación provisional' : ' · Provisional estimate' : ''}`
+    : `${roundWaitMinutes(estimate)} min${service.averageWaitQuality === 'provisional' ? es ? ' · Estimación provisional' : ' · Provisional estimate' : ''}`
   }`
 }

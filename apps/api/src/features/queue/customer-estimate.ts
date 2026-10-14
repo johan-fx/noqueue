@@ -1,4 +1,5 @@
 import { forecastInterval } from './adaptive-model'
+import { roundWaitMinutes } from '@noqueue/contracts/queue'
 import type { ServiceInput } from '@noqueue/contracts/staff'
 import { type Party, type Projection, type Resource } from './engine'
 
@@ -127,12 +128,13 @@ export function publicCustomerAverage(input: {
       averageWaitMinutes: null,
       averageWaitQuality: 'unknown' as const,
     }
-  const mean = input.count ? Math.round(input.sum / input.count) : 0
+  const mean = input.count ? roundWaitMinutes(input.sum / input.count) : 0
+  const estimate =
+    input.adaptive && input.count
+      ? Math.max(1, mean)
+      : Math.max(input.configuredMinutes, mean)
   return {
-    averageWaitMinutes:
-      input.adaptive && input.count
-        ? Math.max(1, mean)
-        : Math.max(input.configuredMinutes, mean),
+    averageWaitMinutes: roundWaitMinutes(estimate),
     averageWaitQuality:
       !input.count ||
       input.provisional ||

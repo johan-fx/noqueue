@@ -5,6 +5,7 @@ import { loadQueueState, recalculateQueue, commitQueueTransition } from './proje
 import { readEntrySnapshot } from './entries'
 import { hash } from './crypto'
 import { publicService } from './public-context'
+import { publicCustomerAverage } from './customer-estimate'
 import { assignmentContext } from '../staff/assignment'
 import { serviceWindow } from '../staff/availability'
 
@@ -27,6 +28,52 @@ async function fixture(type: 'reception' | 'restaurant' = 'reception', count = 3
     await env.DB.prepare("INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id) VALUES (?,?,?,?,?,?,2,'en',?,?,'continuous')").bind(id, queueId, id, id, await hash(id), id, now, i + 1).run()
   return { now, queueId, config, ids, read: (i: number) => readEntrySnapshot(env, ids[i]!) }
 }
+it.each([
+  [
+    'rounds a fractional mean like the reported 5.223 minutes down',
+    { sum: 5.223045783132531, count: 1, provisional: false, waiting: 1, active: true, configuredMinutes: 4, adaptive: true },
+    5,
+    'estimated',
+  ],
+  [
+    'rounds an exact half-minute upward',
+    { sum: 5.5, count: 1, provisional: false, waiting: 1, active: true, configuredMinutes: 4, adaptive: true },
+    6,
+    'estimated',
+  ],
+  [
+    'preserves the one-minute minimum for a counted sub-minute adaptive mean',
+    { sum: 0.25, count: 1, provisional: false, waiting: 1, active: true, configuredMinutes: 4, adaptive: true },
+    1,
+    'estimated',
+  ],
+  [
+    'rounds a fractional adaptive configured fallback without counted turns',
+    { sum: 0, count: 0, provisional: false, waiting: 0, active: true, configuredMinutes: 5.223045783132531, adaptive: true },
+    5,
+    'provisional',
+  ],
+  [
+    'rounds an exact half-minute adaptive configured fallback upward',
+    { sum: 0, count: 0, provisional: false, waiting: 0, active: true, configuredMinutes: 5.5, adaptive: true },
+    6,
+    'provisional',
+  ],
+  [
+    'rounds the legacy configured fallback to the nearest minute',
+    { sum: 0, count: 0, provisional: false, waiting: 0, active: true, configuredMinutes: 5.223045783132531, adaptive: false },
+    5,
+    'provisional',
+  ],
+  [
+    'preserves unknown when a queue has waiters but no credible estimate',
+    { sum: 0, count: 0, provisional: false, waiting: 1, active: true, configuredMinutes: 5.223045783132531, adaptive: true },
+    null,
+    'unknown',
+  ],
+])('%s', (_name, input, averageWaitMinutes, averageWaitQuality) => {
+  expect(publicCustomerAverage(input)).toEqual({ averageWaitMinutes, averageWaitQuality })
+})
 it('uses the same serial 4/8/12 forecast for customers and staff regardless of resource inventory', async () => {
   const f = await fixture()
   await recalculateQueue(env, f.queueId, f.now)

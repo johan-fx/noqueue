@@ -94,3 +94,26 @@ it('formats navigation ETA without expanding the Figma row', () => {
   expect(publicWaitText(30, 'es')).toBe('Ahora, media de espera 30 minutos')
   expect(publicWaitText(1, 'en')).toBe('Current average wait 1 minute')
 })
+
+it('rounds public estimates to the nearest minute before formatting', () => {
+  expect(publicWaitText(5.223045783132531, 'es')).toBe(
+    'Ahora, media de espera 5 minutos',
+  )
+  expect(publicWaitText(5.5, 'es')).toBe('Ahora, media de espera 6 minutos')
+  expect(publicWaitText(5.223045783132531, 'en', true)).toBe('5min')
+  expect(publicWaitText(5.5, 'en', true)).toBe('6min')
+  expect(publicWaitText(0.5, 'es')).toBe('Ahora, media de espera 1 minuto')
+  expect(publicWaitText(0.5, 'en')).toBe('Current average wait 1 minute')
+})
+
+it('uses the same rounded minute in active availability titles', () => {
+  expect(availabilityText({ serviceOpen: true, queueState: 'active' }, 'es', 5.223045783132531)).toBe(
+    'Lista activa · 5 min',
+  )
+  expect(availabilityText({ serviceOpen: true, queueState: 'active' }, 'en', 5.5)).toBe(
+    'Waiting list active · 6 min',
+  )
+  expect(availabilityText({ serviceOpen: true, queueState: 'active' }, 'es', 0.5)).toBe(
+    'Lista activa · 1 min',
+  )
+})

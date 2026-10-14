@@ -30,6 +30,14 @@ it.each(['es', 'en'] as const)('shows turns only for active services in venue (%
     expect(link.querySelector('.lucide-ticket')).toBeNull()
   }
 })
+it.each(['es', 'en'] as const)('rounds venue wait text and title consistently (%s)', async (locale) => {
+  const service = { id: 'q', name: 'Snack bar', venueName: 'Venue', type: 'restaurant', open: 1, spaces: [], receptionServices: [], averageWaitMinutes: 5.223045783132531, serviceOpen: true, queueState: 'active', canJoin: true, blockReason: null, waitingPeople: 1, waitingTurns: 1 }
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ id: 'v', name: 'Venue', services: [service] })))
+  render(<MemoryRouter initialEntries={[`/v/v?lang=${locale}`]}><Routes><Route path="/v/:venueId" element={<PublicVenue />} /></Routes></MemoryRouter>)
+  const waitText = locale === 'es' ? 'Ahora, media de espera 5 minutos' : 'Current average wait 5 minutes'
+  const wait = await screen.findByText(waitText)
+  expect(wait).toHaveAttribute('title', locale === 'es' ? 'Lista activa · 5 min' : 'Waiting list active · 5 min')
+})
 it('includes scheduled-closed cards only with an explicit opening projection, without turn count or join link', async () => {
   const service = { id: 'q', name: 'Restaurante', averageWaitMinutes: null, venueName: 'Venue', type: 'restaurant', open: 0, spaces: [], receptionServices: [], serviceOpen: false, queueState: 'inactive', canJoin: false, blockReason: 'closed', waitingPeople: 6, waitingTurns: 2, nextOpening: { at: Date.now() + 7200000, serverNow: Date.now(), localTime: '18:00' } }
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({ id: 'v', name: 'Venue', services: [service, { ...service, id: 'old', name: 'Legacy closed', nextOpening: undefined }, { ...service, id: 'paused', name: 'Paused open', serviceOpen: true, queueState: 'paused' }] })))

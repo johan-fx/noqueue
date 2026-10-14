@@ -1,6 +1,14 @@
 import { expect, it } from 'vitest'
-import { admissionFields, isActivePublicList, visibleWaitingCount } from './queue'
+import { admissionFields, isActivePublicList, roundWaitMinutes, visibleWaitingCount } from './queue'
 import { z } from 'zod'
+
+it.each([
+  [0, 0], [0.25, 0], [0.49, 0], [0.5, 1], [1, 1], [1.49, 1],
+  [1.5, 2], [5.223045783132531, 5], [5.49, 5], [5.5, 6], [59.5, 60],
+])('rounds %s wait minutes to the nearest whole minute (%s)', (minutes, expected) => {
+  expect(roundWaitMinutes(minutes)).toBe(expected)
+  expect(roundWaitMinutes(roundWaitMinutes(minutes))).toBe(expected)
+})
 
 it.each([[0, 1], [1, 1], [2, 2], [9, 9]])('presents %i real turns as %i without adding a turn', (real, visible) => {
   expect(visibleWaitingCount(real)).toBe(visible)

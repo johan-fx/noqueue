@@ -20,6 +20,12 @@ it.each(['restaurant', 'reception', 'pool'] as const)('keeps the compact Figma r
   expect(screen.queryByText(/Lista activa|personas|turnos/)).not.toBeInTheDocument()
   expect(container.querySelector('.lucide-clock')).toHaveAttribute('aria-hidden', 'true')
 })
+it('rounds compact search waits and uses the same rounded value in the title', () => {
+  render(<MemoryRouter><ServiceResult service={{ ...service, waitMinutes: 5.223045783132531 }} locale="es" returnTo="/search" /></MemoryRouter>)
+  const wait = screen.getByText('5min')
+  expect(wait).toBeVisible()
+  expect(wait).toHaveAttribute('title', 'Lista activa · 5 min')
+})
 it.each([
   { serviceOpen: false }, { queueState: 'paused' as const }, { queueState: 'inactive' as const },
   { serviceOpen: undefined },

@@ -29,6 +29,7 @@ export const capabilityLabels: Record<Capability, string> = {
   'queue.operate': 'Añadir y gestionar turnos',
   'queue.configure': 'Configurar servicios y listas',
   'members.manage': 'Gestionar accesos de usuarios',
+  'metrics.read': 'Consultar métricas del establecimiento',
 }
 export const memberRoleLabels = Object.fromEntries(
   inviteSchema.shape.role.options.map((role) => [

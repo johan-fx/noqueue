@@ -1,5 +1,5 @@
-import { metricsQuerySchema } from '@noqueue/contracts/metrics'
-import { readMetrics, metricsVenuePage } from '../metrics/read'
+import { metricsQuerySchema, venueMetricsQuerySchema } from '@noqueue/contracts/metrics'
+import { readMetrics, readVenueMetrics, metricsVenuePage } from '../metrics/read'
 import { touchVenueConfiguration } from './configuration'
 import { validateQueueIds, replaceQueueAssignments } from './queue-assignments'
 import { venueLogosEnabled } from '../../lib/venue-logo'
@@ -45,7 +45,7 @@ import {
   type StaffMember,
 } from '@noqueue/contracts/staff'
 import { createAuth } from '../../auth/server'
-import { isCommercial } from '../../auth/permissions'
+import { isCommercial, permits } from '../../auth/permissions'
 import {
   audit,
   queueAccess,
@@ -232,18 +232,19 @@ staffRoutes.delete('/venues/:id/logo', async (c) => {
 staffRoutes.get('/me', async (c) => {
   const user = c.get('actor')
   const venues = await c.env.DB.prepare(
-    `SELECT v.id,v.name,v.organization_id AS organizationId,o.name AS organizationName,vm.role,v.logo_key,v.logo_name,v.logo_type,v.logo_size,v.logo_version,t.created_by FROM venue v JOIN organization o ON o.id=v.organization_id JOIN tenant_account t ON t.organization_id=o.id JOIN venue_membership vm ON vm.venue_id=v.id JOIN member m ON m.organizationId=o.id AND m.userId=vm.user_id WHERE vm.user_id=? AND vm.active=1 AND t.status='active' ORDER BY v.name`,
+    `SELECT v.id,v.name,v.timezone,v.organization_id AS organizationId,o.name AS organizationName,vm.role,v.logo_key,v.logo_name,v.logo_type,v.logo_size,v.logo_version,t.created_by FROM venue v JOIN organization o ON o.id=v.organization_id JOIN tenant_account t ON t.organization_id=o.id JOIN venue_membership vm ON vm.venue_id=v.id JOIN member m ON m.organizationId=o.id AND m.userId=vm.user_id WHERE vm.user_id=? AND vm.active=1 AND t.status='active' ORDER BY v.name`,
   )
     .bind(user.id)
-    .all<{ id: string; name: string; organizationId: string; organizationName: string; role: string; created_by: string; logo_key: string | null; logo_name: string | null; logo_type: 'image/png' | 'image/jpeg' | null; logo_size: number | null; logo_version: number }>()
+    .all<{ id: string; name: string; timezone: string; organizationId: string; organizationName: string; role: string; created_by: string; logo_key: string | null; logo_name: string | null; logo_type: 'image/png' | 'image/jpeg' | null; logo_size: number | null; logo_version: number }>()
   return c.json({
     user: { id: user.id, email: user.email, username: user.username },
     commercial: isCommercial(user.role),
     platformAdmin: user.role === 'platform_admin',
-    features: { venueLogos: venueLogosEnabled(c.env), metrics: isCommercial(user.role) && c.env.METRICS_DASHBOARD_ENABLED === 'true' },
+    features: { venueLogos: venueLogosEnabled(c.env), metrics: c.env.METRICS_DASHBOARD_ENABLED === 'true' && (isCommercial(user.role) || venues.results.some((v) => permits(v.role, 'metrics.read'))) },
     venues: venues.results.map((row) => ({
       id: row.id, name: row.name, organizationId: row.organizationId,
-      organizationName: row.organizationName, role: row.role,
+      organizationName: row.organizationName, role: row.role, timezone: row.timezone,
+      canReadMetrics: c.env.METRICS_DASHBOARD_ENABLED === 'true' && permits(row.role, 'metrics.read'),
       ...venueLogoFields(c.env, row, row.role === 'owner' || user.role === 'platform_admin' ||
         (user.role === 'commercial_operator' && row.created_by === user.id)),
     })),
@@ -264,6 +265,11 @@ staffRoutes.post('/commercial/organizations', async (c) => {
     parsed.data,
   )
   return c.json(result, 201)
+})
+staffRoutes.get('/venues/:id/metrics', async (c) => {
+  const query = venueMetricsQuerySchema.safeParse(c.req.query())
+  if (!query.success) return c.json({ error: 'invalid_metrics_query' }, 400)
+  return c.json(await readVenueMetrics(c.env, c.get('actor'), c.req.param('id'), query.data))
 })
 staffRoutes.get('/commercial/metrics/venues', async (c) => {
   const page = z.coerce.number().int().min(1).max(100000).safeParse(c.req.query('page') ?? 1)

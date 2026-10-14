@@ -7,6 +7,9 @@ export const metricsQuerySchema = z.object({
   serviceType: z.enum(['restaurant', 'reception', 'pool']).optional(),
   page: z.coerce.number().int().min(1).max(100000).default(1),
 })
+// A venue endpoint never accepts a client-selected scope or portfolio pagination.
+export const venueMetricsQuerySchema = metricsQuerySchema.omit({ venueId: true, page: true }).strict()
+export type VenueMetricsQuery = z.infer<typeof venueMetricsQuerySchema>
 export type MetricsQuery = z.infer<typeof metricsQuerySchema>
 export type MetricComparison = {
   value: number | null

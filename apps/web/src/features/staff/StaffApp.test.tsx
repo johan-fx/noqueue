@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen } from '@testing-library/react'
-import { MemoryRouter, Routes, Route } from 'react-router'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { MemoryRouter, Routes, Route, useLocation } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import { StaffApp } from './StaffApp'
 import { api } from './api'
@@ -9,10 +9,14 @@ vi.mock('./api', () => ({
   ApiError: class extends Error {},
   errorMessage: String,
 }))
+vi.mock('./CommercialMetrics', () => ({
+  default: () => <div>Métricas de cartera</div>,
+  MetricsDashboard: ({ venue }: { venue: { id: string; name: string } }) => <div>Métricas de {venue.name} ({venue.id})</div>,
+}))
 vi.mock('@/data/auth/client', () => ({ authClient: { signOut: vi.fn() } }))
 vi.mock('./Dashboard', () => ({
   Dashboard: ({ venue, mode }: { venue: { name: string }; mode: string }) => (
-    <div>
+    <div data-testid="venue-management">
       {venue.name} {mode}
     </div>
   ),
@@ -83,4 +87,124 @@ it('restores the validated search, status and page from establishment detail', a
   expect(
     screen.getByRole('link', { name: 'Volver a establecimientos' }),
   ).toHaveAttribute('href', '/staff?page=3&q=Hotel+Madrid&status=suspended')
+})
+
+const memberVenue = {
+  id: 'hotel', name: 'Hotel Madrid', organizationId: 'org', organizationName: 'Empresa',
+  role: 'owner', timezone: 'Europe/Madrid', canReadMetrics: true,
+  logo: null, logoVersion: 0, canEditLogo: true,
+}
+function showMember(venues = [memberVenue], metrics = true, url = '/staff') {
+  vi.mocked(api).mockResolvedValue({ user: { username: 'owner' }, commercial: false, platformAdmin: false, features: { metrics }, venues })
+  render(<MemoryRouter initialEntries={[url]}><StaffApp /></MemoryRouter>)
+}
+
+it.each(['owner', 'venue_manager'])('offers management/metrics tabs to %s and unmounts the inactive panel', async (role) => {
+  showMember([{ ...memberVenue, role }])
+  expect(await screen.findByRole('tab', { name: 'Gestión' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.getByText('Hotel Madrid')).toBeVisible()
+  expect(screen.queryByText(/Métricas de/)).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('tab', { name: 'Métricas' }))
+  expect(await screen.findByText('Métricas de Hotel Madrid (hotel)')).toBeVisible()
+  expect(screen.queryByText('Hotel Madrid', { exact: true })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('tab', { name: 'Gestión' }))
+  expect(await screen.findByText('Hotel Madrid')).toBeVisible()
+  expect(screen.queryByText(/Métricas de/)).not.toBeInTheDocument()
+})
+
+it.each(['viewer', 'queue_staff'])('does not expose tabs to %s even with a stale feature flag and deep link', async (role) => {
+  showMember([{ ...memberVenue, role }], true, '/staff?tab=metrics')
+  expect(await screen.findByText('Hotel Madrid')).toBeVisible()
+  expect(screen.queryByRole('tab', { name: 'Métricas' })).not.toBeInTheDocument()
+  expect(screen.queryByText(/Métricas de/)).not.toBeInTheDocument()
+})
+
+it('keeps management available when the feature or per-venue permission is off', async () => {
+  showMember([memberVenue], false, '/staff?tab=metrics')
+  expect(await screen.findByText('Hotel Madrid')).toBeVisible()
+  expect(screen.queryByRole('tab', { name: 'Métricas' })).not.toBeInTheDocument()
+  cleanup()
+  showMember([{ ...memberVenue, canReadMetrics: false }], true, '/staff?tab=metrics')
+  expect(await screen.findByText('Hotel Madrid')).toBeVisible()
+  expect(screen.queryByText(/Métricas de/)).not.toBeInTheDocument()
+})
+
+it('switches metrics context with the establishment selector and falls back to management for a restricted venue', async () => {
+  showMember([
+    memberVenue,
+    { ...memberVenue, id: 'second', name: 'Segundo hotel', role: 'venue_manager' },
+    { ...memberVenue, id: 'restricted', name: 'Solo lectura', role: 'viewer', canReadMetrics: false },
+  ], true, '/staff?tab=metrics&mVenue=untrusted')
+  expect(await screen.findByText('Métricas de Hotel Madrid (hotel)')).toBeVisible()
+  fireEvent.click(screen.getByRole('combobox', { name: 'Establecimiento' }))
+  const secondOption = await screen.findByRole('option', { name: 'Segundo hotel' })
+  fireEvent.pointerDown(secondOption, { pointerType: 'mouse' })
+  fireEvent.click(secondOption)
+  expect(await screen.findByText('Métricas de Segundo hotel (second)')).toBeVisible()
+  expect(screen.queryByText('Métricas de Hotel Madrid (hotel)')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('combobox', { name: 'Establecimiento' }))
+  const restrictedOption = await screen.findByRole('option', { name: 'Solo lectura' })
+  fireEvent.pointerDown(restrictedOption, { pointerType: 'mouse' })
+  fireEvent.click(restrictedOption)
+  expect(screen.queryByRole('tab', { name: 'Métricas' })).not.toBeInTheDocument()
+  expect(screen.queryByText(/Métricas de/)).not.toBeInTheDocument()
+})
+
+
+const mixedRoles = [
+  { globalRole: 'platform_admin', platformAdmin: true, memberRole: 'owner' },
+  { globalRole: 'platform_admin', platformAdmin: true, memberRole: 'venue_manager' },
+  { globalRole: 'commercial_operator', platformAdmin: false, memberRole: 'owner' },
+  { globalRole: 'commercial_operator', platformAdmin: false, memberRole: 'venue_manager' },
+]
+function CurrentUrl() {
+  const location = useLocation()
+  return <output data-testid="current-url">{location.pathname}{location.search}</output>
+}
+function showMixedMember(platformAdmin: boolean, memberRole: string, metrics = true) {
+  vi.mocked(api).mockImplementation(async (path) => path === '/me'
+    ? {
+        user: { username: 'mixed' }, commercial: true, platformAdmin,
+        features: { metrics }, venues: [{ ...memberVenue, role: memberRole }],
+      }
+    : { items: [], page: 1, hasMore: false },
+  )
+  render(<MemoryRouter initialEntries={['/staff?tab=metrics&mPeriod=today&q=Hotel']}>
+    <StaffApp />
+    <CurrentUrl />
+  </MemoryRouter>)
+}
+it.each(mixedRoles)('keeps only portfolio tabs for $globalRole + $memberRole and preserves existing management', async ({ platformAdmin, memberRole }) => {
+  showMixedMember(platformAdmin, memberRole)
+  await screen.findByText('Métricas de cartera')
+  expect(screen.getAllByRole('tab', { name: 'Métricas' })).toHaveLength(1)
+  expect(screen.queryByRole('tab', { name: 'Gestión' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('tablist', { name: 'Vista del establecimiento' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Métricas de Hotel Madrid (hotel)')).not.toBeInTheDocument()
+  const management = screen.getByTestId('venue-management')
+  expect(management).toHaveTextContent('Hotel Madrid')
+  expect(management).toBeVisible()
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Establecimientos' }))
+  expect(screen.getByRole('tab', { name: 'Establecimientos' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.queryByText('Métricas de cartera')).not.toBeInTheDocument()
+  expect(screen.getByTestId('venue-management')).toBe(management)
+  expect(screen.getByTestId('current-url')).toHaveTextContent('tab=establishments')
+  expect(screen.getByTestId('current-url')).toHaveTextContent('mPeriod=today')
+  expect(screen.getByTestId('current-url')).toHaveTextContent('q=Hotel')
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Métricas' }))
+  expect(await screen.findByText('Métricas de cartera')).toBeVisible()
+  expect(screen.getByTestId('venue-management')).toBe(management)
+  expect(screen.getAllByRole('tab', { name: 'Métricas' })).toHaveLength(1)
+  expect(screen.queryByText('Métricas de Hotel Madrid (hotel)')).not.toBeInTheDocument()
+})
+it.each(mixedRoles)('keeps metrics disabled for $globalRole + $memberRole despite a stale venue capability and deep link', async ({ platformAdmin, memberRole }) => {
+  showMixedMember(platformAdmin, memberRole, false)
+  expect(await screen.findByTestId('venue-management')).toBeVisible()
+  expect(screen.getByRole('tab', { name: 'Establecimientos' })).toHaveAttribute('aria-selected', 'true')
+  expect(screen.queryByRole('tab', { name: 'Métricas' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: 'Gestión' })).not.toBeInTheDocument()
+  expect(screen.queryByText('Métricas de cartera')).not.toBeInTheDocument()
+  expect(screen.queryByText('Métricas de Hotel Madrid (hotel)')).not.toBeInTheDocument()
 })

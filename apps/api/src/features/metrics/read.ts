@@ -1,6 +1,8 @@
+import { venueAccess } from '../../auth/access'
 import { HTTPException } from 'hono/http-exception'
 import type {
   MetricsQuery,
+  VenueMetricsQuery,
   MetricsResponse,
   MetricsPattern,
   MetricCounts,
@@ -201,15 +203,55 @@ export async function readMetrics(
   now = Date.now(),
 ): Promise<MetricsResponse> {
   requireMetrics(env, actor)
+  return readScopedMetrics(env, input, {
+    sql: "(?='platform_admin' OR t.created_by=?)",
+    params: [actor.role, actor.id],
+  }, now)
+}
+
+/** Member access is independent of commercial portfolio ownership. */
+export async function readVenueMetrics(
+  env: CloudflareBindings,
+  actor: Actor,
+  venueId: string,
+  input: VenueMetricsQuery,
+  now = Date.now(),
+): Promise<MetricsResponse> {
+  await venueAccess(env, actor.id, venueId, 'metrics.read')
+  if (env.METRICS_DASHBOARD_ENABLED !== 'true')
+    throw new HTTPException(404, { message: 'not_found' })
+  // Recheck membership inside the analytical snapshot as well as at the route
+  // boundary. A revoked/suspended membership must never broaden the SQL scope.
+  return readScopedMetrics(env, { ...input, venueId, page: 1 }, {
+    sql: `t.status='active' AND EXISTS (
+      SELECT 1 FROM venue_membership vm
+      JOIN venue mv ON mv.id=vm.venue_id
+      JOIN member m ON m.organizationId=mv.organization_id AND m.userId=vm.user_id
+      JOIN user u ON u.id=vm.user_id
+      WHERE vm.venue_id=? AND vm.user_id=? AND vm.active=1
+        AND vm.role IN ('owner','venue_manager') AND COALESCE(u.banned,0)=0
+        AND mv.organization_id=t.organization_id
+    )`,
+    params: [venueId, actor.id],
+  }, now)
+}
+
+type MetricsScope = { sql: string; params: string[] }
+async function readScopedMetrics(
+  env: CloudflareBindings,
+  input: MetricsQuery,
+  access: MetricsScope,
+  now: number,
+): Promise<MetricsResponse> {
   const days = (Date.parse(input.to) - Date.parse(input.from)) / DAY + 1
   if (days < 1 || days > 366 || input.from < retentionDate(now))
     throw new HTTPException(400, { message: 'invalid_metrics_range' })
   let timezone = 'Europe/Madrid'
   if (input.venueId) {
     const venue = await env.DB.prepare(
-      "SELECT v.timezone FROM venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE v.id=? AND (?='platform_admin' OR t.created_by=?)",
+      `SELECT v.timezone FROM venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE v.id=? AND (${access.sql})`,
     )
-      .bind(input.venueId, actor.role, actor.id)
+      .bind(input.venueId, ...access.params)
       .first<{ timezone: string }>()
     if (!venue) throw new HTTPException(404, { message: 'not_found' })
     timezone = venue.timezone
@@ -223,14 +265,13 @@ export async function readMetrics(
   }
   const start = previous.from < retentionDate(now) ? input.from : previous.from
   const params = [
-    actor.role,
-    actor.id,
+    ...access.params,
     start,
     input.to,
     ...(input.venueId ? [input.venueId] : []),
     ...(input.serviceType ? [input.serviceType] : []),
   ]
-  const scope = `(?='platform_admin' OR t.created_by=?) AND d.date>=? AND d.date<=?${
+  const scope = `(${access.sql}) AND d.date>=? AND d.date<=?${
     input.venueId ? ' AND d.venue_id=?' : ''
   }${input.serviceType ? ' AND d.service_type=?' : ''}`
   // Authorization precedes aggregation; these queries only read bounded rollup partitions.
@@ -256,10 +297,10 @@ export async function readMetrics(
       'SELECT MIN(started_at) AS since,MAX(COALESCE(ended_at,?)) AS until FROM metrics_capture_gap',
     ).bind(now),
     env.DB.prepare(
-      `SELECT COUNT(*) AS n FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id LEFT JOIN metrics_backfill b ON b.queue_id=q.id WHERE q.id!='confirmation-experiment' AND (?='platform_admin' OR t.created_by=?) AND b.completed_at IS NULL${
+      `SELECT COUNT(*) AS n FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id LEFT JOIN metrics_backfill b ON b.queue_id=q.id WHERE q.id!='confirmation-experiment' AND (${access.sql}) AND b.completed_at IS NULL${
         input.venueId ? ' AND v.id=?' : ''
       }`,
-    ).bind(actor.role, actor.id, ...(input.venueId ? [input.venueId] : [])),
+    ).bind(...access.params, ...(input.venueId ? [input.venueId] : [])),
   ])
   const daily = snapshot[0] as D1Result<Daily>
   const hourly = snapshot[1] as D1Result<Hourly>

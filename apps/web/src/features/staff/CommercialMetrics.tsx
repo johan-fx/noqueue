@@ -33,7 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { api, errorMessage } from './api'
+import { api, ApiError, errorMessage } from './api'
 import userCheckIcon from '@/assets/metrics/user-check.svg'
 import timerIcon from '@/assets/metrics/timer.svg'
 import lineChartIcon from '@/assets/metrics/line-chart.svg'
@@ -235,7 +235,8 @@ function CoverageNotice({ data }: { data: MetricsResponse }) {
   )
 }
 
-function MetricsContent({ data, onPage, busy }: {
+function MetricsContent({ data, onPage, busy, singleVenue }: {
+  singleVenue: boolean
   data: MetricsResponse
   onPage: (page: number) => void
   busy: boolean
@@ -307,7 +308,7 @@ function MetricsContent({ data, onPage, busy }: {
             value={formatCount(data.executive.activeServices.value)}
             comparison={data.executive.activeServices.comparison}
             iconSrc={layersIcon}
-            detail={`Con al menos un alta · ${formatCount(summary.activeVenues)} establecimientos`}
+            detail={singleVenue ? 'Con al menos un alta en este establecimiento' : `Con al menos un alta · ${formatCount(summary.activeVenues)} establecimientos`}
             absoluteLabel="servicios"
           />
         </div>
@@ -470,8 +471,8 @@ function MetricsContent({ data, onPage, busy }: {
         </Card>
       </section>
 
-      <section aria-labelledby="metrics-admin-title" className="grid gap-5 xl:grid-cols-[minmax(0,1.8fr)_minmax(340px,1fr)]">
-        <Card className="gap-4 p-5 sm:p-6">
+      <section aria-label="Desglose de actividad" className={singleVenue ? "grid gap-5" : "grid gap-5 xl:grid-cols-[minmax(0,1.8fr)_minmax(340px,1fr)]"}>
+        {!singleVenue && <Card className="gap-4 p-5 sm:p-6">
           <CardHeader className="p-0">
             <CardTitle role="heading" aria-level={3} id="metrics-admin-title" className="text-base">Comparativa por establecimiento</CardTitle>
             <CardDescription>Rendimiento durante el periodo seleccionado · {volumeUnavailable ? '—' : formatCount(data.venues.total)} establecimientos con actividad.</CardDescription>
@@ -534,7 +535,7 @@ function MetricsContent({ data, onPage, busy }: {
               </div>
             )}
           </CardContent>
-        </Card>
+        </Card>}
 
         <Card className="gap-4 p-5 sm:p-6">
           <CardHeader className="p-0">
@@ -564,21 +565,23 @@ function MetricsContent({ data, onPage, busy }: {
   )
 }
 
-export function CommercialMetrics() {
+/** When supplied, venue context comes from /me, never from URL filters. */
+export function MetricsDashboard({ venue: fixedVenue }: { venue?: Venue }) {
+  const singleVenue = fixedVenue !== undefined
   const [search, setSearch] = useSearchParams()
   const [now, setNow] = useState(() => new Date())
   const periodValue = search.get('mPeriod') ?? 'last30'
   const period: PeriodKey = PERIOD_KEYS.includes(periodValue as PeriodKey)
     ? periodValue as PeriodKey
     : 'last30'
-  const venueId = search.get('mVenue') ?? ''
+  const venueId = fixedVenue?.id ?? search.get('mVenue') ?? ''
   const serviceType = search.get('mService') ?? ''
   const pageValue = Number(search.get('mPage') ?? '1')
-  const page = Number.isSafeInteger(pageValue) && pageValue > 0 ? Math.min(pageValue, 100000) : 1
+  const page = fixedVenue ? 1 : Number.isSafeInteger(pageValue) && pageValue > 0 ? Math.min(pageValue, 100000) : 1
 
   const [venues, setVenues] = useState<Venue[]>([])
   const [venuesError, setVenuesError] = useState('')
-  const [venuesLoading, setVenuesLoading] = useState(true)
+  const [venuesLoading, setVenuesLoading] = useState(!fixedVenue)
   const [snapshot, setSnapshot] = useState<{ key: string; data: MetricsResponse } | null>(null)
   const snapshotRef = useRef<{ key: string; data: MetricsResponse } | null>(null)
   const [loading, setLoading] = useState(true)
@@ -589,8 +592,9 @@ export function CommercialMetrics() {
   const requestRef = useRef<AbortController | null>(null)
   const requestKeyRef = useRef('')
 
-  const timezone = venues.find((venue) => venue.id === venueId)?.timezone ?? 'Europe/Madrid'
-  const venueCatalogState = venueId ? (venuesLoading ? 'loading' : 'ready') : 'global'
+  const timezone = fixedVenue?.timezone ?? venues.find((venue) => venue.id === venueId)?.timezone ?? 'Europe/Madrid'
+  const endpoint = fixedVenue ? `/venues/${encodeURIComponent(fixedVenue.id)}/metrics` : '/commercial/metrics'
+  const venueCatalogState = fixedVenue ? 'fixed' : venueId ? (venuesLoading ? 'loading' : 'ready') : 'global'
   useEffect(() => {
     const refreshClock = () => setNow(new Date())
     const timer = window.setInterval(refreshClock, 60_000)
@@ -601,7 +605,7 @@ export function CommercialMetrics() {
     }
   }, [])
   const range = useMemo(() => periodRange(period, timezone, now), [period, timezone, now])
-  const filterKey = `${range.from}:${range.to}:${venueId}:${serviceType}:${page}`
+  const filterKey = `${endpoint}:${timezone}:${range.from}:${range.to}:${venueId}:${serviceType}:${page}`
   const data = snapshot?.key === filterKey ? snapshot.data : null
 
   const updateFilters = useCallback((changes: Record<string, string>) => {
@@ -614,6 +618,7 @@ export function CommercialMetrics() {
   }, [search, setSearch])
 
   useEffect(() => {
+    if (singleVenue) return
     const controller = new AbortController()
     let active = true
     async function loadVenues() {
@@ -644,7 +649,7 @@ export function CommercialMetrics() {
       active = false
       controller.abort()
     }
-  }, [])
+  }, [singleVenue])
 
   useEffect(() => {
     if (venueCatalogState === 'loading') return
@@ -676,12 +681,15 @@ export function CommercialMetrics() {
       setLoading(!hasCurrent)
       setRefreshing(hasCurrent)
       setError('')
-      const params = new URLSearchParams({ from: range.from, to: range.to, page: String(page) })
-      if (venueId) params.set('venueId', venueId)
+      const params = new URLSearchParams({ from: range.from, to: range.to })
+      if (!singleVenue) {
+        params.set('page', String(page))
+        if (venueId) params.set('venueId', venueId)
+      }
       if (serviceType) params.set('serviceType', serviceType)
       try {
         const result = await api<MetricsResponse>(
-          `/commercial/metrics?${params.toString()}`,
+          `${endpoint}?${params.toString()}`,
           'GET', undefined, undefined, controller.signal,
         )
         if (!active || controller.signal.aborted || requestKeyRef.current !== filterKey) return
@@ -691,8 +699,14 @@ export function CommercialMetrics() {
       } catch (cause) {
         if (active && !controller.signal.aborted && requestKeyRef.current === filterKey) {
           setError(errorMessage(cause))
-          // On failure retain the same-filter snapshot; use a short retry while visible.
-          schedule(Date.now() + 60_000)
+          if (cause instanceof ApiError && [401, 403, 404].includes(cause.status)) {
+            // Permission revocation/feature shutdown must not retain authorized-old data.
+            snapshotRef.current = null
+            setSnapshot(null)
+          } else {
+            // Transient failures retain only the same-filter snapshot.
+            schedule(Date.now() + 60_000)
+          }
         }
       } finally {
         isFetching = false
@@ -715,18 +729,18 @@ export function CommercialMetrics() {
       controller.abort()
       requestRef.current = null
     }
-  }, [filterKey, range.from, range.to, venueId, serviceType, page, retry, venueCatalogState])
+  }, [filterKey, range.from, range.to, venueId, serviceType, page, retry, venueCatalogState, endpoint, singleVenue])
 
   const refreshNow = () => setRetry((value) => value + 1)
-  const selectedVenueName = venues.find((venue) => venue.id === venueId)?.name
+  const selectedVenueName = fixedVenue?.name ?? venues.find((venue) => venue.id === venueId)?.name
 
   return (
     <div className="space-y-6" data-testid="commercial-metrics">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight">Métricas</h2>
+          <h2 className="text-xl font-semibold tracking-tight">Rendimiento global</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {data ? `${data.period.from} — ${data.period.to} · ${selectedVenueName ?? 'Todos los establecimientos'}` : 'Indicadores agregados de actividad y espera.'}
+            {data ? `${data.period.from} - ${data.period.to} · ${selectedVenueName ?? 'Todos los establecimientos'}` : 'Indicadores agregados de actividad y espera.'}
           </p>
         </div>
         <div className="grid gap-2 sm:grid-cols-2 xl:flex">
@@ -738,7 +752,7 @@ export function CommercialMetrics() {
               {PERIOD_KEYS.map((key) => <SelectItem key={key} value={key}>{PERIODS[key]}</SelectItem>)}
             </SelectContent>
           </Select>
-          <Select value={venueId || 'all'} onValueChange={(value) => updateFilters({ mVenue: value === 'all' ? '' : String(value), mPage: '1' })}>
+          {!fixedVenue && <Select value={venueId || 'all'} onValueChange={(value) => updateFilters({ mVenue: value === 'all' ? '' : String(value), mPage: '1' })}>
             <SelectTrigger aria-label="Establecimiento" className="min-w-[210px] bg-background">
               <SelectValue>{venueId ? selectedVenueName ?? 'Establecimiento no disponible' : 'Todos los establecimientos'}</SelectValue>
             </SelectTrigger>
@@ -746,7 +760,7 @@ export function CommercialMetrics() {
               <SelectItem value="all">Todos los establecimientos</SelectItem>
               {venues.map((venue) => <SelectItem key={venue.id} value={venue.id}>{venue.name}</SelectItem>)}
             </SelectContent>
-          </Select>
+          </Select>}
           <Select value={serviceType || 'all'} onValueChange={(value) => updateFilters({ mService: value === 'all' ? '' : String(value), mPage: '1' })}>
             <SelectTrigger aria-label="Tipo de servicio" className="min-w-[180px] bg-background">
               <SelectValue>{serviceType ? SERVICE_LABELS[serviceType] ?? 'Servicio no disponible' : 'Todos los servicios'}</SelectValue>
@@ -774,8 +788,8 @@ export function CommercialMetrics() {
         </Button>
       </div>
 
-      {venuesLoading && <p role="status" className="text-xs text-muted-foreground">Cargando establecimientos autorizados…</p>}
-      {venuesError && <p role="status" className="text-xs text-amber-700">No se pudo cargar el catálogo de establecimientos: {venuesError}</p>}
+      {!fixedVenue && venuesLoading && <p role="status" className="text-xs text-muted-foreground">Cargando establecimientos autorizados…</p>}
+      {!fixedVenue && venuesError && <p role="status" className="text-xs text-amber-700">No se pudo cargar el catálogo de establecimientos: {venuesError}</p>}
       {loading && !data && (
         <div role="status" aria-live="polite" className="rounded-xl border bg-card p-10 text-center text-sm text-muted-foreground">
           Cargando métricas…
@@ -793,9 +807,13 @@ export function CommercialMetrics() {
           <Button variant="outline" size="sm" onClick={refreshNow}>Reintentar</Button>
         </div>
       )}
-      {data && <MetricsContent data={data} busy={refreshing} onPage={(nextPage) => updateFilters({ mPage: String(nextPage) })} />}
+      {data && <MetricsContent singleVenue={!!fixedVenue} data={data} busy={refreshing} onPage={(nextPage) => updateFilters({ mPage: String(nextPage) })} />}
     </div>
   )
+}
+
+export function CommercialMetrics() {
+  return <MetricsDashboard />
 }
 
 export default CommercialMetrics

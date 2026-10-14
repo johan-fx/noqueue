@@ -65,7 +65,7 @@ Native links open via Capacitor Browser; registration and QR remain public web p
 not additional native routes. Build the web app with the configured public origin,
 then run `pnpm mobile:sync` to register the plugin in the existing native projects.
 
-## Admin metrics (local implementation)
+## Staff metrics (local implementation)
 
 Metrics use D1 creation-date cohorts, a transactional entry/revision journal and
 incremental daily/hourly aggregates. Completion means **confirmed arrival**, not
@@ -79,6 +79,19 @@ of queue lengths. UTC bucket identities distinguish repeated local hours.
 - `METRICS_CAPTURE_ENABLED=true` controls capture/backfill/processing independently
   of `METRICS_DASHBOARD_ENABLED=true`, which exposes the staff metrics API and tab.
   Both default on in local Wrangler vars; neither is enabled in remote env vars.
+- Admin/commercial keep their portfolio dashboard. Establishment `owner` and
+  `venue_manager` members also have Management/Metrics tabs; `viewer` and
+  `queue_staff` do not. These new tabs are limited to the non-commercial flow:
+  accounts with a global admin/commercial role and venue membership keep their
+  existing management and only the portfolio tabs, without coupled navigation.
+  The shared UI is locked to the selected establishment,
+  without a portfolio selector/comparison, and unmounts operational polling
+  while viewing analytics. `/staff/me` supplies timezone and per-venue permission.
+- `GET /staff/venues/:id/metrics` accepts only `from`, `to`, and optional
+  `serviceType`. The backend enforces active membership, `metrics.read`, active
+  tenant and non-banned account before reading, and repeats the membership guard
+  in scoped analytical queries. URL filters cannot override the path venue.
+  No additional analytical migration or capture pipeline is needed.
 - `*/15 * * * *` is a separate branch in the existing Worker. The one-minute
   operational task is unchanged. A 30-second watermark margin avoids in-flight
   commands. Work drains bounded pages within a 20-second wall-clock budget and

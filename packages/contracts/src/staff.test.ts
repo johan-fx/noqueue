@@ -167,6 +167,12 @@ describe('staff contracts', () => {
     expect(roleCapabilities.queue_staff).not.toContain('queue.configure')
     expect(roleCapabilities.viewer).toEqual(['queue.read'])
   })
+  it('grants metrics only to establishment owners and managers', () => {
+    expect(roleCapabilities.owner).toContain('metrics.read')
+    expect(roleCapabilities.venue_manager).toContain('metrics.read')
+    expect(roleCapabilities.queue_staff).not.toContain('metrics.read')
+    expect(roleCapabilities.viewer).not.toContain('metrics.read')
+  })
   it('normalizes username and validates time zones', () => {
     const data = {
       locationToken: 'verified-token',

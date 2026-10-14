@@ -12,11 +12,12 @@ export const capabilities = [
   'queue.operate',
   'queue.configure',
   'members.manage',
+  'metrics.read',
 ] as const
 export type Capability = (typeof capabilities)[number]
 export const roleCapabilities: Record<StaffRole, readonly Capability[]> = {
   owner: capabilities,
-  venue_manager: ['queue.read', 'queue.operate', 'queue.configure'],
+  venue_manager: ['queue.read', 'queue.operate', 'queue.configure', 'metrics.read'],
   queue_staff: ['queue.read', 'queue.operate'],
   viewer: ['queue.read'],
 }
@@ -644,6 +645,9 @@ export const venueLogoMutationSchema = z.object({
   version: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER - 1),
 }).strict()
 export type VenueSummary = VenueLogoState & {
+  /** Supplied by /staff/me; absent in older/detail-only consumers. */
+  timezone?: string
+  canReadMetrics?: boolean
   id: string
   name: string
   organizationId: string

@@ -17,7 +17,7 @@ import { authClient } from '@/data/auth/client'
 import { api, ApiError, errorMessage } from './api'
 import { Choice } from './ServiceForm'
 import { Commercial } from './Commercial'
-import { Dashboard } from './Dashboard'
+import { VenueDashboard } from './VenueDashboard'
 import { CommercialEstablishment } from './CommercialEstablishment'
 type Me = {
   user: { id: string; email: string; username: string }
@@ -130,8 +130,10 @@ export function StaffApp() {
                 />
               </div>
             )}
+            {/* Mixed-role accounts keep their existing management, but only portfolio tabs. */}
             {me.venues.find((v) => v.id === venueId) && (
-              <Dashboard
+              <VenueDashboard
+                metricsEnabled={!me.commercial && me.features?.metrics === true}
                 key={venueId}
                 venue={me.venues.find((v) => v.id === venueId)!}
                 onVenueLogoStateChange={(state) =>

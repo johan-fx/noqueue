@@ -3,11 +3,14 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { MemoryRouter, useSearchParams } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { MetricsResponse, MetricsVenuePage } from '@noqueue/contracts/metrics'
-import { CommercialMetrics } from './CommercialMetrics'
+import { CommercialMetrics, MetricsDashboard } from './CommercialMetrics'
 import { periodRange } from './metricsPeriod'
-import { api } from './api'
+import { api, ApiError } from './api'
 
-vi.mock('./api', () => ({ api: vi.fn(), errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error) }))
+vi.mock('./api', async (original) => ({
+  ...(await original<typeof import('./api')>()),
+  api: vi.fn(), errorMessage: (error: unknown) => error instanceof Error ? error.message : String(error),
+}))
 
 function makeMetrics(generated = 0): MetricsResponse {
   const comparison = { value: null, unit: 'percent' as const, reason: 'unavailable' as const }
@@ -274,4 +277,70 @@ it('includes unknown historical service activity instead of dropping it from the
   render(<MemoryRouter><CommercialMetrics /></MemoryRouter>)
   await screen.findByText('Actividad por servicio')
   expect(screen.getByText('Sin determinar',{exact:true})).toBeVisible()
+})
+
+it('locks venue metrics to the supplied context, ignores portfolio URL filters and skips the catalog', async () => {
+  const venue = { id: 'my-venue', name: 'Mi establecimiento', timezone: 'Pacific/Honolulu' }
+  const expected = periodRange('last30', venue.timezone, new Date())
+  vi.mocked(api).mockResolvedValue(makeMetrics(3))
+  render(<MemoryRouter initialEntries={['/staff?tab=metrics&mVenue=foreign&mPage=99&mService=restaurant']}>
+    <MetricsDashboard venue={venue} />
+  </MemoryRouter>)
+  expect(await screen.findByText(/Mi establecimiento/)).toBeVisible()
+  expect(api).toHaveBeenCalledTimes(1)
+  const path = vi.mocked(api).mock.calls[0]![0]
+  expect(path).toBe(`/venues/my-venue/metrics?from=${expected.from}&to=${expected.to}&serviceType=restaurant`)
+  expect(screen.queryByRole('combobox', { name: 'Establecimiento' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'Comparativa por establecimiento' })).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: 'Siguiente' })).not.toBeInTheDocument()
+  expect(screen.getByRole('combobox', { name: 'Periodo de métricas' })).toBeVisible()
+  expect(screen.getByRole('combobox', { name: 'Tipo de servicio' })).toBeVisible()
+  expect(screen.getByText('Con al menos un alta en este establecimiento')).toBeVisible()
+  expect(screen.getByText('Actividad por servicio')).toBeVisible()
+})
+
+it('clears a previous venue snapshot and aborts its refresh on venue change, even if a late response arrives', async () => {
+  let finishOld: ((value: MetricsResponse) => void) | undefined
+  let finishNew: ((value: MetricsResponse) => void) | undefined
+  let oldCalls = 0
+  vi.mocked(api).mockImplementation((path) => {
+    if (path.startsWith('/venues/old/')) {
+      oldCalls++
+      if (oldCalls === 1) return Promise.resolve(makeMetrics(83))
+      return new Promise<MetricsResponse>((resolve) => { finishOld = resolve })
+    }
+    return new Promise<MetricsResponse>((resolve) => { finishNew = resolve })
+  })
+  const { rerender, unmount } = render(<MemoryRouter>
+    <MetricsDashboard venue={{ id: 'old', name: 'Anterior', timezone: 'UTC' }} />
+  </MemoryRouter>)
+  expect((await screen.findAllByText('83'))[0]).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Actualizar' }))
+  await waitFor(() => expect(oldCalls).toBe(2))
+  const oldSignal = vi.mocked(api).mock.calls.at(-1)![4] as AbortSignal
+  rerender(<MemoryRouter>
+    <MetricsDashboard venue={{ id: 'new', name: 'Nuevo', timezone: 'UTC' }} />
+  </MemoryRouter>)
+  await waitFor(() => expect(finishNew).toBeDefined())
+  expect(oldSignal.aborted).toBe(true)
+  expect(screen.queryByText('83')).not.toBeInTheDocument()
+  await act(async () => finishNew?.(makeMetrics(17)))
+  expect((await screen.findAllByText('17'))[0]).toBeVisible()
+  await act(async () => finishOld?.(makeMetrics(91)))
+  expect(screen.queryByText('91')).not.toBeInTheDocument()
+  expect(screen.getAllByText('17')[0]).toBeVisible()
+  const newSignal = vi.mocked(api).mock.calls.at(-1)![4] as AbortSignal
+  unmount()
+  expect(newSignal.aborted).toBe(true)
+})
+
+
+it.each([401, 403, 404])('discards a venue snapshot when refresh returns access status %s', async (status) => {
+  vi.mocked(api).mockResolvedValueOnce(makeMetrics(83)).mockRejectedValueOnce(new ApiError(status, 'Acceso no disponible'))
+  render(<MemoryRouter><MetricsDashboard venue={{ id: 'hotel', name: 'Hotel', timezone: 'UTC' }} /></MemoryRouter>)
+  expect((await screen.findAllByText('83'))[0]).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Actualizar' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Acceso no disponible')
+  expect(screen.queryByText('83')).not.toBeInTheDocument()
+  expect(screen.queryByText(/Se mantienen los datos/)).not.toBeInTheDocument()
 })

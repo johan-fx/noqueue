@@ -1,3 +1,9 @@
+import {
+  createMetricsBudget,
+  metricsQueryLimit,
+  MetricsBudgetExceeded,
+  type MetricsBudget,
+} from './budget'
 import { reconciliationStatements } from './reconcile'
 import {
   contribution,
@@ -210,16 +216,20 @@ export async function processMetrics(
   env: CloudflareBindings,
   now = Date.now(),
   maxWork = 60,
+  budget: MetricsBudget = createMetricsBudget(env.DB, metricsQueryLimit(env)),
 ) {
-  const db = env.DB,
+  const db = budget.db,
     token = crypto.randomUUID()
+  if (budget.used + 12 > budget.limit - 32)
+    return { busy: false, processed: 0, exhausted: true, complete: false }
   const acquired = await db
     .prepare(
       'UPDATE metrics_control SET lease_token=?,lease_until=? WHERE id=1 AND lease_until<? RETURNING id',
     )
     .bind(token, Date.now() + 60000, Date.now())
     .first()
-  if (!acquired) return { busy: true, processed: 0 }
+  if (!acquired)
+    return { busy: true, processed: 0, exhausted: false, complete: false }
   let processed = 0
   try {
     const c = await db
@@ -345,15 +355,15 @@ export async function processMetrics(
           "UPDATE metrics_control SET last_complete_at=target_at,target_at=NULL,target_seq=NULL,integrate_after='' WHERE id=1",
         ),
       ])
+      return { busy: false, processed, complete: true }
     }
     return { busy: false, processed }
+  } catch (error) {
+    if (error instanceof MetricsBudgetExceeded)
+      return { busy: false, processed, exhausted: true, complete: false }
+    throw error
   } finally {
-    await db
-      .prepare(
-        'UPDATE metrics_control SET lease_token=NULL,lease_until=0 WHERE id=1 AND lease_token=?',
-      )
-      .bind(token)
-      .run()
+    await budget.releaseLease(token)
   }
 }
 
@@ -403,12 +413,28 @@ export async function runMetricsCut(
   cut = Date.now() - 30000,
 ) {
   const deadline = Date.now() + 20000
+  const budget = createMetricsBudget(env.DB, metricsQueryLimit(env))
+  let processed = 0,
+    complete = false,
+    exhausted = false,
+    busy = false
   for (let page = 0; page < 12 && Date.now() < deadline; page++) {
-    const result = await processMetrics(env, cut)
-    if (result.busy) return
-    const control = await env.DB.prepare(
-      'SELECT target_at FROM metrics_control WHERE id=1',
-    ).first<{ target_at: number | null }>()
-    if (control?.target_at === null) return
+    const result = await processMetrics(env, cut, 60, budget)
+    processed += result.processed
+    complete = result.complete === true
+    exhausted = result.exhausted === true
+    busy = result.busy
+    if (complete || exhausted || busy) break
   }
+  // Aggregate telemetry only: no entry identifiers or personal data.
+  const result = {
+    processed,
+    complete,
+    exhausted,
+    busy,
+    queries: budget.used,
+    queryLimit: budget.limit,
+  }
+  console.info({ event: 'metrics_cut', ...result })
+  return result
 }

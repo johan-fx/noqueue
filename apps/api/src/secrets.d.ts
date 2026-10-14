@@ -1,4 +1,5 @@
 interface CloudflareBindings {
+  METRICS_D1_QUERY_BUDGET?: string
   METRICS_CAPTURE_ENABLED?: string
   METRICS_DASHBOARD_ENABLED?: string
   VENUE_LOGOS: R2Bucket

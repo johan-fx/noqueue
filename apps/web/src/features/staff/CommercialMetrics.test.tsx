@@ -264,3 +264,14 @@ it('suspends scheduled refresh while the document is hidden and reloads on retur
   })
   await waitFor(() => expect(metricsCalls).toBe(2))
 })
+
+it('includes unknown historical service activity instead of dropping it from the breakdown', async () => {
+  const data=makeMetrics(5)
+  data.coverage.historical=true
+  data.coverage.status='partial'
+  data.services=[{serviceType:'unknown',generated:5,comparison:{value:null,unit:'percent',reason:'unavailable'}}]
+  vi.mocked(api).mockImplementation(async(path)=>path.includes('/metrics/venues')?venues:data)
+  render(<MemoryRouter><CommercialMetrics /></MemoryRouter>)
+  await screen.findByText('Actividad por servicio')
+  expect(screen.getByText('Sin determinar',{exact:true})).toBeVisible()
+})

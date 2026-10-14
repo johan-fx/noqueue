@@ -252,7 +252,7 @@ function MetricsContent({ data, onPage, busy }: {
     value: summary[item.key],
     percent: summary.generated > 0 ? (summary[item.key] / summary.generated) * 100 : 0,
   }))
-  const serviceActivity = ['reception', 'restaurant', 'pool'].map((serviceType) =>
+  const serviceActivity = ['reception', 'restaurant', 'pool', ...(data.services.some((s) => s.serviceType === 'unknown') ? ['unknown'] : [])].map((serviceType) =>
     data.services.find((item) => item.serviceType === serviceType) ?? {
       serviceType,
       generated: 0,
@@ -544,8 +544,8 @@ function MetricsContent({ data, onPage, busy }: {
           <CardContent className="space-y-2 p-0">
             {serviceActivity.map((item, index) => (
               <div key={item.serviceType} className="flex items-center gap-3 rounded-lg px-2 py-3">
-                <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${['bg-blue-50 text-blue-700', 'bg-emerald-50 text-emerald-700', 'bg-violet-50 text-violet-700'][index]}`}>
-                  <img alt="" src={SERVICE_ICONS[item.serviceType] ?? martiniIcon} />
+                <span className={`flex size-9 shrink-0 items-center justify-center rounded-lg ${['bg-blue-50 text-blue-700', 'bg-emerald-50 text-emerald-700', 'bg-violet-50 text-violet-700', 'bg-slate-100 text-slate-700'][index]}`}>
+                  <img alt="" src={SERVICE_ICONS[item.serviceType] ?? layersIcon} />
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">{SERVICE_LABELS[item.serviceType] ?? item.serviceType}</p>

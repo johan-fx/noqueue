@@ -74,21 +74,38 @@ completed by resolved entries. Pending/unknown entries remain in reconciliation.
 Occupancy is real waiting-person time divided by observed queue time, not a sum
 of queue lengths. UTC bucket identities distinguish repeated local hours.
 
-- Apply additive migration `0027_admin_metrics.sql` before enabling capture.
+- Apply additive migration `0027_admin_metrics.sql` before deploying this Worker,
+  even with capture disabled: uncaptured operational writes record coverage gaps.
 - `METRICS_CAPTURE_ENABLED=true` controls capture/backfill/processing independently
   of `METRICS_DASHBOARD_ENABLED=true`, which exposes the staff metrics API and tab.
   Both default on in local Wrangler vars; neither is enabled in remote env vars.
 - `*/15 * * * *` is a separate branch in the existing Worker. The one-minute
   operational task is unchanged. A 30-second watermark margin avoids in-flight
-  commands. Work drains bounded pages within a 20-second wall-clock budget and resumes via persisted cursor, lease and fencing.
+  commands. Work drains bounded pages within a 20-second wall-clock budget and
+  resumes via persisted cursor, lease and fencing. `METRICS_D1_QUERY_BUDGET` defaults
+  to 800 SQL statements per cut (valid range 64–900). Statements inside a batch
+  count individually; 32 are reserved for lease releases, and at least 100 of
+  the Paid plan's documented 1,000 queries remain outside that budget for cron
+  housekeeping. Budget exhaustion stops before submitting a transaction, retains
+  the cursor and still allows the scheduled purge. Backfill RPCs have their own
+  bounded 20-entry batch. This is not a Free-plan compatibility guarantee.
+  `metrics_cut` logs report processed events, completion, budget exhaustion and
+  query counts without entry identifiers or personal data.
 - Backfill runs bounded batches through the existing coordinator's serialization,
   **without operational refresh**. `metrics_backfill` records progress per queue;
   unknown historical service types and missing occupancy remain explicitly partial.
   Imported historical timestamps use the timezone available at import (not an
   assertion of the historical timezone); that limitation is returned in coverage notes.
+  Both import and repair use indexed tuple cursors; equal timestamps do not skip
+  entries. At completion, an INSERT-only current-dimension observation baseline
+  lets never-used queues report zero from then onward, without inventing past
+  coverage or overwriting existing waiting balances.
 - `metrics_control.last_complete_at` advances only after the cut is integrated.
   A stale cut (>30 minutes), unfinished backfill and capture gaps are exposed as
   incomplete/updating data; reads never fall back to operational histories.
+  Rollups, coverage and cut metadata are read in one D1 transaction. An in-progress
+  cut remains explicitly partial; comparisons require complete coverage on both
+  sides. Unknown historical service types remain visible in the service breakdown.
 - Closed dirty partitions within the retained detail horizon are reconciled in
   bounded batches. Older aggregates are never rebuilt from truncated detail.
 - Aggregates retain 13 calendar months; processed detail retains 90 days. Pending
@@ -101,9 +118,30 @@ D1 rows read/written and actual Worker CPU against the account's real limits,
 then enable the dashboard. Local tests do not establish remote CPU or Free-plan
 compatibility. Do not enable remotely until that budget has been checked.
 To roll back the UI, disable only `METRICS_DASHBOARD_ENABLED`; retain capture and
-all tables. Disabling capture records a conservative coverage gap on the next
-metrics tick; re-enabling schedules a bounded state repair. Do not delete tables
-or silently reconstruct old aggregates.
+all tables. Every operational transaction with capture disabled records a minimal
+coverage gap in that same transaction, so disabling/re-enabling between ticks
+cannot silently lose an intervening operation. The disabled cron also records a
+conservative gap; resumption atomically schedules a bounded, idempotent repair.
+SQL maintenance that bypasses `commitQueueTransition` must explicitly register a
+coverage gap; it is not an alternative supported mutation path. Do not delete
+analytical tables or silently reconstruct old aggregates.
+
+Staging release gate (no remote action is implied by these checks):
+1. Run metrics regressions, the API suite with capture both on and off, web tests,
+   type/lint/build and the real three-browser Admin metrics E2E.
+2. Run `wrangler deploy --dry-run --env staging` locally. Missing metrics flags in
+   `env.staging.vars` are intentional: neither is inherited from local vars.
+3. Verify the actual account plan, D1 query limits/storage and Worker CPU limits.
+   Local D1 wall time/SQL duration is not production CPU. Test the full 366-day
+   range with ten venues × three services and representative event bursts.
+4. Inventory the historical backlog and estimate backfill time (at most 100 rows
+   per tick before overhead). Alert on growing event/backfill backlog, repeated
+   budget exhaustion/errors and a completed cut older than 30 minutes. A large
+   cut may need several ticks; size traffic against measured catch-up capacity.
+5. In a separately authorized rollout: migrate, enable capture only, verify
+   reconciliation/coverage and bounded purge, then enable the dashboard. Test
+   rollback and a sub-15-minute capture outage. Staging's WhatsApp flag is enabled;
+   isolate test recipients/notifications before running operational fixtures.
 
 Verification: `pnpm --filter @noqueue/api exec vitest run src/features/metrics`
 plus the web Commercial/CommercialMetrics tests and standard type/lint/build.

@@ -1,3 +1,4 @@
+import { captureGapStatement } from '../metrics/reconcile'
 import { loadAdaptiveState, type AssignmentObservation } from './adaptive-state'
 import { projectAdaptiveQueue, type AdaptiveResource } from './adaptive-model'
 import { adaptiveProjectionStatements } from './adaptive-projection'
@@ -277,9 +278,13 @@ export async function commitQueueTransition(
   if (statements.length) {
     // Context and journal triggers participate in the same atomic D1 transaction.
     // No operational history scan, and no capture from unrelated maintenance SQL.
-    if (env.METRICS_CAPTURE_ENABLED === 'true' && hasOperationalWrites) {
-      statements.unshift(env.DB.prepare('INSERT INTO metrics_context(queue_id,at,origin) VALUES(?,?,?)').bind(queueId, now, analyticsOrigin))
-      statements.push(env.DB.prepare('DELETE FROM metrics_context WHERE queue_id=?').bind(queueId))
+    if (hasOperationalWrites && queueId !== 'confirmation-experiment') {
+      if (env.METRICS_CAPTURE_ENABLED === 'true') {
+        statements.unshift(env.DB.prepare('INSERT INTO metrics_context(queue_id,at,origin) VALUES(?,?,?)').bind(queueId, now, analyticsOrigin))
+        statements.push(env.DB.prepare('DELETE FROM metrics_context WHERE queue_id=?').bind(queueId))
+      } else {
+        statements.unshift(captureGapStatement(env.DB, now))
+      }
     }
     await env.DB.batch(statements)
   }

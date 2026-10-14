@@ -45,30 +45,54 @@ export async function backfillMetricsQueue(
     progress.after_created,
     progress.after_id,
   ])
+  const seek = (lower: number) => [
+    Math.max(lower, progress.after_created),
+    progress.after_created >= lower ? progress.after_id : '',
+  ]
+  let candidates: string | null = null
+  let selection: string
+  let selectionParams: (number | string)[]
+  if (progress.phase === 0) {
+    candidates = oldCandidates.join(' UNION ')
+    selection = '1=1'
+    selectionParams = oldParams
+  } else if (progress.repair_since !== null) {
+    // Repair only newly admitted entries and retained contributions. Two indexed
+    // seeks avoid scanning all purged history or counting it a second time.
+    candidates = `
+      SELECT id FROM (SELECT id FROM queue_entry WHERE queue_id=? AND (created_at,id)>(?,?) ORDER BY created_at,id LIMIT 20)
+      UNION SELECT entry_id FROM (SELECT m.entry_id FROM metrics_entry m CROSS JOIN queue_entry live ON live.id=m.entry_id
+        WHERE m.queue_id=? AND (m.created_at,m.entry_id)>(?,?) ORDER BY m.created_at,m.entry_id LIMIT 20)`
+    selection = '1=1'
+    selectionParams = [
+      queueId,
+      ...seek(Math.max(cutoff, progress.repair_since)),
+      queueId,
+      ...seek(cutoff),
+    ]
+  } else {
+    selection = '(e.created_at,e.id)>(?,?)'
+    selectionParams = seek(cutoff)
+  }
+  // Drive candidate queries from the bounded union, not the full queue/date
+  // index chosen for ORDER BY. CROSS JOIN prevents SQLite reversing that join.
   const rows = await db
     .prepare(
       `SELECT e.id,e.version,e.created_at,e.status,e.party_size,q.venue_id,v.organization_id,v.timezone,
     (SELECT actual_at FROM queue_wait_evidence WHERE entry_id=e.id) AS first_called_at
-    FROM queue_entry e JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id
-    WHERE e.queue_id=? AND ${
-      progress.phase === 0
-        ? `e.id IN (${oldCandidates.join(' UNION ')})`
-        : 'e.created_at>=?'
+    FROM ${
+      candidates
+        ? `(${candidates}) candidates CROSS JOIN queue_entry e ON e.id=candidates.id`
+        : 'queue_entry e'
     }
-    ${
-      progress.repair_since !== null
-        ? 'AND (e.created_at>=? OR EXISTS(SELECT 1 FROM metrics_entry m WHERE m.entry_id=e.id))'
-        : ''
-    }
-    AND (e.created_at>? OR (e.created_at=? AND e.id>?)) ORDER BY e.created_at,e.id LIMIT 20`,
+    JOIN queue q ON q.id=e.queue_id JOIN venue v ON v.id=q.venue_id
+    WHERE e.queue_id=? AND ${selection}
+    ORDER BY e.created_at,e.id LIMIT 20`,
     )
     .bind(
-      queueId,
-      ...(progress.phase === 0 ? oldParams : [cutoff]),
-      ...(progress.repair_since !== null ? [progress.repair_since] : []),
-      progress.after_created,
-      progress.after_created,
-      progress.after_id,
+      ...(candidates
+        ? [...selectionParams, queueId]
+        : [queueId, ...selectionParams]),
     )
     .all<{
       id: string
@@ -145,14 +169,22 @@ export async function backfillMetricsQueue(
           )
           .bind(queueId),
       )
-    else
+    else {
       statements.push(
         db
           .prepare(
             'UPDATE metrics_backfill SET completed_at=? WHERE queue_id=?',
           )
           .bind(now, queueId),
+        db
+          .prepare(
+            `INSERT OR IGNORE INTO metrics_queue(dimension,queue_id,venue_id,organization_id,service_type,timezone,people,integrated_at,coverage_since)
+          SELECT json_array(q.id,COALESCE(json_extract(q.config,'$.type'),'unknown'),v.timezone),q.id,v.id,v.organization_id,COALESCE(json_extract(q.config,'$.type'),'unknown'),v.timezone,0,?,?
+          FROM queue q JOIN venue v ON v.id=q.venue_id WHERE q.id=?`,
+          )
+          .bind(now, now, queueId),
       )
+    }
   }
   if (statements.length) await db.batch(statements)
 }

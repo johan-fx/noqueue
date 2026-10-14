@@ -234,50 +234,58 @@ export async function readMetrics(
     input.venueId ? ' AND d.venue_id=?' : ''
   }${input.serviceType ? ' AND d.service_type=?' : ''}`
   // Authorization precedes aggregation; these queries only read bounded rollup partitions.
-  const daily = await env.DB.prepare(
+  const dailyQuery = env.DB.prepare(
     `SELECT d.*,v.name,b.completed_at AS backfill_complete,MAX(q.coverage_since,COALESCE(b.completed_at,q.coverage_since)) AS coverage_since FROM metrics_daily d INDEXED BY ${
       input.venueId ? 'metrics_daily_scope' : 'metrics_daily_date'
     } JOIN venue v ON v.id=d.venue_id JOIN tenant_account t ON t.organization_id=d.organization_id JOIN metrics_queue q ON q.dimension=d.dimension LEFT JOIN metrics_backfill b ON b.queue_id=d.queue_id WHERE ${scope} ORDER BY d.date`,
-  )
-    .bind(...params)
-    .all<Daily>()
-  const hourly = await env.DB.prepare(
+  ).bind(...params)
+  const hourlyQuery = env.DB.prepare(
     `SELECT d.queue_id,d.venue_id,d.dimension,d.date,d.hour,d.service_type,SUM(d.generated) generated,SUM(d.wait_sum_ms) wait_sum_ms,SUM(d.wait_samples) wait_samples,SUM(d.people_ms) people_ms,SUM(d.observed_ms) observed_ms FROM metrics_hourly d INDEXED BY ${
       input.venueId ? 'metrics_hourly_scope' : 'metrics_hourly_date'
     } JOIN tenant_account t ON t.organization_id=d.organization_id WHERE ${scope} GROUP BY d.dimension,d.date,d.hour`,
-  )
-    .bind(...params)
-    .all<Hourly>()
-  const control = await env.DB.prepare(
-    'SELECT last_complete_at,target_at FROM metrics_control WHERE id=1',
-  ).first<{ last_complete_at: number | null; target_at: number | null }>()
+  ).bind(...params)
+  // D1 batch is one transaction: rollups, coverage and publication metadata cannot
+  // come from different commits even if a processor finishes while the request runs.
+  const snapshot = await env.DB.batch([
+    dailyQuery,
+    hourlyQuery,
+    env.DB.prepare(
+      'SELECT last_complete_at,target_at FROM metrics_control WHERE id=1',
+    ),
+    env.DB.prepare(
+      'SELECT MIN(started_at) AS since,MAX(COALESCE(ended_at,?)) AS until FROM metrics_capture_gap',
+    ).bind(now),
+    env.DB.prepare(
+      `SELECT COUNT(*) AS n FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id LEFT JOIN metrics_backfill b ON b.queue_id=q.id WHERE q.id!='confirmation-experiment' AND (?='platform_admin' OR t.created_by=?) AND b.completed_at IS NULL${
+        input.venueId ? ' AND v.id=?' : ''
+      }`,
+    ).bind(actor.role, actor.id, ...(input.venueId ? [input.venueId] : [])),
+  ])
+  const daily = snapshot[0] as D1Result<Daily>
+  const hourly = snapshot[1] as D1Result<Hourly>
+  const control = snapshot[2]!.results[0] as
+    | { last_complete_at: number | null; target_at: number | null }
+    | undefined
+  const gap = snapshot[3]!.results[0] as
+    | { since: number | null; until: number | null }
+    | undefined
+  const incompleteBackfill = snapshot[4]!.results[0] as
+    | { n: number }
+    | undefined
   const current = daily.results.filter((d) => d.date >= input.from)
   const prior = daily.results.filter((d) => d.date < input.from)
   const summary = totals(current),
     old = totals(prior)
   const provisional = input.to === today
-  const gap = await env.DB.prepare(
-    'SELECT MIN(started_at) AS since,MAX(COALESCE(ended_at,?)) AS until FROM metrics_capture_gap',
-  )
-    .bind(now)
-    .first<{ since: number | null; until: number | null }>()
   if (gap?.until != null) {
-    // Exclude every temporal partition before the last repair boundary, conservatively.
-    // This also protects reads while a pre-gap processor invocation is finishing.
     for (const row of daily.results)
       row.coverage_since = Math.max(row.coverage_since, gap.until)
   }
-  const incompleteBackfill = await env.DB.prepare(
-    `SELECT COUNT(*) AS n FROM queue q JOIN venue v ON v.id=q.venue_id JOIN tenant_account t ON t.organization_id=v.organization_id LEFT JOIN metrics_backfill b ON b.queue_id=q.id WHERE q.id!='confirmation-experiment' AND (?='platform_admin' OR t.created_by=?) AND b.completed_at IS NULL${
-      input.venueId ? ' AND v.id=?' : ''
-    }`,
-  )
-    .bind(actor.role, actor.id, ...(input.venueId ? [input.venueId] : []))
-    .first<{ n: number }>()
   const quality = (rows: Daily[], from: string, to: string) =>
     rows.length === 0
       ? 'unavailable'
-      : incompleteBackfill?.n ||
+      : control?.target_at != null ||
+        incompleteBackfill?.n ||
         rows.some(
           (d) =>
             d.historical ||
@@ -297,7 +305,13 @@ export async function readMetrics(
     a: number | null,
     b: number | null,
     unit: 'percent' | 'points' | 'absolute' = 'percent',
-  ) => comparison(a, previousComplete ? b : null, unit, provisional)
+  ) =>
+    comparison(
+      a,
+      coverage === 'complete' && previousComplete ? b : null,
+      unit,
+      provisional,
+    )
   const metric = (
     value: number | null,
     priorValue: number | null,

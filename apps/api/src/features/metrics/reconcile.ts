@@ -71,31 +71,44 @@ export async function reconciliationStatements(db: D1Database, now: number) {
   return statements
 }
 
-/** A deliberately disabled capture creates an explicit conservative coverage gap. */
+/** Persist an uncaptured write in its operational transaction, not at the next tick.
+ * Reopen the same conservative gap if capture toggles again before the cut advances.
+ * No per-turn facts or personal data are stored while capture is disabled. */
+export function captureGapStatement(db: D1Database, now: number) {
+  return db
+    .prepare(
+      `INSERT INTO metrics_capture_gap(started_at)
+    SELECT MIN(COALESCE(last_complete_at,?),?) FROM metrics_control
+    WHERE id=1 AND NOT EXISTS(SELECT 1 FROM metrics_capture_gap WHERE ended_at IS NULL)
+    ON CONFLICT(started_at) DO UPDATE SET ended_at=NULL`,
+    )
+    .bind(now, now)
+}
+
 export async function recordCaptureState(
   env: CloudflareBindings,
   now = Date.now(),
 ) {
-  if (env.METRICS_CAPTURE_ENABLED === 'true') {
-    const open = await env.DB.prepare(
-      'SELECT started_at FROM metrics_capture_gap WHERE ended_at IS NULL LIMIT 1',
-    ).first<{ started_at: number }>()
-    if (open)
-      await env.DB.batch([
-        env.DB.prepare(
-          'UPDATE metrics_capture_gap SET ended_at=? WHERE ended_at IS NULL',
-        ).bind(now),
-        env.DB.prepare(
-          "UPDATE metrics_backfill SET phase=0,after_created=0,after_id='',completed_at=NULL,repair_since=?",
-        ).bind(open.started_at),
-        env.DB.prepare('UPDATE metrics_queue SET coverage_since=?').bind(now),
-      ])
-  } else {
-    await env.DB.prepare(
-      `INSERT OR IGNORE INTO metrics_capture_gap(started_at)
-      SELECT COALESCE(last_complete_at,?) FROM metrics_control WHERE id=1 AND NOT EXISTS(SELECT 1 FROM metrics_capture_gap WHERE ended_at IS NULL)`,
-    )
-      .bind(now)
-      .run()
+  if (env.METRICS_CAPTURE_ENABLED !== 'true') {
+    await captureGapStatement(env.DB, now).run()
+    return
   }
+  // All predicates execute in one transaction. Concurrent resumptions cannot reset
+  // backfill a second time after another invocation has already closed the gap.
+  await env.DB.batch([
+    env.DB
+      .prepare(`UPDATE metrics_backfill SET phase=0,after_created=0,after_id='',completed_at=NULL,
+      repair_since=CASE WHEN completed_at IS NULL AND repair_since IS NULL THEN NULL
+        WHEN completed_at IS NOT NULL THEN (SELECT MIN(started_at) FROM metrics_capture_gap WHERE ended_at IS NULL)
+        ELSE MIN(COALESCE(repair_since,(SELECT MIN(started_at) FROM metrics_capture_gap WHERE ended_at IS NULL)),
+          (SELECT MIN(started_at) FROM metrics_capture_gap WHERE ended_at IS NULL)) END
+      WHERE EXISTS(SELECT 1 FROM metrics_capture_gap WHERE ended_at IS NULL)`),
+    env.DB.prepare(
+      `UPDATE metrics_queue SET coverage_since=MAX(coverage_since,?)
+      WHERE EXISTS(SELECT 1 FROM metrics_capture_gap WHERE ended_at IS NULL)`,
+    ).bind(now),
+    env.DB.prepare(
+      'UPDATE metrics_capture_gap SET ended_at=MAX(started_at,?) WHERE ended_at IS NULL',
+    ).bind(now),
+  ])
 }

@@ -67,3 +67,29 @@ To disable the dashboard, turn off only its flag; capture can continue. To retur
 to dedicated scheduling, first verify delivery of that trigger in staging, then
 restore its cron and disable the recovery flag together. Never remove the minute
 trigger: it is also the operational recovery path.
+
+## Verification of the recovery release
+
+On 14 October 2026 the recovery code (`4c3b953`) produced real scheduled cuts.
+The activation gate passed at 19:17 UTC: all 15 eligible queues imported,
+79 eligible entries reflected in rollups, no open cut, and the published cut
+newer than the final backfill. The dashboard was then enabled in staging version
+`52a7a15a-450d-4c66-9df7-ae13ae95e14b` (capture and recovery also enabled).
+
+- API: 638 local tests pass with capture on and off; web: 571 tests pass.
+- Real sessions: 33 API assertions cover permissions, isolation, query overrides,
+  revocation, banned users and mixed roles; own-venue totals reconcile with D1.
+- Browser: owner/manager get Gestión/Métricas, viewer/assigned queue_staff do not;
+  a 403 refresh removes an already displayed snapshot. All four combinations of
+  admin/commercial with owner/manager retain only Establecimientos/Métricas and
+  preserve existing venue management.
+- The temporary account, its memberships, assignments and sessions were deleted.
+  The dedicated admin smoke session was signed out; audit records were retained.
+- Operational baseline unchanged: 97 queue entries, version sum 130 and identical
+  notification status counts, with no pending/sending messages. The analytics
+  total excludes the separate confirmation experiment. Production was not changed.
+
+An old open PWA may keep serving its previous bundle while other tabs prevent a
+safe update. Preserve unsaved work in those tabs. For this verification only the
+agent-owned test tab was hard-reloaded, and its module URL was checked against
+the deployed release; other user tabs were not closed or changed.

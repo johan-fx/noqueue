@@ -164,6 +164,7 @@
         "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
         "PUBLIC_APP_ORIGIN": "https://staging.noqueue-app.com",
         "METRICS_CRON_RECOVERY_ENABLED": "true",
+        "METRICS_SERVICE_SNAPSHOT_CAPTURE_SINCE": "2026-10-11T00:00:00Z",
         "METRICS_CAPTURE_ENABLED": "true",
         "METRICS_DASHBOARD_ENABLED": "true",
         "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",

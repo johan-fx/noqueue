@@ -444,7 +444,8 @@ it('Q-PROGRESS keeps canonical serial deadlines positive and stable through poll
     100 * minute,
   ])
   await recalculateQueue(env, t.queue, now + 3 * minute)
-  expect(await deadlineQuery()).toEqual(afterConfiguration)
+  // D1 timing metadata is not part of deadline stability (duration may vary).
+  expect((await deadlineQuery()).results).toEqual(afterConfiguration.results)
 })
 
 it('Q-PROGRESS captures grace in the versioned call, replays safely and never resets on restore/new call', async () => {

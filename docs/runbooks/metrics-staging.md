@@ -93,3 +93,59 @@ An old open PWA may keep serving its previous bundle while other tabs prevent a
 safe update. Preserve unsaved work in those tabs. For this verification only the
 agent-owned test tab was hard-reloaded, and its module URL was checked against
 the deployed release; other user tabs were not closed or changed.
+
+## Historical service classification (15 October 2026)
+
+The admission `service_window_id` contains a JSON signature with the service type
+at admission. The current queue configuration is NOT historical evidence: its
+type is mutable and configuration audit rows do not retain before/after values.
+
+`METRICS_SERVICE_SNAPSHOT_CAPTURE_SINCE` is an explicit, environment-specific,
+verified admission-capture boundary. Staging uses `2026-10-11T00:00:00Z`, after
+the snapshot implementation was deployed (migration 0014 applied 10 October).
+Other environments remain unset. Without a boundary, for earlier admissions,
+invalid signatures/zones/dates, or legacy/synthetic snapshots, backfill continues
+to use `unknown`. Legacy maintenance can populate previously NULL snapshots;
+therefore simply finding a JSON signature in an older entry is NOT sufficient.
+Recovery changes only the service type, not the historical/coverage designation,
+timezone, wait evidence or operational data. Existing live identities win.
+
+Existing analytical dimensions require a separate, audited repair; rerunning
+backfill alone is insufficient. The operator script is hard-wired to the staging
+D1 ID and uses Wrangler's remote D1 binding, with no public maintenance endpoint.
+Create a reviewed manifest `{ venueId, entryIds, capturedSince }` (maximum 100
+explicit IDs) and retain a scoped analytical backup plus before/after totals.
+
+```sh
+# From apps/api; first invocation is read-only.
+node scripts/reclassify-historical-metrics.mjs /absolute/manifest.json
+node scripts/reclassify-historical-metrics.mjs /absolute/manifest.json --apply
+```
+
+The single D1 batch is guarded against an active lease/cut, unprocessed events,
+changed entries, partial source dimensions, missing retained detail and nonzero
+historical occupancy. It migrates identities, retained events, entry dimensions,
+daily/hourly counts and dirty markers together; a failure rolls everything back.
+It preserves destination occupancy coverage rather than adding duplicate empty
+observation intervals. Repeating the identical manifest is a no-op. A changed
+cohort must be reviewed again; never bypass the guards or reclassify by queue name.
+
+The approved SOL LUNAMAR PALMANOVA cohort is 55: Front Desk 18 reception;
+Snack bar 31 restaurant; QA1012 Contextual 5 restaurant; QA1012 Avisos 1 restaurant.
+Keep all six QA turns. Expected totals: 55 generated, 11 completed, 38 cancelled,
+6 no-shows (`expired`), 0 pending; 23 wait samples totaling 6,407,131 ms.
+Verify these totals, all other venues, operational versions/notification counts,
+and another completed analytical cut after repair. No production rollout is implied.
+
+Recovery was deployed only to staging as version
+`a178a6e3-0ce6-4f16-8b3e-5d7cd2bd37f2`. The transaction changed 55 entries and an
+identical retry changed zero. Chrome confirmed 18 reception / 37 restaurant and
+no unknown row. Daily/hourly totals for every venue, operational entry/version
+counts, notification counts and existing Worker bindings matched the preflight.
+Validation: 647 API tests with capture disabled and enabled, 571 web tests, and
+type checking pass. Nine new cases cover snapshot validation, admission cutoff,
+QA preservation, isolation, atomic rollback, cut/capture fencing, idempotency,
+subsequent updates and merges into an existing classified dimension. An existing
+deadline test now compares rows rather than nondeterministic D1 timing metadata.
+The next automatic cut completed at `2026-10-15T13:04:13.766Z` with cursor 79 and
+no open target; all classification, totals and isolation assertions still passed.

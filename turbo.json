@@ -3,7 +3,8 @@
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
-      "outputs": ["dist/**"]
+      "outputs": ["dist/**"],
+      "env": ["VITE_APP_ENV", "VITE_ANALYTICS_ENABLED", "VITE_GA4_MEASUREMENT_ID", "LANDING_APP_ENV", "LANDING_ANALYTICS_ENABLED", "LANDING_GA4_MEASUREMENT_ID"]
     },
     "@noqueue/api#build": {
       "dependsOn": ["@noqueue/web#build", "^build"],

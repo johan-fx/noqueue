@@ -412,6 +412,11 @@ test('owner manages nested staff access, roles and password recovery', async ({
     .getByLabel('Contraseña inicial (mínimo 15 caracteres)')
     .fill(venue.password)
   await createDrawer
+    .getByRole('combobox', { name: 'Servicios a gestionar' })
+    .click()
+  await page.getByRole('option', { name: 'Restaurant E2E', exact: true }).click()
+  await page.getByRole('combobox', { name: 'Buscar servicios' }).press('Escape')
+  await createDrawer
     .getByRole('button', { name: 'Crear acceso', exact: true })
     .click()
   await expect(createDrawer).toHaveCount(0)
@@ -1004,4 +1009,42 @@ test('estimate reference and arrival deadline persist without inventory adjustme
   ).toHaveValue('42')
   await page.keyboard.press('Escape')
   await page.keyboard.press('Escape')
+})
+
+test('configuration drafts reject concurrent changes even after catalogue polling', async ({
+  page, request, baseURL,
+}) => {
+  const venue = await provisionVenue(request, baseURL!)
+  await signInOwner(page, venue.owner, venue.password, venue.venueName)
+  const drawer = await openServiceConfig(page)
+  await drawer.getByLabel('Nombre del servicio').fill('Local draft')
+  const rows = await (await page.request.get(`/api/v1/staff/venues/${venue.venueId}/queues`)).json()
+  const queueId = rows[0].id as string
+  const path = `/api/v1/staff/queues/${queueId}`
+  // Another editor uses its own snapshot, while the first form remains open.
+  const context = await (await page.request.get(`${path}/configuration-context`)).json()
+  const competing = await page.request.patch(path, {
+    headers: { Origin: baseURL! },
+    data: { ...context.config, name: 'Concurrent edit', version: context.version, open: !!context.open },
+  })
+  expect(competing.status(), await competing.text()).toBe(200)
+  const refreshed = page.waitForResponse((response) => response.url().endsWith(`/venues/${venue.venueId}/queues`)
+    && response.request().method() === 'GET')
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  expect((await (await refreshed).json())[0].config.name).toBe('Concurrent edit')
+  await expect(drawer.getByLabel('Nombre del servicio')).toHaveValue('Local draft')
+  for (let step = 0; step < 4; step++)
+    await drawer.getByRole('button', { name: 'Siguiente', exact: true }).click()
+  const rejected = page.waitForResponse((response) => response.url().endsWith(`/queues/${queueId}`)
+    && response.request().method() === 'PATCH')
+  await drawer.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  expect((await rejected).status()).toBe(409)
+  await expect(drawer.getByRole('alert')).toContainText('Otra persona ha modificado')
+  const persisted = await (await page.request.get(`${path}/configuration-context`)).json()
+  expect(persisted.config.name).toBe('Concurrent edit')
+  expect(persisted.version).toBe(context.version + 1)
+  await page.keyboard.press('Escape')
+  await expect(drawer).toHaveCount(0)
+  const reopened = await openServiceConfig(page)
+  await expect(reopened.getByLabel('Nombre del servicio')).toHaveValue('Concurrent edit')
 })

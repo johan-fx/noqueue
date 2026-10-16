@@ -21,6 +21,8 @@
     "pwa/**/*.ts",
     "demo.config.ts",
     "demo/**/*.ts",
-    "helpers/**/*.ts"
+    "helpers/**/*.ts",
+    "privacy.config.ts",
+    "privacy/**/*.spec.ts"
   ]
 }

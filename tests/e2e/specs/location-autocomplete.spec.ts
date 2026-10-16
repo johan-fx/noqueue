@@ -47,6 +47,8 @@ test('commercial signup autocomplete: mobile empty Escape, Tab without selection
   page.on('request', (r) => {
     if (r.url().endsWith('/locations/autocomplete')) queries++
   })
+  await input.click()
+  await expect(input).toBeInViewport()
   await input.fill('Vacío Madrid')
   await expect(page.locator('[data-slot=combobox-content]')).toBeVisible()
   await expect(page.getByRole('option')).toHaveCount(0)
@@ -246,3 +248,48 @@ test('venue edit autocomplete preserves the stored address until explicit save a
     await staff.close()
   }
 })
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 390, height: 844 },
+]) {
+  test(`signup address is reachable by pointer and Tab in a scrolled drawer (${viewport.width}px)`, async ({
+    page, request,
+  }) => {
+    await page.setViewportSize(viewport)
+    await login(page, request)
+    await page.getByRole('button', { name: 'Crear nuevo' }).click()
+    const input = page.getByLabel('Dirección del establecimiento')
+    const option = page.getByRole('option', { name: /Calle Mayor 1, Madrid/ })
+    // The logo and credentials put this field below the drawer's initial fold.
+    await expect(input).not.toBeInViewport()
+    await input.click()
+    await expect(input).toBeInViewport()
+    await input.fill('Calle Mayor 1 Madrid')
+    await expect(option).toBeInViewport()
+    await option.click()
+    await expect(input).toHaveValue('Calle Mayor 1, Madrid')
+    await expect(input).toHaveAttribute('aria-expanded', 'false')
+
+    await page.getByRole('button', { name: 'Cancelar', exact: true }).click()
+    await page.getByRole('button', { name: 'Crear nuevo' }).click()
+    await expect(input).toHaveValue('')
+    await page.getByLabel('Empresa / organización').click()
+    await expect(input).not.toBeInViewport()
+    // Real sequential focus must scroll too; do not focus/scroll the address
+    // programmatically, or use Enter to conceal an offscreen pointer target.
+    for (let step = 0; step < 20; step++) {
+      await page.keyboard.press('Tab')
+      if (await input.evaluate((element) => element === document.activeElement)) break
+    }
+    await expect(input).toBeFocused()
+    await expect(input).toBeInViewport()
+    await page.keyboard.type('Calle Mayor 1 Madrid')
+    await expect(option).toBeInViewport()
+    await page.keyboard.press('ArrowDown')
+    await page.keyboard.press('Enter')
+    await expect(input).toHaveValue('Calle Mayor 1, Madrid')
+    await expect(input).toHaveAttribute('aria-expanded', 'false')
+    await expect(page.getByText('Dirección seleccionada.', { exact: false })).toBeVisible()
+  })
+}

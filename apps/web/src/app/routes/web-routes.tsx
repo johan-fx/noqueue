@@ -4,6 +4,7 @@ import type { RouteObject } from 'react-router'
 import { WebShell } from '../shells/WebShell'
 
 export const webRoutes: RouteObject[] = [
+  { path: '/privacy', lazy: async () => ({ Component: (await import('@/features/privacy/PrivacyPage')).PrivacyPage }) },
   {
     path: '/',
     lazy: async () => ({

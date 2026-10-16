@@ -19,8 +19,8 @@ With the preview running, `node apps/landing/scripts/browser-check.mjs` uses the
 
 ## Boundaries
 
-- `src/` contains the complete public HTML/CSS/assets. The build copies only this directory to ignored `dist/`.
-- Only a small local preferences script is shipped. No form, analytics, external fonts, API requests, databases, service bindings, or pilot links are shipped.
+- `src/` contains public HTML/CSS/assets. The build copies them and bundles the shared privacy entry/CSS locally with esbuild, generating a bilingual `/privacy/` page. No React is added.
+- Preferences and CookieConsent scripts are local. GA4 is **off by default**. When explicitly enabled in production, only acknowledged consent permits Google to load; receipts go to the production app API without credentials. No external fonts, databases, service bindings, forms or pilot links are shipped. See [privacy rollout](../../docs/runbooks/privacy-analytics.md).
 - `wrangler.jsonc` describes a separate `noqueue-landing` static-assets deployment, scoped only to the apex domain. Unknown paths receive the custom 404, not an app fallback. Workers.dev and preview URLs are disabled.
 - There is no Worker script, so Worker execution logs/traces are not applicable. Hosting-layer logging is controlled by the hosting account.
 - The public contact email is `hola@noqueue-app.com`. Keep public copy and its content test aligned when updating it.
@@ -46,3 +46,7 @@ Publication is a separate, explicitly authorized operation. Confirm the owner/co
 Rollback for this uncommitted unit: remove `apps/landing/` and only the `apps/landing` importer from the lockfile. Preserve all pre-existing API/web/lockfile edits. This does not undo the production deployment. Remote rollback/unpublication is a separate authorized operation, scoped to this Worker and its apex custom domain; preserve unrelated services and all email DNS records.
 
 References: [Cloudflare static assets](https://developers.cloudflare.com/workers/static-assets/get-started/), [custom 404 routing](https://developers.cloudflare.com/workers/static-assets/routing/static-site-generation/). Configuration was checked against the installed Wrangler 4.131.0 schema.
+
+## Privacy build variables (default OFF)
+
+`LANDING_APP_ENV`, `LANDING_ANALYTICS_ENABLED`, `LANDING_GA4_MEASUREMENT_ID` are build-time variables, hashed by Turbo. Omitted values disable analytics. Only `production` + `true` + a valid ID + exact HTTPS apex + acknowledged consent can activate it. `dev` and preview never qualify. Local builds/tests do not need Google credentials. Do not enable before the production receipt API and the legal/console checks in the runbook are ready.

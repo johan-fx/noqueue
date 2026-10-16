@@ -654,6 +654,12 @@ export type VenueSummary = VenueLogoState & {
   organizationName: string
   role: StaffRole
 }
+/** Immutable baseline for a configuration draft, prepared by the coordinator. */
+export type QueueConfigurationContext = Pick<
+  QueueSummary,
+  'id' | 'version' | 'open' | 'config'
+>
+
 export type QueueSummary = Partial<AdmissionStatus> & {
   /** Real waiting turns, independent of the paginated staff entry list. */
   waitingCount?: number

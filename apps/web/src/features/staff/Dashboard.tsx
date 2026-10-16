@@ -10,6 +10,7 @@ import { useEffect, useState, useRef, useCallback } from 'react'
 import type {
   Capability,
   QueueSummary,
+  QueueConfigurationContext,
   StaffEntry,
   VenueSummary,
   QueueCommand,
@@ -105,6 +106,10 @@ export function Dashboard(props: DashboardProps) {
     'create' | 'edit' | 'members' | 'queue' | null
   >(null)
   const [drawerError, setDrawerError] = useState('')
+  const [editBaseline, setEditBaseline] =
+    useState<QueueConfigurationContext | null>(null)
+  const [loadingConfiguration, setLoadingConfiguration] = useState(false)
+  const configurationRequest = useRef(false)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
   const savingRef = useRef(false)
@@ -123,7 +128,10 @@ export function Dashboard(props: DashboardProps) {
     mode: 'create' | 'edit' | 'members' | 'queue',
     trigger: HTMLButtonElement,
   ) {
-    if (savingRef.current || commandLock.current || pending || adding) return
+    if (
+      savingRef.current || configurationRequest.current ||
+      commandLock.current || pending || adding
+    ) return
     drawerTrigger.current = trigger
     creationRequest.current = null
     setDrawerError('')
@@ -231,7 +239,9 @@ export function Dashboard(props: DashboardProps) {
   const pendingActionAllowed =
     !!pendingEntry &&
     !!pending &&
-    allowsEntryAction(pendingEntry, pending.queueId, pending.action)
+    (pendingEntry.allowedActions ??
+      entryActions(pendingEntry.status, pendingQueue?.config.type)
+    ).includes(pending.action)
   const pendingActionUnavailable =
     !!pending && (!pendingEntry || !pendingActionAllowed)
   const commitEntries = useCallback((rows: StaffEntry[]) => {
@@ -258,7 +268,7 @@ export function Dashboard(props: DashboardProps) {
       commandRequest.current = null
       setSelected(queueId)
     },
-    [commitEntries],
+    [commitEntries, setPending, setArrivalMode, setSeating],
   )
   const commitQueues = useCallback(
     (rows: QueueSummary[]) => {
@@ -287,7 +297,7 @@ export function Dashboard(props: DashboardProps) {
         selectQueue(rows[0]?.id ?? '')
       }
     },
-    [selectQueue],
+    [selectQueue, setAdding],
   )
   function allowsEntryAction(
     entry: StaffEntry,
@@ -461,7 +471,12 @@ export function Dashboard(props: DashboardProps) {
           creationRequest.current.key,
         )
         selectQueue(result.id)
-      } else if (drawer === 'edit' && queue) {
+      } else if (
+        drawer === 'edit' && editBaseline && queue?.id === editBaseline.id
+      ) {
+        // Polling must never upgrade the version of an older draft. A concurrent
+        // change is a real 409, not permission to overwrite it with this form.
+        const queue = editBaseline
         const noticePolicyChanged =
           (config.approachMinutes ?? 10) !==
             (queue.config.approachMinutes ?? 10) ||
@@ -491,10 +506,41 @@ export function Dashboard(props: DashboardProps) {
       creationRequest.current = null
       await refreshQueues()
     } catch (e) {
-      setDrawerError(errorMessage(e))
+      setDrawerError(
+        e instanceof ApiError && e.code === 'version_conflict'
+          ? 'Otra persona ha modificado la lista. Cierra y vuelve a abrir la configuración para revisar los cambios antes de guardar.'
+          : errorMessage(e),
+      )
     } finally {
       savingRef.current = false
       setSaving(false)
+    }
+  }
+  async function editService(service: QueueSummary, trigger: HTMLButtonElement) {
+    if (
+      configurationRequest.current || savingRef.current ||
+      commandLock.current || pending || adding
+    ) return
+    configurationRequest.current = true
+    setLoadingConfiguration(true)
+    setError('')
+    selectQueue(service.id)
+    try {
+      const baseline = await api<QueueConfigurationContext>(
+        `/queues/${service.id}/configuration-context`,
+      )
+      if (
+        selectedRef.current !== service.id ||
+        !queuesRef.current.some((row) => row.id === service.id)
+      ) return
+      setEditBaseline(baseline)
+      configurationRequest.current = false
+      openDrawer('edit', trigger)
+    } catch (e) {
+      setError(`No se pudo cargar la configuración. ${errorMessage(e)}`)
+    } finally {
+      configurationRequest.current = false
+      setLoadingConfiguration(false)
     }
   }
   function selectCommand(entry: StaffEntry, action: EntryCommand['action']) {
@@ -810,6 +856,7 @@ export function Dashboard(props: DashboardProps) {
                       permissions={permissions}
                       waitingCount={waitingCounts[service.id]}
                       disabled={
+                        loadingConfiguration ||
                         busy ||
                         saving ||
                         !!lifecycle ||
@@ -825,8 +872,7 @@ export function Dashboard(props: DashboardProps) {
                         openDrawer('queue', trigger)
                       }}
                       onConfigure={(trigger) => {
-                        selectQueue(service.id)
-                        openDrawer('edit', trigger)
+                        void editService(service, trigger)
                       }}
                       onAdvanced={(trigger) =>
                         setAdvanced({ queueId: service.id, trigger })
@@ -879,10 +925,10 @@ export function Dashboard(props: DashboardProps) {
           />
         )}
       <ServiceConfigDrawer
-        resetKey={drawer === 'edit' ? queue?.id ?? 'edit' : 'create'}
+        resetKey={drawer === 'edit' ? editBaseline?.id ?? 'edit' : 'create'}
         open={drawer === 'create' || drawer === 'edit'}
         mode={drawer === 'edit' ? 'edit' : 'create'}
-        {...(drawer === 'edit' && queue ? { initial: queue.config } : {})}
+        {...(drawer === 'edit' && editBaseline ? { initial: editBaseline.config } : {})}
         saving={saving}
         error={drawerError}
         finalFocus={drawerTrigger}

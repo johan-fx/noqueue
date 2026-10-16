@@ -11,6 +11,10 @@
     "check:deploy": "pnpm build && wrangler deploy --dry-run"
   },
   "devDependencies": {
-    "wrangler": "4.131.0"
+    "wrangler": "4.131.0",
+    "esbuild": "0.28.2"
+  },
+  "dependencies": {
+    "@noqueue/privacy": "workspace:*"
   }
 }

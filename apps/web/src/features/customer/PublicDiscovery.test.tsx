@@ -209,3 +209,13 @@ it('refreshes visible discovery every five seconds and deduplicates focus', asyn
   })
   expect(fetcher).toHaveBeenCalledTimes(2)
 })
+
+it('marks the initial anonymous home ready without requiring a search response', () => {
+  const ready = vi.fn()
+  window.addEventListener('noqueue:public-page-ready', ready)
+  try {
+    render(<MemoryRouter><PublicDiscovery /></MemoryRouter>)
+    expect(ready).toHaveBeenCalled()
+    expect((ready.mock.calls.at(-1)![0] as CustomEvent).detail).toEqual({ pathname: '/', ready: true })
+  } finally { window.removeEventListener('noqueue:public-page-ready', ready) }
+})

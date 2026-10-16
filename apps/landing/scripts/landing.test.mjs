@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile, readdir } from 'node:fs/promises';
 import test from 'node:test';
+import { gzipSync } from 'node:zlib';
+import './build.mjs';
 
-const source = new URL('../src/', import.meta.url);
+const source = new URL('../dist/', import.meta.url);
 const read = (name) => readFile(new URL(name, source), 'utf8');
 
 test('identifies the owner and public contact without promising availability', async () => {
@@ -19,19 +21,19 @@ test('publishes only local static assets, contact links and page anchors', async
     const html = await read(name);
     assert.doesNotMatch(html, /<(iframe|form)\b/i);
     assert.match(html, /<script src="\/preferences.js" defer><\/script>/);
-    assert.equal([...html.matchAll(/<script\b/g)].length, 1);
+    assert.equal([...html.matchAll(/<script\b/g)].length, 2);
     for (const [, href] of html.matchAll(/(?:href|src)="([^"]+)"/g)) {
       if (href.startsWith('#')) {
         assert.ok(html.includes(`id="${href.slice(1)}"`));
       } else if (href.startsWith('/') && !href.startsWith('//')) {
-        if (href !== '/') await read(href.slice(1));
+        if (href !== '/') await read(href === '/privacy/' ? 'privacy/index.html' : href.slice(1));
       } else {
         assert.ok(['https://noqueue-app.com/', 'mailto:hola@noqueue-app.com', 'tel:+34971682500'].includes(href), `Unexpected URL: ${href}`);
       }
     }
   }
   assert.doesNotMatch(await read('styles.css'), /@import|https?:\/\//i);
-  assert.deepEqual((await readdir(source)).sort(), ['404.html', '_headers', 'favicon.svg', 'googlebc43045699d02e9c.html', 'index.html', 'preferences.js', 'robots.txt', 'styles.css']);
+  assert.deepEqual((await readdir(source)).sort(), ['404.html', '_headers', 'cookieconsent.LICENSE.txt', 'favicon.svg', 'googlebc43045699d02e9c.html', 'index.html', 'preferences.js', 'privacy', 'privacy.css', 'privacy.js', 'robots.txt', 'styles.css']);
 });
 
 test('isolates deployment from the pilot and rejects unknown routes with 404', async () => {
@@ -45,4 +47,24 @@ test('isolates deployment from the pilot and rejects unknown routes with 404', a
   assert.match(await read('_headers'), /default-src 'none'/);
   assert.match(await read('_headers'), /script-src 'self'/);
   assert.doesNotMatch(await read('_headers'), /unsafe-inline/);
+});
+
+
+test('serves consent locally and publishes bilingual legal copy without inline scripts or Google hints', async () => {
+  for (const name of ['index.html', '404.html', 'privacy/index.html']) {
+    const html = await read(name);
+    assert.match(html, /src="\/privacy.js"/);
+    assert.match(html, /data-privacy-settings/);
+    assert.match(html, /name="referrer" content="no-referrer"/);
+    assert.doesNotMatch(html, /preconnect|dns-prefetch|googletagmanager|<script[^>]*>[^<]+/);
+  }
+  const legal = await read('privacy/index.html');
+  assert.match(legal, /13 meses/);
+  assert.match(legal, /data-en=/);
+  assert.ok((await read('privacy.css')).includes('#cc-main'));
+});
+
+
+test('keeps the self-hosted consent entry lightweight', async () => {
+  assert.ok(gzipSync(await read('privacy.js')).byteLength < 20000, 'Do not bundle the server schema/locale catalogue into the landing');
 });

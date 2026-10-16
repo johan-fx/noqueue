@@ -1,0 +1,57 @@
+{
+  "revision": 1,
+  "library": "vanilla-cookieconsent@3.1.0",
+  "mode": "opt-in / GA4 Basic",
+  "consentDays": 180,
+  "receiptRetentionMonths": 13,
+  "retentionLegalApprovalRequired": true,
+  "gaUserEventRetentionMonths": 2,
+  "storage": "localStorage; independent origins",
+  "origins": [
+    "https://noqueue-app.com",
+    "https://app.noqueue-app.com"
+  ],
+  "analyticsEnabledByDefault": false,
+  "categories": [
+    "necessary",
+    "analytics"
+  ],
+  "receiptFields": [
+    "decisionId",
+    "consentId",
+    "revision",
+    "locale",
+    "analytics"
+  ],
+  "receiptServerFields": [
+    "origin",
+    "received_at"
+  ],
+  "allowedLandingRoutes": [
+    "/"
+  ],
+  "allowedAppRoutes": {
+    "/": "/",
+    "/search": "/search",
+    "/v/:venueId": "/v/venue",
+    "/q/:queueId": "/q/queue"
+  },
+  "excludedQueueIds": [
+    "demo-queue",
+    "confirmation-experiment"
+  ],
+  "ga": {
+    "send_page_view": false,
+    "enhancedMeasurement": false,
+    "cookie_domain": "none",
+    "cookie_update": false,
+    "page_referrer": "",
+    "googleSignals": false,
+    "ads": false,
+    "userId": false,
+    "crossDomain": false
+  },
+  "excludedVenueIds": [
+    "demo-venue"
+  ]
+}

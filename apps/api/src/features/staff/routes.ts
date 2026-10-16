@@ -850,6 +850,12 @@ staffRoutes.post('/queues/:id/lifecycle', async (c) => {
   )
   return c.json(result.body, result.status as 200)
 })
+staffRoutes.get('/queues/:id/configuration-context', async (c) => {
+  const actor = c.get('actor').id
+  const queueId = c.req.param('id')
+  await queueAccess(c.env, actor, queueId, 'queue.configure')
+  return c.json(await coordinator(c.env, queueId).configurationContext(actor, queueId))
+})
 staffRoutes.patch('/queues/:id', async (c) => {
   await queueAccess(
     c.env,

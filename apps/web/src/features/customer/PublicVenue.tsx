@@ -1,3 +1,4 @@
+import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { ClosedServiceCard } from './ClosedServiceCard'
 import { PublicWaitingTurns } from './PublicWaitingTurns'
 import { useLocale, usePublicResource } from './public-resource'
@@ -17,6 +18,7 @@ export function PublicVenue() {
     updatedAt,
     refresh,
   } = usePublicResource(`/api/v1/public/venues/${venueId}/services`, parse)
+  usePublicAnalyticsPage(Boolean(venue), error)
   const services = venue?.services.filter(isVisibleVenueService) ?? []
   return (
     <CustomerShell title="No Queue" locale={locale} setLocale={setLocale}>

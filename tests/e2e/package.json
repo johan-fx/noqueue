@@ -5,7 +5,8 @@
     "check-types": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test:e2e": "playwright test",
-    "test:pwa": "playwright test --config pwa.config.ts"
+    "test:pwa": "playwright test --config pwa.config.ts",
+    "test:privacy": "playwright test --config privacy.config.ts"
   },
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.23.0",

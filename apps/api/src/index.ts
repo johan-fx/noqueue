@@ -1,3 +1,5 @@
+import { cleanupPrivacyConsents, cleanupPrivacyLimits } from './features/privacy/routes'
+import { configurationContext } from './features/staff/configuration-context'
 import { recoverScheduledMetrics, runScheduledMetrics, stagingMetricsRecoveryEnabled } from './features/metrics/scheduled'
 import { backfillMetricsQueue } from './features/metrics/backfill'
 import { backfillDirectoryConfigs } from './features/discovery/configuration'
@@ -150,6 +152,11 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       ),
     )
   }
+  configurationContext(actor: string, queueId: string) {
+    return this.serialize(() =>
+      this.withQueue(queueId, () => configurationContext(this.env, actor, queueId)),
+    )
+  }
   openingContext(queueId: string) {
     return this.serialize(() =>
       this.withQueue(queueId, () => openingContext(this.env, queueId)),
@@ -269,6 +276,12 @@ export default {
   },
   async scheduled(controller, env) {
     if (controller.cron === '*/15 * * * *') {
+      try { await cleanupPrivacyLimits(env, controller.scheduledTime) } catch { console.error('privacy_rate_cleanup_failed') }
+      // Once daily; bounded indexed maintenance, never in the queue hot path.
+      const time = new Date(controller.scheduledTime)
+      if (time.getUTCHours() === 3 && time.getUTCMinutes() === 0) {
+        try { await cleanupPrivacyConsents(env, controller.scheduledTime) } catch { console.error('privacy_cleanup_failed') }
+      }
       if (!stagingMetricsRecoveryEnabled(env)) await runScheduledMetrics(env)
       return
     }

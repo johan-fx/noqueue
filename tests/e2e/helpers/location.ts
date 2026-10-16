@@ -18,11 +18,14 @@ export async function resolveFixtureLocation(
   }
 }
 export async function confirmFixtureLocation(page: Page) {
-  await page
-    .getByLabel('Dirección del establecimiento')
-    .fill('Calle Mayor 1 Madrid')
-  await page.getByRole('option', { name: /Calle Mayor 1, Madrid/ }).click()
-  await expect(page.getByLabel('Dirección del establecimiento')).toHaveValue(
-    'Calle Mayor 1, Madrid',
-  )
+  const input = page.getByLabel('Dirección del establecimiento')
+  // fill() can edit an offscreen input without scrolling in WebKit. Focus it
+  // like a pointer user first, so the portalled suggestions have a visible anchor.
+  await input.click()
+  await expect(input).toBeInViewport()
+  await input.fill('Calle Mayor 1 Madrid')
+  const candidate = page.getByRole('option', { name: /Calle Mayor 1, Madrid/ })
+  await expect(candidate).toBeInViewport()
+  await candidate.click()
+  await expect(input).toHaveValue('Calle Mayor 1, Madrid')
 }

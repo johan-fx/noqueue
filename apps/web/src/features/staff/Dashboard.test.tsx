@@ -2163,3 +2163,37 @@ it('drops rows on a direct access denial and refreshes assignments on focus', as
     await screen.findByRole('article', { name: 'Servicio Otro servicio' }),
   ).toBeVisible()
 })
+
+it('does not open a stale configuration form while its baseline is loading or failed', async () => {
+  let rejectBaseline!: (error: Error) => void
+  const failedBaseline = new Promise<never>((_, reject) => { rejectBaseline = reject })
+  let retry = false
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues')) return [service]
+    if (path.endsWith('/configuration-context')) return retry
+      ? { ...service, version: 2, config: { ...service.config, name: 'Prepared configuration' } }
+      : failedBaseline
+    return []
+  })
+  render(
+    <Dashboard venue={{
+      id: 'hotel', name: 'Hotel', organizationId: 'org',
+      organizationName: 'Empresa', role: 'owner',
+    }} />,
+  )
+  const open = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: 'Opciones del servicio' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Configurar servicio' }))
+  }
+  await open()
+  await waitFor(() => expect(api).toHaveBeenCalledWith('/queues/restaurant/configuration-context'))
+  expect(screen.queryByRole('dialog', { name: 'Configuración restaurante' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Opciones del servicio' })).toBeDisabled()
+  await act(async () => { rejectBaseline(new Error('Unavailable')) })
+  expect(await screen.findByRole('alert')).toHaveTextContent('No se pudo cargar la configuración')
+  expect(screen.queryByRole('dialog', { name: 'Configuración restaurante' })).not.toBeInTheDocument()
+  retry = true
+  await open()
+  const drawer = await screen.findByRole('dialog', { name: 'Configuración restaurante' })
+  expect(within(drawer).getByLabelText('Nombre del servicio')).toHaveValue('Prepared configuration')
+})

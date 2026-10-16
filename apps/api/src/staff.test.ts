@@ -14,7 +14,7 @@ import { setupNetwork } from '../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
 import { createAuth } from './auth/server'
-import { provisionSchema, type ProvisionInput } from '@noqueue/contracts/staff'
+import { provisionSchema, type ProvisionInput, type QueueConfigurationContext } from '@noqueue/contracts/staff'
 import { provision } from './features/staff/provision'
 import { profileD1 } from '../test/d1-profile'
 import { applyD1Migrations } from 'cloudflare:test'
@@ -3612,4 +3612,49 @@ describe('explicit queue-scoped staff access', () => {
       await env.DB.prepare('DROP TRIGGER reject_staff_queue').run()
     }
   })
+})
+
+it('prepares an activated configuration baseline and rejects a competing draft without overwriting it', async () => {
+  const t = await tenant()
+  const path = `/staff/queues/${t.queueId}`
+  const read = async () => {
+    const response = await request(`${path}/configuration-context`, t.owner.cookie)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('Cache-Control')).toBe('no-store')
+    return response.json() as Promise<QueueConfigurationContext>
+  }
+  const before = await env.DB.prepare('SELECT version FROM queue WHERE id=?')
+    .bind(t.queueId).first<number>('version')
+  const first = await read()
+  expect(first.config.estimationMode).toBe('active')
+  expect(first.version).toBe(before! + 1)
+  // The normal entry refresh no longer invalidates a just-opened editor.
+  expect((await request(`${path}/entries`, t.owner.cookie)).status).toBe(200)
+  const second = await read()
+  expect(second).toEqual(first)
+  const save = (baseline: QueueConfigurationContext, name: string) => request(
+    path, t.owner.cookie, 'PATCH',
+    { ...baseline.config, version: baseline.version, open: !!baseline.open, name },
+  )
+  expect((await save(first, 'First editor')).status).toBe(200)
+  const stale = await save(second, 'Competing editor')
+  expect(stale.status).toBe(409)
+  expect(await stale.json()).toEqual({ error: 'version_conflict' })
+  const saved = await read()
+  expect(saved.config.name).toBe('First editor')
+  expect(saved.version).toBe(first.version + 1)
+  expect((await save(saved, 'Explicit fresh edit')).status).toBe(200)
+  expect((await read()).config.name).toBe('Explicit fresh edit')
+})
+
+it('restricts configuration baselines to configuration-capable staff in the venue', async () => {
+  const t = await tenant()
+  const path = `/staff/queues/${t.queueId}/configuration-context`
+  for (const role of ['queue_staff', 'viewer']) {
+    const user = await member(t, role)
+    expect((await request(path, user.cookie)).status).toBe(403)
+  }
+  const foreign = await tenant()
+  expect((await request(path, foreign.owner.cookie)).status).toBe(404)
+  expect((await request(path)).status).toBe(401)
 })

@@ -1,3 +1,4 @@
+import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { useLocale, usePublicResource } from './public-resource'
 import { useEffect, useState } from 'react'
 import { visitService } from './discovery-state'
@@ -29,6 +30,7 @@ export function PublicQueue() {
   useEffect(() => {
     if (service) visitService(service.id)
   }, [service])
+  usePublicAnalyticsPage(Boolean(service), error)
   const Form = service?.type === 'restaurant' ? RestaurantForm : ServiceForm
 
   return (

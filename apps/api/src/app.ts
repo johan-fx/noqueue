@@ -1,3 +1,4 @@
+import { privacyRoutes } from './features/privacy/routes'
 import { discoveryRoutes } from './features/discovery/routes'
 import { localVenueLogo } from './features/staff/logo'
 import { customerRoutes } from './features/queue/customer-routes'
@@ -118,6 +119,8 @@ app.get('/health', (context) => {
 app.get('/venue-logos/:venue/:object', (c) =>
   localVenueLogo(c.env, c.req.param('venue'), c.req.param('object'), c.req.method),
 )
+
+app.route('/privacy', privacyRoutes)
 
 export type AppType = typeof app
 

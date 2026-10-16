@@ -1,0 +1,26 @@
+@import 'vanilla-cookieconsent/dist/cookieconsent.css';
+#cc-main { --cc-font-family: inherit; --cc-btn-primary-bg: #17242a; --cc-btn-primary-border-color: #17242a; --cc-btn-primary-hover-bg: #30434c; --cc-btn-primary-hover-border-color: #30434c; --cc-btn-border-radius: .5rem; --cc-modal-border-radius: .75rem; }
+.dark #cc-main, [data-theme="dark"] #cc-main {
+  color-scheme: dark;
+  --cc-bg: #181b1d; --cc-primary-color: #f5f5f5; --cc-secondary-color: #d3d6d8;
+  --cc-btn-primary-bg: #c2d0e0; --cc-btn-primary-color: #181b1d; --cc-btn-primary-border-color: #c2d0e0;
+  --cc-btn-primary-hover-bg: #98a7b6; --cc-btn-primary-hover-color: #000; --cc-btn-primary-hover-border-color: #98a7b6;
+  --cc-btn-secondary-bg: #333a3e; --cc-btn-secondary-color: #fff; --cc-btn-secondary-border-color: #464b50;
+  --cc-btn-secondary-hover-bg: #464b50; --cc-btn-secondary-hover-color: #fff; --cc-btn-secondary-hover-border-color: #464b50;
+  --cc-separator-border-color: #464b50; --cc-toggle-on-bg: #c2d0e0; --cc-toggle-on-knob-bg: #181b1d;
+  --cc-toggle-off-bg: #525f6b; --cc-toggle-off-knob-bg: #181b1d;
+  --cc-toggle-enabled-icon-color: #181b1d; --cc-toggle-disabled-icon-color: #181b1d;
+  --cc-toggle-readonly-bg: #343e45; --cc-toggle-readonly-knob-bg: #aebbc5; --cc-toggle-readonly-knob-icon-color: #343e45;
+  --cc-section-category-border: #343e45; --cc-cookie-category-block-bg: #242c31; --cc-cookie-category-block-border: #343e45;
+  --cc-cookie-category-block-hover-bg: #343e45; --cc-cookie-category-block-hover-border: #464b50;
+  --cc-cookie-category-expanded-block-bg: transparent; --cc-cookie-category-expanded-block-hover-bg: #343e45;
+  --cc-overlay-bg: rgba(0,0,0,.65); --cc-webkit-scrollbar-bg: #343e45; --cc-webkit-scrollbar-hover-bg: #98a7b6;
+  --cc-footer-bg: #181b1d; --cc-footer-color: #d3d6d8; --cc-footer-border-color: #464b50;
+}
+.nq-privacy-access { padding: 1rem; display: flex; flex-wrap: wrap; justify-content: center; gap: 1rem; font-size: .8rem; }
+.nq-privacy-access button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; }
+.nq-privacy-access button, .nq-privacy-access a { text-decoration: underline; cursor: pointer; }
+.nq-privacy-access button:focus-visible, .nq-privacy-access a:focus-visible { outline: 2px solid currentColor; outline-offset: 4px; }
+.nq-privacy-legal { max-width: 48rem; margin: auto; padding: 2rem 1.25rem; line-height: 1.6; }
+.nq-privacy-legal h1 { font-size: 1.8rem; margin-bottom: 1rem; }
+.nq-privacy-legal h2 { font-size: 1.2rem; font-weight: 600; margin-top: 1.5rem; }

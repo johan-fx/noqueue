@@ -323,9 +323,6 @@ test.describe('venue logos', () => {
     const owner = `owner_retry_${suffix}`
     await seedCommercial(request, sales)
 
-    // The address autocomplete is the last control in the scrollable wizard.
-    // A taller desktop viewport keeps its options inside the WebKit viewport.
-    await page.setViewportSize({ width: 1280, height: 1400 })
     await page.goto('/login')
     await page.getByLabel('Usuario o email').fill(sales)
     await page.getByLabel('Contraseña', { exact: true }).fill(password)

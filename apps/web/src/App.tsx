@@ -1,3 +1,6 @@
+import { attachPrivacyRouter } from '@/features/privacy/runtime'
+import { PrivacyAccess } from '@/features/privacy/PrivacyAccess'
+import '@noqueue/privacy/styles.css'
 import { useEffect } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
 import { RouterProvider } from 'react-router'
@@ -10,6 +13,7 @@ import { PwaUpdateBanner } from '@/app/pwa/PwaUpdateBanner'
 
 const runtime = detectRuntime()
 const router = createAppRouter(runtime)
+attachPrivacyRouter(router)
 
 export default function App() {
   useEffect(() => {
@@ -41,6 +45,7 @@ export default function App() {
   return (
     <>
       <RouterProvider router={router} />
+      {runtime === 'web' && <PrivacyAccess />}
       {runtime === 'web' && <PwaUpdateBanner />}
     </>
   )

@@ -1,3 +1,4 @@
+import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { useLocale } from './public-resource'
 import { isActivePublicList } from '@noqueue/contracts/queue'
 import { useCallback, useEffect, useState } from 'react'
@@ -129,6 +130,7 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
   const [failure, setFailure] = useState<string | null>(null)
   const data = loaded?.key === bodyKey ? loaded : null
   const shouldSearch = search || !!coordinates || recent.length > 0
+  usePublicAnalyticsPage(!shouldSearch || Boolean(data), failure === bodyKey)
   const returnTo = route.pathname + route.search
   const closeScan = useCallback(() => setScan(false), [setScan])
   useEffect(() => {

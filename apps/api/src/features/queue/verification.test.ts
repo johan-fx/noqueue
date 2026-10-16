@@ -186,23 +186,41 @@ it('Q-COMMAND-LEARNING trains only on human assignments, not arrival or completi
       const afterFirst = await env.DB.prepare(
         'SELECT COUNT(*) n FROM queue_assignment_observation WHERE queue_id=?',
       ).bind(t.queue).first<{ n: number }>()
-      expect(afterFirst?.n).toBe(1)
+      check(
+        'Q-COMMAND-LEARNING',
+        'first assignment only; completion adds no sample',
+        now + minute,
+        afterFirst?.n,
+        1,
+      )
     }
   }
   const observations = (await env.DB.prepare(
     'SELECT source,space_id,seats,interval_ms,ratio FROM queue_assignment_observation WHERE queue_id=? ORDER BY assigned_at',
   ).bind(t.queue).all<{ source: string; space_id: string | null; seats: number | null; interval_ms: number | null; ratio: number | null }>()).results
-  expect(observations).toHaveLength(3)
-  expect(observations.map((o) => [o.space_id, o.seats, o.ratio])).toEqual([
-    ['terrace', 4, null],
-    ['terrace', 4, 1],
-    ['terrace', 4, 1],
-  ])
-  expect(observations.every((o) => o.source === 'staff')).toBe(true)
+  const observedAt = start + 101 * minute
+  check('Q-COMMAND-LEARNING', 'one sample per human assignment', observedAt, observations.length, 3)
+  check(
+    'Q-COMMAND-LEARNING',
+    'matching space, party size and observed cadence',
+    observedAt,
+    observations.map((o) => [o.space_id, o.seats, o.ratio]),
+    [
+      ['terrace', 4, null],
+      ['terrace', 4, 1],
+      ['terrace', 4, 1],
+    ],
+  )
+  check('Q-COMMAND-LEARNING', 'only staff-origin samples', observedAt, observations.every((o) => o.source === 'staff'), true)
   const state = await loadQueueState(env, t.queue, start + 101 * minute)
-  expect(state.resources).toEqual([])
-  expect(state.allocations).toEqual([])
-  expect(Number.isFinite(state.adaptive?.factors.service)).toBe(true)
+  check(
+    'Q-COMMAND-LEARNING',
+    'no inventory-based learning',
+    observedAt,
+    { resources: state.resources, allocations: state.allocations },
+    { resources: [], allocations: [] },
+  )
+  check('Q-COMMAND-LEARNING', 'finite learned factor', observedAt, Number.isFinite(state.adaptive?.factors.service), true)
 })
 it('Q-SEQUENCES generated command sequences preserve a separate FIFO model and replay exactly once', async () => {
   const runs = Number(process.env.QUEUE_SEQUENCE_RUNS ?? 20),
@@ -424,12 +442,12 @@ it('Q-PROGRESS keeps canonical serial deadlines positive and stable through poll
     'SELECT entry_id,predicted_at,cadence_ms FROM queue_adaptive_projection WHERE entry_id IN (?,?,?) ORDER BY predicted_at',
   ).bind(...ids).all<{ entry_id: string; predicted_at: number; cadence_ms: number }>()
   const initial = await deadlineQuery()
-  expect(initial.results.map(r => r.predicted_at)).toEqual([
+  check('Q-PROGRESS', 'canonical serial deadlines', now, initial.results.map(r => r.predicted_at), [
     now + 50 * minute,
     now + 100 * minute,
     now + 150 * minute,
   ])
-  expect(initial.results.every(r => r.predicted_at > now && r.cadence_ms > 0)).toBe(true)
+  check('Q-PROGRESS', 'positive deadlines and cadence', now, initial.results.every(r => r.predicted_at > now && r.cadence_ms > 0), true)
   await env.DB.prepare(
     "UPDATE queue SET config=json_set(config,'$.spaces[0].tableTypes[1].averageMinutes',100) WHERE id=?",
   )
@@ -438,14 +456,14 @@ it('Q-PROGRESS keeps canonical serial deadlines positive and stable through poll
   await recalculateQueue(env, t.queue, now + minute)
   await recalculateQueue(env, t.queue, now + 2 * minute)
   const afterConfiguration = await deadlineQuery()
-  expect(afterConfiguration.results.map(r => r.cadence_ms)).toEqual([
+  check('Q-PROGRESS', 'updated configuration cadence', now + 2 * minute, afterConfiguration.results.map(r => r.cadence_ms), [
     100 * minute,
     100 * minute,
     100 * minute,
   ])
   await recalculateQueue(env, t.queue, now + 3 * minute)
   // D1 timing metadata is not part of deadline stability (duration may vary).
-  expect((await deadlineQuery()).results).toEqual(afterConfiguration.results)
+  check('Q-PROGRESS', 'polling preserves canonical deadlines', now + 3 * minute, (await deadlineQuery()).results, afterConfiguration.results)
 })
 
 it('Q-PROGRESS captures grace in the versioned call, replays safely and never resets on restore/new call', async () => {

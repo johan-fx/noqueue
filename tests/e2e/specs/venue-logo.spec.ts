@@ -125,7 +125,6 @@ test.describe('venue logos', () => {
     baseURL,
     browser,
   }, testInfo) => {
-    test.skip(testInfo.project.name === 'firefox', 'Touch profile is tested in Chromium and WebKit')
     const origin = baseURL!
     const venue = await createVenue(request, origin)
     await signIn(page, venue.owner, venue.venueName)
@@ -147,7 +146,9 @@ test.describe('venue logos', () => {
       {
         baseURL: origin,
         viewport: { width: 390, height: 844 },
-        isMobile: true,
+        // Firefox supports touch, but not Playwright's mobile viewport emulation.
+        // Keep the complete logo/permission regression enabled in all engines.
+        isMobile: testInfo.project.name !== 'firefox',
         hasTouch: true,
         serviceWorkers: 'block',
       },

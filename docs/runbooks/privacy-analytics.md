@@ -120,6 +120,16 @@ suite passed with 207 tests and one existing skip across Chromium/Firefox/WebKit
 (three workers, zero retries), and the formerly intermittent assignment case
 passed all 15 repetitions (five per engine, zero retries).
 
+The first remote run with this transport also passed all 207 product tests and
+all 658 API tests. Its strict aggregate report correctly still rejected two
+scenarios whose assertions did not record their evidence, plus the existing
+Firefox logo skip. The learning/progress assertions now use the evidence helper
+(which still asserts equality), and the full logo/permission test runs in Firefox
+with touch enabled but without its unsupported `isMobile` emulation option.
+The report's rejection of missing evidence, skips, failures and flaky tests is
+unchanged. Focused validation: eight API scenarios with a passing evidence
+verdict, and all six logo tests across the three engines with zero skips.
+
 ### Staging smoke after the session repair (2026-10-16)
 
 - Application commit `6dfd6de` was deployed only to staging, preserving all 60

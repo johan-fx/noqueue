@@ -29,7 +29,8 @@ type Me = {
 export function StaffApp() {
   const [me, setMe] = useState<Me | null>(null),
     [venueId, setVenueId] = useState(''),
-    [error, setError] = useState('')
+    [error, setError] = useState(''),
+    [accessAttempt, setAccessAttempt] = useState(0)
   const navigate = useNavigate()
   const { venueId: detailId } = useParams()
   const location = useLocation()
@@ -46,16 +47,32 @@ export function StaffApp() {
     )
   }
   useEffect(() => {
-    api<Me>('/me')
+    const controller = new AbortController()
+    // A stalled connection is not an expired session. Keep credentials intact
+    // and allow a new read; never retry a mutation or accept a late response.
+    const timeout = window.setTimeout(() => {
+      controller.abort()
+      setError('La comprobación de acceso está tardando demasiado. Puedes reintentar sin cerrar sesión.')
+    }, 15_000)
+    api<Me>('/me', 'GET', undefined, undefined, controller.signal)
       .then((data) => {
+        if (controller.signal.aborted) return
         setMe(data)
         setVenueId(data.venues[0]?.id ?? '')
       })
       .catch((e) => {
+        if (controller.signal.aborted) return
         if (e instanceof ApiError && e.status === 401) navigate('/login')
-        else setError(errorMessage(e))
+        else setError(e instanceof TypeError
+          ? 'No se ha podido conectar para comprobar tu acceso. Reintenta sin cerrar sesión.'
+          : errorMessage(e))
       })
-  }, [navigate])
+      .finally(() => window.clearTimeout(timeout))
+    return () => {
+      window.clearTimeout(timeout)
+      controller.abort()
+    }
+  }, [navigate, accessAttempt])
   return (
     <div className="min-h-screen bg-muted/20">
       <header className="border-b bg-background">
@@ -96,9 +113,15 @@ export function StaffApp() {
       </header>
       <main className="mx-auto max-w-7xl space-y-6 p-6">
         {error && (
-          <p role="alert" className="text-destructive">
-            {error}
-          </p>
+          <div className="space-y-3">
+            <p role="alert" className="text-destructive">{error}</p>
+            <Button variant="outline" onClick={() => {
+              setError('')
+              setAccessAttempt((attempt) => attempt + 1)
+            }}>
+              Reintentar acceso
+            </Button>
+          </div>
         )}
         {!me && !error && <p role="status">Comprobando acceso…</p>}
         {me &&

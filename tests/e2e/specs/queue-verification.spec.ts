@@ -171,13 +171,16 @@ test('Q-BROWSER-CLOSE closing rejects new joins without cancelling an existing t
     const form = await guest.newPage()
     await form.goto(`/q/${t.queue}`)
     await expect(
-      form.getByText('Lista pausada', {
+      form.getByText('No se admiten inscripciones en este momento.', {
         exact: true,
       }),
     ).toBeVisible()
     await expect(
       form.getByRole('button', { name: 'Ponerme en lista' }),
     ).toBeDisabled()
+    const closedService = await form.request.get(`/api/v1/public/services/${t.queue}`)
+    expect(closedService.ok()).toBe(true)
+    expect(await closedService.json()).toMatchObject({ queueState: 'paused', canJoin: false })
     await expect(
       alice.getByRole('heading', {
         name: 'Estás en la lista de espera de Queue Verification',

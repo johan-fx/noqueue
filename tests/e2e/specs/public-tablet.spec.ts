@@ -132,7 +132,10 @@ test('drawer offers only tablet registration and QR; two guests register without
   await expect(
     qr.getByRole('img', { name: 'QR para inscribirte en la lista' }),
   ).toBeVisible()
-  await expect(qr.getByRole('link')).toHaveCount(0)
+  // The permanent privacy access is also required on excluded/shared screens.
+  await expect(qr.getByRole('link')).toHaveCount(1)
+  await expect(qr.getByRole('link', { name: 'Información de privacidad' })).toHaveAttribute('href', '/privacy/?lang=es')
+  await expect(qr.getByRole('button', { name: 'Privacidad y analítica' })).toBeVisible()
   await qr.close()
 })
 
@@ -232,7 +235,9 @@ for (const viewport of viewports) {
     await expectCentered(page, qr, 320)
     const box = (await qr.boundingBox())!
     expect(Math.abs(box.width - box.height)).toBeLessThanOrEqual(1)
-    await expect(page.getByRole('link')).toHaveCount(0)
+    await expect(page.getByRole('link')).toHaveCount(1)
+    await expect(page.getByRole('link', { name: 'Información de privacidad' })).toHaveAttribute('href', '/privacy/?lang=es')
+    await expect(page.getByRole('button', { name: 'Privacidad y analítica' })).toBeVisible()
     await testInfo.attach('qr', {
       body: await page.screenshot({ fullPage: true }),
       contentType: 'image/png',

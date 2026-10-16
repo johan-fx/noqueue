@@ -121,6 +121,12 @@ async function openControlFixture(
   const mocks = await strictApiMocks(page, [
     {
       method: 'GET',
+      path: '/api/v1/staff/queues/controls/configuration-context',
+      expectedHits: expected.patches,
+      respond: () => ({ json: { id: 'controls', version: 1, open: 1, config } }),
+    },
+    {
+      method: 'GET',
       path: '/api/v1/staff/me',
       expectedHits: { min: 1 },
       respond: () => ({

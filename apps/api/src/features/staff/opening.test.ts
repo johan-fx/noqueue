@@ -131,6 +131,22 @@ it('invalidates pre-initialization context once, then keeps it stable across das
   expect((await openingContext(env, t.queue)).queueState).toBe('active')
 })
 
+it('prepares the public opening snapshot before the first polling refresh, while rejecting concurrent intents', async () => {
+  const t = await setup()
+  const coordinator = env.QUEUE_COORDINATOR.getByName(t.queue)
+  const context = await coordinator.openingContext(t.queue)
+  // Deterministic reproduction of the E2E race: background entries polling
+  // must not invalidate a snapshot just obtained to activate a new service.
+  await coordinator.refresh(t.queue)
+  expect((await coordinator.openingContext(t.queue)).contextToken).toBe(context.contextToken)
+  const command = { action: 'declare_full' as const, contextToken: context.contextToken }
+  const results = await Promise.all([
+    coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), command),
+    coordinator.lifecycle(t.actor, t.queue, crypto.randomUUID(), command),
+  ])
+  expect(results.map((result) => result.status).sort()).toEqual([200, 409])
+})
+
 it('accepts legacy opening aliases and preserves stale-context/idempotent lifecycle guards', async () => {
   const t = await setup(),
     context = await openingContext(env, t.queue)

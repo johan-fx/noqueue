@@ -87,6 +87,9 @@ test('mobile queue opening, pause, queue-only controls and desktop layout', asyn
     name: 'Activar lista',
     exact: true,
   })
+  // Venue location now precedes services. Normal mobile scrolling is required;
+  // the complete service card, not the entire dashboard, must fit the viewport.
+  await card.scrollIntoViewIfNeeded()
   await expect(activate).toBeInViewport()
   await expect(
     card.getByText('Servicio abierto', { exact: true }),
@@ -119,7 +122,11 @@ test('mobile queue opening, pause, queue-only controls and desktop layout', asyn
     name: 'Opciones del servicio',
     exact: true,
   })
+  // The active label can arrive before the lifecycle request releases its lock.
+  // focus() does not wait for enabledness, unlike an ordinary pointer click.
+  await expect(gear).toBeEnabled()
   await gear.focus()
+  await expect(gear).toBeFocused()
   await page.keyboard.press('Enter')
   const serviceMenu = page.getByRole('menu')
   await expect(serviceMenu).toBeVisible()

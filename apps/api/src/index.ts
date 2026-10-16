@@ -159,7 +159,13 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   openingContext(queueId: string) {
     return this.serialize(() =>
-      this.withQueue(queueId, () => openingContext(this.env, queueId)),
+      this.withQueue(queueId, async () => {
+        // Finish lazy activation before exposing the versioned intent. Otherwise
+        // the first dashboard poll can invalidate it without any staff change.
+        // Do not coalesce here; stale intents must still fail in lifecycle().
+        await recalculateQueue(this.env, queueId)
+        return openingContext(this.env, queueId)
+      }),
     )
   }
   lifecycle(

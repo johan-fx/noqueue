@@ -1,12 +1,16 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { StrictMode } from 'react'
 import { MemoryRouter, Routes, Route, useLocation } from 'react-router'
 import { afterEach, expect, it, vi } from 'vitest'
 import { StaffApp } from './StaffApp'
-import { api } from './api'
+import { api, ApiError } from './api'
 vi.mock('./api', () => ({
   api: vi.fn(),
-  ApiError: class extends Error {},
+  ApiError: class extends Error {
+    status: number
+    constructor(status: number, message: string) { super(message); this.status = status }
+  },
   errorMessage: String,
 }))
 vi.mock('./CommercialMetrics', () => ({
@@ -23,7 +27,58 @@ vi.mock('./Dashboard', () => ({
 }))
 afterEach(() => {
   cleanup()
+  vi.useRealTimers()
   vi.resetAllMocks()
+})
+
+function showAccess() {
+  return render(<StrictMode><MemoryRouter initialEntries={['/staff']}><Routes>
+    <Route path="/staff" element={<StaffApp />} />
+    <Route path="/login" element={<p>Acceso requerido</p>} />
+  </Routes></MemoryRouter></StrictMode>)
+}
+const emptyMember = { user: { username: 'owner' }, commercial: false, platformAdmin: false, venues: [] }
+
+it('bounds stalled access checks, preserves the session and ignores late responses after retry', async () => {
+  vi.useFakeTimers()
+  const pending: { signal: AbortSignal; resolve: (data: unknown) => void }[] = []
+  vi.mocked(api).mockImplementation((_path, _method, _body, _key, signal) =>
+    new Promise((resolve) => pending.push({ signal: signal!, resolve })))
+  const view = showAccess()
+  expect(pending).toHaveLength(2)
+  expect(pending[0]!.signal.aborted).toBe(true) // StrictMode cleanup
+  await act(() => vi.advanceTimersByTimeAsync(15_000))
+  expect(pending[1]!.signal.aborted).toBe(true)
+  expect(screen.getByRole('alert')).toHaveTextContent('tardando demasiado')
+  expect(screen.queryByText('Acceso requerido')).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar acceso' }))
+  expect(screen.getByRole('status')).toHaveTextContent('Comprobando acceso')
+  await act(async () => { pending[1]!.resolve(emptyMember) })
+  expect(screen.getByRole('status')).toBeVisible()
+  await act(async () => { pending.at(-1)!.resolve(emptyMember) })
+  expect(screen.getByText(/No tienes establecimientos asignados/)).toBeVisible()
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  await act(() => vi.advanceTimersByTimeAsync(15_000))
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  view.unmount()
+  expect(pending.at(-1)!.signal.aborted).toBe(true)
+})
+
+it('offers a read-only retry after network failure without logging out', async () => {
+  vi.mocked(api).mockRejectedValue(new TypeError('Failed to fetch'))
+  showAccess()
+  expect(await screen.findByRole('alert')).toHaveTextContent('sin cerrar sesión')
+  vi.mocked(api).mockResolvedValue(emptyMember)
+  fireEvent.click(screen.getByRole('button', { name: 'Reintentar acceso' }))
+  expect(await screen.findByText(/No tienes establecimientos asignados/)).toBeVisible()
+  expect(vi.mocked(api).mock.calls.every(([path, method]) => path === '/me' && method === 'GET')).toBe(true)
+})
+
+it('still redirects an actually expired session to login', async () => {
+  vi.mocked(api).mockRejectedValue(new ApiError(401, 'unauthorized'))
+  showAccess()
+  expect(await screen.findByText('Acceso requerido')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Reintentar acceso' })).not.toBeInTheDocument()
 })
 function show(platformAdmin: boolean, state?: unknown, commercial = true) {
   vi.mocked(api).mockImplementation(async (path) =>

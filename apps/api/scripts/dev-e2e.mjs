@@ -1,5 +1,6 @@
 import { readFile, writeFile, mkdir, mkdtemp } from 'node:fs/promises'
-import { spawn } from 'node:child_process'
+import { createTestHarness } from 'wrangler'
+import { createWorkerServer, routeWorkerRequest } from './http-worker.mjs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -39,30 +40,38 @@ config.vars = {
 }
 const configPath = path.join(directory, 'wrangler.json')
 await writeFile(configPath, JSON.stringify(config))
-const args = [
-  '--config',
-  configPath,
-  '--persist-to',
-  path.join(directory, 'state'),
-]
-function run(commandArgs) {
-  return new Promise((resolve, reject) => {
-    const child = spawn('pnpm', ['exec', 'wrangler', ...commandArgs], {
-      cwd: root,
-      stdio: 'inherit',
-      env: { ...process.env, CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false' },
-    })
-    const stop = () => child.kill('SIGTERM')
-    process.once('SIGTERM', stop)
-    process.once('SIGINT', stop)
-    child.once('exit', (code) => {
-      process.off('SIGTERM', stop)
-      process.off('SIGINT', stop)
-      code === 0
-        ? resolve()
-        : reject(new Error(`Local test worker exited (${code})`))
-    })
-  })
+// Keep the real Worker/assets/bindings, but avoid Wrangler's pooled HTTP
+// ProxyWorker hop (workers-sdk#14641). It can lose a POST around an idle close.
+// getWorker().fetch dispatches to the runtime directly; no mutation is retried.
+// createTestHarness allocates ephemeral storage and never loads a named env.
+process.env.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false'
+const harness = createTestHarness({ root, workers: [{ configPath }] })
+let server
+let closing = false
+async function close() {
+  if (closing) return
+  closing = true
+  server?.closeAllConnections()
+  if (server) await new Promise((resolve) => server.close(resolve))
+  await harness.close()
 }
-await run(['d1', 'migrations', 'apply', 'DB', '--local', ...args])
-await run(['dev', '--local', '--port', port, '--inspector-port', '0', ...args])
+process.once('SIGTERM', () => void close())
+process.once('SIGINT', () => void close())
+try {
+  await harness.listen()
+  const worker = harness.getWorker()
+  await worker.applyD1Migrations('DB')
+  const { ASSETS } = await worker.getEnv()
+  server = createWorkerServer(
+    routeWorkerRequest(config.assets.run_worker_first, worker, ASSETS),
+    config.vars.PUBLIC_APP_ORIGIN,
+  )
+  await new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(Number(port), '127.0.0.1', resolve)
+  })
+  console.log(`Isolated E2E worker ready: ${config.vars.PUBLIC_APP_ORIGIN}`)
+} catch (error) {
+  await close()
+  throw error
+}

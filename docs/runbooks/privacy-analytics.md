@@ -92,3 +92,49 @@ Reference: [GA4 manual pageviews and history measurement](https://developers.goo
 - Local follow-up validation: API 658 passing, web 576 passing, focused browser regressions 58 passing in Chromium/Firefox/WebKit, typecheck and lint passing (two pre-existing lint warnings). Tests run in isolated copies without stopping the user's local development server.
 - Privacy regressions: 36 passing; PWA transitions: eight passing; queue verification harness: 11 passing. An additional parallel full run exposed a Firefox test synchronization error: it called `focus()` on the still-disabled options button after seeing the active-list label. Its trace confirmed the disabled state; the keyboard test now waits for enabledness and verifies focus before Enter, without changing the UI lock.
 - Staging remains analytics-disabled. Production and real GA activation are not part of this repair; all legal/platform release gates above still apply.
+
+### Local test transport
+
+The follow-up CI resolved the original 31 failures but exposed two independent
+HTTP 500s from Wrangler's local ProxyWorker (`Network connection lost`), not
+application conflicts. A minimal Worker with no NoQueue code reproduced 28/384
+failed requests through that proxy versus 0/384 through direct runtime dispatch,
+with no retries. This matches the upstream [local keep-alive race report](https://github.com/cloudflare/workers-sdk/issues/14641).
+
+`dev-e2e.mjs` now uses Wrangler's public `createTestHarness` and
+`getWorker().fetch` behind a loopback-only Node HTTP adapter. The Worker, assets,
+D1 migrations, Durable Objects and fail-closed provider mocks remain real;
+storage remains isolated and ephemeral. Neither `harness.fetch()` nor its public
+listening URL is used for browser traffic, because those still traverse the
+affected proxy. Worker-first paths come from the actual `assets.run_worker_first`
+configuration; other paths use the real ASSETS binding and its SPA fallback.
+Unsupported route pattern shapes fail at startup rather than silently changing
+the routing contract. The adapter preserves request bodies, origin, cookies,
+idempotency keys, redirects and error statuses. It never retries a request or
+turns a conflict into success. These changes apply only to the local test server,
+not staging or production. Response/request `Connection: close` experiments did
+not resolve the reproducer and were discarded.
+
+Local verification of this transport: 14 harness tests passed, the full product
+suite passed with 207 tests and one existing skip across Chromium/Firefox/WebKit
+(three workers, zero retries), and the formerly intermittent assignment case
+passed all 15 repetitions (five per engine, zero retries).
+
+### Staging smoke after the session repair (2026-10-16)
+
+- Application commit `6dfd6de` was deployed only to staging, preserving all 60
+  live bindings. Its build explicitly uses `staging`, analytics disabled and an
+  empty measurement ID. Production was not deployed.
+- The existing authenticated session survived the PWA update. A deliberate
+  offline session-check failure displayed the recovery UI; restoring the network
+  and choosing the read-only retry recovered access without clearing the session.
+- One explicitly authorized test turn was created, recovered through reload and
+  back/forward navigation, then cancelled. Provider callbacks confirmed both
+  `queue_joined` and `cancelled` delivered, with one attempt each. Delivery is not
+  a claim that the messages were read or their links opened.
+- The browser network capture contained no external requests during that flow
+  (0 of 69 requests after excluding same-origin and browser-extension traffic).
+  No recipient, recovery token or personalized URL is archived here.
+- Only the test turn was cancelled; the pre-existing turn was left untouched.
+  The test list ended paused, with admissions closed, rather than being forcibly
+  reset to its initially inactive state.

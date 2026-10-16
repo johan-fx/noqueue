@@ -1794,8 +1794,20 @@ it('serves anonymous venue aggregates and protects token-bound commands, retries
     await request(`/public/entries/${entry.recoveryToken}`)
   ).json()) as { status: string }
   expect(snapshot.status).toBe('cancelled')
-  for (let i = 0; i < 31; i++) await request(path, '', 'POST', command, key)
-  expect((await request(path, '', 'POST', command, key)).status).toBe(429)
+  // A real minute boundary can split this burst into two valid rate buckets.
+  // Control only Date.now (not timers/I/O), then explicitly verify the reset.
+  await env.DB.prepare('DELETE FROM staff_rate').run()
+  const rateMinute = Math.floor(Date.now() / 60_000) * 60_000
+  const rateClock = vi.spyOn(Date, 'now').mockReturnValue(rateMinute + 59_999)
+  try {
+    for (let i = 0; i < 30; i++)
+      expect((await request(path, '', 'POST', command, key)).status).toBe(200)
+    expect((await request(path, '', 'POST', command, key)).status).toBe(429)
+    rateClock.mockReturnValue(rateMinute + 60_000)
+    expect((await request(path, '', 'POST', command, key)).status).toBe(200)
+  } finally {
+    rateClock.mockRestore()
+  }
   await env.DB.prepare('DELETE FROM staff_rate').run()
   await env.DB.prepare(
     "UPDATE tenant_account SET status='suspended' WHERE organization_id=?",

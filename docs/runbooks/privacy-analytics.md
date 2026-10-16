@@ -130,6 +130,14 @@ The report's rejection of missing evidence, skips, failures and flaky tests is
 unchanged. Focused validation: eight API scenarios with a passing evidence
 verdict, and all six logo tests across the three engines with zero skips.
 
+A subsequent full local run passed all 208 browser tests, but exposed a separate
+API test's wall-clock assumption: a 31-request burst can cross a minute boundary
+and legitimately use two rate-limit buckets. The test now controls `Date.now`
+only within that burst, asserts 30 successes then a `429`, advances one
+millisecond into the next minute and asserts recovery. Its clock spy is restored
+in `finally`; timers, I/O and the production limiter remain unchanged. The full
+staff API file passes all 77 tests with this boundary regression.
+
 ### Staging smoke after the session repair (2026-10-16)
 
 - Application commit `6dfd6de` was deployed only to staging, preserving all 60

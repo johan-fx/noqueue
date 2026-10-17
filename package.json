@@ -23,7 +23,12 @@
     "demo:queue:reception": "node scripts/queue-demo/run.mjs reception",
     "demo:queue:pool": "node scripts/queue-demo/run.mjs pool",
     "demo:queue:all": "node scripts/queue-demo/run.mjs all",
-    "demo:queue:adaptive": "node scripts/queue-demo/adaptive-video.mjs record"
+    "demo:queue:adaptive": "node scripts/queue-demo/adaptive-video.mjs record",
+    "production:check": "node scripts/production/check.mjs",
+    "production:build": "node scripts/production/build.mjs",
+    "test:production": "node --test scripts/production/*.test.mjs",
+    "production:backup": "node scripts/production/backup-production.mjs",
+    "production:deploy": "node scripts/production/deploy.mjs"
   },
   "devDependencies": {
     "turbo": "2.10.12",

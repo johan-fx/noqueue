@@ -56,7 +56,7 @@ export async function queueOrder(options: {
     await page
       .getByRole('button', { name: 'Asignar próximo turno', exact: true })
       .click()
-    await expect(alice.getByText(/Es tu turno/)).toBeVisible()
+    await expect(alice.getByRole('heading', { name: '¡Es tu turno!', exact: true })).toBeVisible()
     await expect(bob.getByText('1 turno', { exact: true })).toBeVisible()
     const rows = page
       .getByRole('dialog', { name: 'Gestionar lista', exact: true })

@@ -25,6 +25,9 @@ export async function confirmFixtureLocation(page: Page) {
   await expect(input).toBeInViewport()
   await input.fill('Calle Mayor 1 Madrid')
   const candidate = page.getByRole('option', { name: /Calle Mayor 1, Madrid/ })
+  // Results arrive after the debounce and provider response. Check their render
+  // before their geometry; keep the viewport assertion (do not force/scroll them).
+  await expect(candidate).toBeVisible()
   await expect(candidate).toBeInViewport()
   await candidate.click()
   await expect(input).toHaveValue('Calle Mayor 1, Madrid')

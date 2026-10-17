@@ -43,7 +43,7 @@ describe('immutable WhatsApp lifecycle v4 catalog', () => {
         type: 'url',
         label: 'Consultar turno',
         destination: 'turn',
-        urlPattern: 'https://noqueue-app.com/t/{{1}}',
+        urlPattern: 'https://app.noqueue-app.com/t/{{1}}',
       }),
     ])
     expect(renderLifecycleV4(base)).not.toContain('https://')
@@ -103,7 +103,7 @@ describe('immutable WhatsApp lifecycle v4 catalog', () => {
         expect(urlButtons.length).toBeLessThanOrEqual(2)
         for (const button of urlButtons)
           expect(button.urlPattern).toMatch(
-            /^https:\/\/(staging\.)?noqueue-app\.com\/[tv]\/\{\{1\}\}$/,
+            /^https:\/\/(staging|app)\.noqueue-app\.com\/[tv]\/\{\{1\}\}$/,
           )
       } else {
         expect(template.environment).toBeUndefined()

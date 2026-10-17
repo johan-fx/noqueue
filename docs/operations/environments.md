@@ -1,6 +1,6 @@
 # Keep local, staging and production configuration distinct
 
-Only local configuration exists in the bootstrap. Staging and production remain blocked until Cloudflare account ownership, jurisdiction, resource names and secret-management responsibilities are approved.
+Local, sandbox, staging and isolated production configurations exist. Production was provisioned and published on 2026-10-17 with GA and WhatsApp OFF; see [the release record](production-release-2026-10-17.md). Only Geoapify is intentionally shared with staging by explicit user authorization. All production security secrets and data are independent. Follow [the production launch runbook](../runbooks/production-launch.md); never deploy the top-level local configuration.
 
 | Configuration | Visibility | Storage |
 | --- | --- | --- |

@@ -4,7 +4,7 @@ import {
   whatsappV3Catalog,
   v3TemplateReady,
 } from '../../integrations/whatsapp-copy-v3'
-import { isOpenStagingV4 } from '../../integrations/whatsapp-policy'
+import { isOpenStagingV4, isOpenCloudV4, isApprovedProductionV4 } from '../../integrations/whatsapp-policy'
 import {
   whatsappV4CatalogForEnvironment,
   v4EnvironmentForOrigin,
@@ -184,6 +184,7 @@ export function manualJoinRequiresWhatsapp(env: CloudflareBindings) {
 export type JoinSource = 'legacy' | 'public-service' | 'public-queue'
 
 function whatsappAdmissionReady(env: CloudflareBindings, locale: 'es' | 'en') {
+  if (env.APP_ENV === 'production' && !isApprovedProductionV4(env)) return false
   if (
     env.WHATSAPP_ENABLED !== 'true' ||
     !env.D360DIALOG_API_KEY ||
@@ -231,7 +232,7 @@ function whatsappAdmissionReady(env: CloudflareBindings, locale: 'es' | 'en') {
 
 function recipientAllowed(env: CloudflareBindings, phone: string) {
   return (
-    isOpenStagingV4(env) ||
+    isOpenCloudV4(env) ||
     (env.WHATSAPP_RECIPIENT_ALLOWLIST ?? '')
       .split(',')
       .map((value) => value.trim())
@@ -300,6 +301,8 @@ export async function joinQueue(
   }
   const selectedCopyVersion = copyVersion(env)
   // Admission guards apply to new turns, never to recovery of a committed request.
+  if (env.APP_ENV === 'production' && !whatsappAdmissionReady(env, input.locale))
+    return { status: 503, body: { error: 'whatsapp_unavailable' } }
   if (source === 'public-service' && !input.displayName?.trim())
     return { status: 400, body: { error: 'name_required' } }
   if (
@@ -327,7 +330,7 @@ export async function joinQueue(
       return { status: 400, body: { error: 'whatsapp_consent_required' } }
     if (env.WHATSAPP_ENABLED !== 'true')
       return { status: 503, body: { error: 'whatsapp_unavailable' } }
-    if (isOpenStagingV4(env) && !whatsappAdmissionReady(env, input.locale))
+    if ((isOpenStagingV4(env) || env.APP_ENV === 'production') && !whatsappAdmissionReady(env, input.locale))
       return { status: 503, body: { error: 'whatsapp_unavailable' } }
   }
   if (

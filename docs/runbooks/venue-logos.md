@@ -21,8 +21,13 @@ replacement/deletion, upload/provision replay, rejected corrupt/malicious input,
 revision conflicts, manager/origin/auth denials and CDN MIME/security/immutable
 cache headers (HIT). No queue entry or WhatsApp message was created by these tests.
 
-There is no production environment in the current Wrangler config; do not treat
-its top-level local config as production. Preserve live variables and secrets on
+Production was separately provisioned on 2026-10-17: EU bucket
+`noqueue-venue-logos-production`, custom domain `assets.noqueue-app.com`, TLS 1.2,
+public `r2.dev` OFF, header rule `1be9a8566e96421dae73fbb8d38cab41` scoped only to
+that hostname. A synthetic PNG round-trip verified MIME/bytes/CSP/nosniff and was
+removed; `VENUE_LOGOS_ENABLED=true` is deployed. No business logo was imported.
+See [production release](../operations/production-release-2026-10-17.md).
+Do not treat the top-level local config as production. Preserve live variables and secrets on
 future deployments: `--keep-vars` alone does not protect a live value from a
 different value explicitly present in the deployment config.
 

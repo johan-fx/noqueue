@@ -21,6 +21,9 @@ const environment = {
   QUEUE_SEQUENCE_RUNS: extended ? '100' : '20',
   QUEUE_SEQUENCE_LENGTH: extended ? '100' : '25',
 }
+// Local verification can use bounded parallelism; CI retains its single-worker default.
+const browserWorkers = process.env.QUEUE_BROWSER_WORKERS ?? '1'
+if (!/^[1-8]$/.test(browserWorkers)) throw new Error('QUEUE_BROWSER_WORKERS must be 1–8')
 const commands = []
 async function run(label, args) {
   const start = Date.now()
@@ -95,7 +98,7 @@ await run('browser', [
         'specs/queue-services.spec.ts',
       ]),
   ...(extended || all ? [] : ['--project=chromium']),
-  '--workers=1',
+  `--workers=${browserWorkers}`,
   '--retries=0',
 ])
 const required = [

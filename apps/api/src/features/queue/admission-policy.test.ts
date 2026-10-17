@@ -11,7 +11,8 @@ const contact = {
 
 function bindings(overrides: Partial<CloudflareBindings> = {}) {
   return {
-    APP_ENV: 'production',
+    // Legacy V2/V3 pilot policy is not the new production V4 policy.
+    APP_ENV: 'staging',
     PUBLIC_APP_ORIGIN: 'https://app.example.test',
     WHATSAPP_ENABLED: 'true',
     WHATSAPP_MODE: 'cloud',
@@ -143,13 +144,16 @@ it('requires every selected-locale v3 variant and keeps locale readiness indepen
 
 it('fails closed for v4 until all selected-locale templates are registered and approved', () => {
   const configured = Object.fromEntries(
-    whatsappV4CatalogForEnvironment('staging')
+    whatsappV4CatalogForEnvironment('production')
       .filter((template) => template.locale === 'es')
       .map((template) => [template.binding, template.name]),
   )
   const ready = bindings({
     ...configured,
-    PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
+    APP_ENV: 'production',
+    PRODUCTION_WHATSAPP_APPROVED: 'true',
+    STAGING_CONSENT_APPROVED: 'false',
+    PUBLIC_APP_ORIGIN: 'https://app.noqueue-app.com',
     WHATSAPP_COPY_VERSION: '4',
     WHATSAPP_V4_TEMPLATES_APPROVED: 'true',
   })
@@ -166,11 +170,15 @@ it('fails closed for v4 until all selected-locale templates are registered and a
   ).toBe('whatsapp_unavailable')
   const missingOne = {
     ...ready,
-    [whatsappV4CatalogForEnvironment('staging').find(
+    [whatsappV4CatalogForEnvironment('production').find(
       (template) => template.locale === 'es',
     )!.binding]: '',
   }
   expect(publicWhatsappAdmissionError(missingOne, contact, 'es')).toBe(
     'whatsapp_unavailable',
   )
+})
+
+it.each(['2', '3'])('does not let legacy staging approvals open production V%s', (version) => {
+  expect(publicWhatsappAdmissionError(bindings({ APP_ENV: 'production', WHATSAPP_COPY_VERSION: version }), contact, 'es')).toBe('whatsapp_unavailable')
 })

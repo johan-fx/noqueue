@@ -21,11 +21,17 @@ jobs:
           node-version: 22.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Verify production preparation without remote operations
+        run: pnpm test:production && pnpm production:check
       - run: pnpm check-types
       - run: pnpm lint
       - run: pnpm --filter '!@noqueue/api' --filter '!@noqueue/root' -r --if-present test
       - run: pnpm build
+      - name: Build isolated production artifacts with GA disabled
+        run: pnpm production:build
       - run: pnpm --filter @noqueue/e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Verify real production bundles remain analytics-disabled
+        run: pnpm --filter @noqueue/e2e test:production
       - name: Verify privacy gates in Chromium, Firefox and WebKit
         run: pnpm --filter @noqueue/e2e test:privacy
       - name: Verify safe PWA release transitions

@@ -3,12 +3,17 @@
   "name": "noqueue-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-10",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "assets": {
     "directory": "../web/dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*", "/assets/*"]
+    "run_worker_first": [
+      "/api/*",
+      "/assets/*"
+    ]
   },
   "d1_databases": [
     {
@@ -29,7 +34,9 @@
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["QueueCoordinator"]
+      "new_sqlite_classes": [
+        "QueueCoordinator"
+      ]
     }
   ],
   "observability": {
@@ -63,7 +70,10 @@
     ]
   },
   "triggers": {
-    "crons": ["* * * * *", "*/15 * * * *"]
+    "crons": [
+      "* * * * *",
+      "*/15 * * * *"
+    ]
   },
   "vars": {
     "METRICS_CAPTURE_ENABLED": "true",
@@ -153,12 +163,16 @@
     },
     "staging": {
       "name": "noqueue-api-staging",
-      "triggers": { "crons": ["* * * * *"] },
+      "triggers": {
+        "crons": [
+          "* * * * *"
+        ]
+      },
       "workers_dev": false,
       "preview_urls": false,
       "vars": {
         "WHATSAPP_MODE": "cloud",
-        "WHATSAPP_ENABLED": "true",
+        "WHATSAPP_ENABLED": "false",
         "CONFIRMATION_EXPERIMENT_ENABLED": "false",
         "STAGING_EXPERIMENT_APPROVED": "false",
         "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
@@ -247,6 +261,112 @@
         {
           "binding": "VENUE_LOGOS",
           "bucket_name": "noqueue-venue-logos-staging",
+          "jurisdiction": "eu"
+        }
+      ]
+    },
+    "production": {
+      "name": "noqueue-api-production",
+      "triggers": {
+        "crons": [
+          "* * * * *",
+          "*/15 * * * *"
+        ]
+      },
+      "workers_dev": false,
+      "preview_urls": false,
+      "vars": {
+        "WHATSAPP_MODE": "cloud",
+        "WHATSAPP_ENABLED": "false",
+        "CONFIRMATION_EXPERIMENT_ENABLED": "false",
+        "STAGING_EXPERIMENT_APPROVED": "false",
+        "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",
+        "PUBLIC_APP_ORIGIN": "https://app.noqueue-app.com",
+        "METRICS_CRON_RECOVERY_ENABLED": "false",
+        "METRICS_CAPTURE_ENABLED": "true",
+        "METRICS_DASHBOARD_ENABLED": "false",
+        "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
+        "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
+        "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
+        "STAGING_CONSENT_APPROVED": "false",
+        "APP_ENV": "production",
+        "D360DIALOG_PHONE_NUMBER_ID": "",
+        "WHATSAPP_COPY_VERSION": "4",
+        "WHATSAPP_QUEUE_V4_QUEUE_JOINED_TEMPLATE_ES": "noqueue_v4_queue_joined_es_production",
+        "WHATSAPP_QUEUE_V4_QUEUE_JOINED_TEMPLATE_EN": "noqueue_v4_queue_joined_en_production",
+        "WHATSAPP_QUEUE_V4_APPROACHING_TEMPLATE_ES": "noqueue_v4_approaching_es",
+        "WHATSAPP_QUEUE_V4_APPROACHING_TEMPLATE_EN": "noqueue_v4_approaching_en",
+        "WHATSAPP_QUEUE_V4_DELAYED_TEMPLATE_ES": "noqueue_v4_delayed_es",
+        "WHATSAPP_QUEUE_V4_DELAYED_TEMPLATE_EN": "noqueue_v4_delayed_en",
+        "WHATSAPP_QUEUE_V4_READY_TEMPLATE_ES": "noqueue_v4_ready_es_production",
+        "WHATSAPP_QUEUE_V4_READY_TEMPLATE_EN": "noqueue_v4_ready_en_production",
+        "WHATSAPP_QUEUE_V4_IMPROVED_WAIT_RECOMMENDED_TEMPLATE_ES": "noqueue_v4_improved_wait_recommended_es",
+        "WHATSAPP_QUEUE_V4_IMPROVED_WAIT_RECOMMENDED_TEMPLATE_EN": "noqueue_v4_improved_wait_recommended_en",
+        "WHATSAPP_QUEUE_V4_IMPROVED_WAIT_NEUTRAL_TEMPLATE_ES": "noqueue_v4_improved_wait_neutral_es",
+        "WHATSAPP_QUEUE_V4_IMPROVED_WAIT_NEUTRAL_TEMPLATE_EN": "noqueue_v4_improved_wait_neutral_en",
+        "WHATSAPP_QUEUE_V4_IMPROVED_READY_TEMPLATE_ES": "noqueue_v4_improved_ready_es_production",
+        "WHATSAPP_QUEUE_V4_IMPROVED_READY_TEMPLATE_EN": "noqueue_v4_improved_ready_en_production",
+        "WHATSAPP_QUEUE_V4_EXPIRED_TEMPLATE_ES": "noqueue_v4_expired_es_production",
+        "WHATSAPP_QUEUE_V4_EXPIRED_TEMPLATE_EN": "noqueue_v4_expired_en_production",
+        "WHATSAPP_QUEUE_V4_CANCELLED_CUSTOMER_TEMPLATE_ES": "noqueue_v4_cancelled_customer_es_production",
+        "WHATSAPP_QUEUE_V4_CANCELLED_CUSTOMER_TEMPLATE_EN": "noqueue_v4_cancelled_customer_en_production",
+        "WHATSAPP_QUEUE_V4_CANCELLED_STAFF_TEMPLATE_ES": "noqueue_v4_cancelled_staff_es_production",
+        "WHATSAPP_QUEUE_V4_CANCELLED_STAFF_TEMPLATE_EN": "noqueue_v4_cancelled_staff_en_production",
+        "WHATSAPP_QUEUE_V4_CANCELLED_UNKNOWN_TEMPLATE_ES": "noqueue_v4_cancelled_unknown_es_production",
+        "WHATSAPP_QUEUE_V4_CANCELLED_UNKNOWN_TEMPLATE_EN": "noqueue_v4_cancelled_unknown_en_production",
+        "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_ES": "noqueue_v4_service_ended_es",
+        "WHATSAPP_QUEUE_V4_SERVICE_ENDED_TEMPLATE_EN": "noqueue_v4_service_ended_en",
+        "VENUE_LOGOS_PUBLIC_BASE_URL": "https://assets.noqueue-app.com",
+        "VENUE_LOGOS_ENABLED": "true",
+        "PRODUCTION_WHATSAPP_APPROVED": "false",
+        "WHATSAPP_V4_TEMPLATES_APPROVED": "false"
+      },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "noqueue-production",
+          "database_id": "aee70f5d-5c30-47ec-bf97-e24bcd3620e8",
+          "migrations_dir": "migrations"
+        }
+      ],
+      "durable_objects": {
+        "bindings": [
+          {
+            "name": "QUEUE_COORDINATOR",
+            "class_name": "QueueCoordinator"
+          }
+        ]
+      },
+      "queues": {
+        "producers": [
+          {
+            "binding": "NOTIFICATIONS",
+            "queue": "noqueue-whatsapp-production"
+          },
+          {
+            "binding": "NOTIFICATIONS_DLQ",
+            "queue": "noqueue-whatsapp-production-dlq"
+          }
+        ],
+        "consumers": [
+          {
+            "queue": "noqueue-whatsapp-production",
+            "dead_letter_queue": "noqueue-whatsapp-production-dlq",
+            "max_retries": 3,
+            "max_batch_size": 10
+          }
+        ]
+      },
+      "routes": [
+        {
+          "pattern": "app.noqueue-app.com",
+          "custom_domain": true
+        }
+      ],
+      "r2_buckets": [
+        {
+          "binding": "VENUE_LOGOS",
+          "bucket_name": "noqueue-venue-logos-production",
           "jurisdiction": "eu"
         }
       ]

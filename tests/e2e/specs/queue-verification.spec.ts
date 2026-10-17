@@ -104,7 +104,7 @@ test('Q-BROWSER-RESOURCE assignment and arrival do not depend on physical table 
     const alice = await guest.newPage()
     await join(alice, t.queue, 'Alice')
     await act(page, 'Alice', 'Asignar turno')
-    await expect(alice.getByText(/Es tu turno/)).toBeVisible()
+    await expect(alice.getByRole('heading', { name: '¡Es tu turno!', exact: true })).toBeVisible()
     const second = await newClientContext(browser, info, 'order-bob', {
       baseURL: baseURL!,
     })
@@ -112,7 +112,7 @@ test('Q-BROWSER-RESOURCE assignment and arrival do not depend on physical table 
       const bob = await second.newPage()
       await join(bob, t.queue, 'Bob')
       await act(page, 'Bob', 'Asignar turno')
-      await expect(bob.getByText(/Es tu turno/)).toBeVisible()
+      await expect(bob.getByRole('heading', { name: '¡Es tu turno!', exact: true })).toBeVisible()
       const list = (await (
         await page.request.get(`/api/v1/staff/queues/${t.queue}/entries`)
       ).json()) as { displayName: string; status: string }[]

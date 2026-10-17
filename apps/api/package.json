@@ -3,7 +3,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy --minify",
+    "deploy": "node scripts/deploy.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareBindings --strict-vars=false",
     "build": "wrangler deploy --dry-run --outdir dist",
     "check-types": "tsc --noEmit",
@@ -12,7 +12,8 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "smoke:360dialog": "node scripts/smoke-360dialog.mjs",
     "dev:e2e": "node scripts/dev-e2e.mjs",
-    "auth:bootstrap": "node scripts/bootstrap-staff.mjs"
+    "auth:bootstrap": "node scripts/bootstrap-staff.mjs",
+    "auth:bootstrap:production": "node scripts/bootstrap-production-admin.mjs"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",

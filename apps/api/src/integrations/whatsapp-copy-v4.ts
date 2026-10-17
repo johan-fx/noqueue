@@ -1,6 +1,6 @@
 import { visibleWaitingCount } from '@noqueue/contracts/queue'
 import type { OutboundWhatsAppMessage } from './360dialog'
-import { isOpenStagingV4 } from './whatsapp-policy'
+import { isOpenStagingV4, isApprovedProductionV4 } from './whatsapp-policy'
 
 export type LifecycleV4Variant =
   | 'queue_joined'
@@ -47,7 +47,7 @@ export type LifecycleV4Environment = 'staging' | 'production'
 
 const environmentOrigins: Record<LifecycleV4Environment, string> = {
   staging: 'https://staging.noqueue-app.com',
-  production: 'https://noqueue-app.com',
+  production: 'https://app.noqueue-app.com',
 }
 
 export function v4EnvironmentForOrigin(
@@ -116,6 +116,7 @@ export function v4TemplateReady(
   spec: LifecycleV4Template,
 ) {
   const openStaging = isOpenStagingV4(env)
+  if (env.APP_ENV === 'production' && !isApprovedProductionV4(env)) return false
   const environment = v4EnvironmentForOrigin(env.PUBLIC_APP_ORIGIN)
   if (
     (openStaging && environment !== 'staging') ||
@@ -124,7 +125,7 @@ export function v4TemplateReady(
     return false
   const binding = (env as unknown as Record<string, unknown>)[spec.binding]
   return (
-    (openStaging ||
+    (openStaging || isApprovedProductionV4(env) ||
       (env.STAGING_CONSENT_APPROVED === 'true' &&
         env.WHATSAPP_V4_TEMPLATES_APPROVED === 'true')) &&
     binding === spec.name

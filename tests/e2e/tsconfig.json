@@ -23,6 +23,8 @@
     "demo/**/*.ts",
     "helpers/**/*.ts",
     "privacy.config.ts",
-    "privacy/**/*.spec.ts"
+    "privacy/**/*.spec.ts",
+    "production.config.ts",
+    "production/**/*.ts"
   ]
 }

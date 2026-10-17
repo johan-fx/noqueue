@@ -1,6 +1,6 @@
 import { visibleWaitingCount } from '@noqueue/contracts/queue'
 import { lifecycleV3, renderLifecycleV3, v3TemplateReady } from './whatsapp-copy-v3'
-import { isOpenStagingV4 } from './whatsapp-policy'
+import { isOpenCloudV4, isApprovedProductionV4 } from './whatsapp-policy'
 import {
   lifecycleV4,
   renderLifecycleV4,
@@ -132,6 +132,9 @@ export function createWhatsAppSender(
 ): WhatsAppSender {
   return {
     async send(message) {
+      if (env.APP_ENV === 'production' && (!isApprovedProductionV4(env) ||
+        (!message.serviceWindowReply && (message.payloadVersion !== 2 || message.copyVersion !== 4))))
+        return configurationFailure()
       if (
         !env.D360DIALOG_API_KEY ||
         !['sandbox', 'cloud'].includes(env.WHATSAPP_MODE)
@@ -310,7 +313,7 @@ export function createWhatsAppSender(
         !serviceWindowReply &&
         !sandbox &&
         (!name ||
-          (!(version4 && isOpenStagingV4(env)) && env.STAGING_CONSENT_APPROVED !== 'true') ||
+          (!(version4 && isOpenCloudV4(env)) && env.STAGING_CONSENT_APPROVED !== 'true') ||
           (version2 && !version3 && !version4 && env.WHATSAPP_V2_TEMPLATES_APPROVED !== 'true'))
       )
         return configurationFailure()

@@ -8,6 +8,57 @@ Implemented with **analytics OFF by default**. No production resources, Google p
 
 ## Build/runtime configuration
 
+### Google account setup (2026-10-17; collection remains OFF)
+
+The Google resources were subsequently created through the Analytics console,
+after explicit authorization to accept the Spanish service/data-processing terms:
+
+- Dedicated account `NoQueue`: `412357730`.
+- Property `NoQueue — Producción`: `559396149`; Spain time, EUR.
+- Landing `https://noqueue-app.com`: stream `16147155522`, measurement ID
+  `G-QEVCK0TBCF`.
+- App `https://app.noqueue-app.com`: stream `16147105215`, measurement ID
+  `G-S905ERLNN9`.
+- Enhanced Measurement disabled on both streams. All four optional account
+  data-sharing settings off. Google Signals and user-provided-data collection
+  not activated. Advertising personalization disabled in all 307 regions.
+- Event **and user** retention set to two months; activity-based reset disabled.
+  Granular location/device collection disabled.
+- No tag installed, advertising links or cross-domain rules added,
+  runtime/build switches enabled, DNS changed, or deployment performed.
+- Alberto was subsequently granted account-level Administrator access with email
+  notification selected, after explicit confirmation at the point of granting it.
+  Johan's Administrator access was retained; both entries were verified in the UI.
+
+These IDs are inventory, not activation instructions. The initially blank embedded
+Google tag panel was bypassed through the official Google Tags configuration UI
+(not by installing a GTM container): landing `GT-KFN5LCN2`, app `GT-KD7844DB`.
+The subsequent tag-level review found defaults independent of GA4's disabled
+Enhanced Measurement. In both tags, history, scrolling, outbound clicks, forms,
+videos and file-download detection were explicitly disabled. User-provided-data
+capabilities and automatic personal-data detection were also disabled. Neither tag
+has cross-domain conditions. Transmission controls were set to prevent advertising,
+behavioral-analytics and diagnostic transmission before the required consent.
+Both tags retain no CSS/JavaScript extraction locations, no Universal Analytics
+event collection, no automatic assertion of advertising consent, and no console
+overrides of cookie or consent defaults. The existing controller remains responsible
+for host-only cookies, expiry limited to the remaining consent lifetime, no cookie
+renewal, default-denied consent and the analytics-only grant after the receipt ACK.
+
+The mandatory base page-load detector cannot be disabled in this UI: the existing
+`send_page_view: false` plus manual sanitized pageviews remain necessary. Console
+settings are defense in depth, not a replacement for the no-script-before-acceptance
+gate or the real-packet audit below. No live collection test was run or enabled.
+See [Google tag settings](https://support.google.com/tagmanager/answer/12131703)
+and [manual pageviews](https://developers.google.com/analytics/devguides/collection/ga4/views).
+
+Cloudflare inspection found no production `app` DNS record or production
+app/API Worker among the connected Workers. The production receipt API remains a
+release prerequisite. Cloudflare Web Analytics initially used automatic injection
+excluding EU visitors. On explicit user instruction it was changed to **Disable**
+for `noqueue-app.com`, saved and verified after reload on 2026-10-17. No DNS, Workers
+or security settings were changed. Legal-copy approval remains pending.
+
 | Surface | Environment | Enable switch | Stream ID |
 |---|---|---|---|
 | Landing | `LANDING_APP_ENV=production` | `LANDING_ANALYTICS_ENABLED=true` | `LANDING_GA4_MEASUREMENT_ID=G-…` |
@@ -156,3 +207,17 @@ staff API file passes all 77 tests with this boundary regression.
 - Only the test turn was cancelled; the pre-existing turn was left untouched.
   The test list ended paused, with admissions closed, rather than being forcibly
   reset to its initially inactive state.
+
+## Production preparation follow-up
+
+See [production launch](production-launch.md) for the local guards, fresh database
+initialization, WhatsApp production policy and the separately authorized remote
+phases. `pnpm production:build` always builds both frontends with GA OFF and
+creates a local artifact manifest; it never provisions or publishes. Do not treat
+that build, the mock-Google tests or the preconfigured console as a completed
+live-packet audit. Infrastructure, legal sign-off and the first OFF publication
+were completed on 2026-10-17; see [the release record](../operations/production-release-2026-10-17.md).
+The channel cutover, real-tag isolated audit and sequential landing/app activation
+remain pending. Cloudflare Network Error Logging is intentionally retained by
+explicit user decision; this is separate from disabled GA/Web Analytics and is
+not evidence of zero external technical telemetry.

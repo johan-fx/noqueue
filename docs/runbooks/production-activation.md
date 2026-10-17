@@ -50,7 +50,12 @@ record for actual deployed versions and gates. No staging/native/preview analyti
 - Inventory all 24 selected V4 templates. Existing production URL buttons must target
   `https://app.noqueue-app.com`. `node scripts/production/templates.mjs --env-file <private-file>`
   reads/validates; only explicit `--apply` edits the 14 production URL components.
-  Verify a fresh inventory after eventual consistency; preserve names/text/categories.
+  Before enabling sending, run the same command with `--require-approved`. This
+  reads each effective Meta-backed `/message_templates/{external_id}` object and
+  fails unless all 24 are `APPROVED` with correct production URLs. The Hub's
+  `/v1/configs/templates` inventory can still report `approved` while an edited
+  template is actually `PENDING`; it is not activation evidence. Preserve
+  names/text/categories and wait for Meta review rather than resubmitting edits.
 - Confirm balance and a bounded authorized recipient/message budget. No top-up or
   other recipients without approval. Marketing classification is not silently changed.
 - Stop new staging tests; inspect pending/sending/unknown. Unknown is not delivery

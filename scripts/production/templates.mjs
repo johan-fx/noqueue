@@ -6,6 +6,30 @@ import { pathToFileURL } from 'node:url'
 import { parseArgs } from 'node:util'
 import { readConfig } from './config.mjs'
 const legacy = 'https://noqueue-app.com', production = 'https://app.noqueue-app.com'
+export async function effectiveTemplateInventory(selected, request) {
+  // The Hub inventory can retain APPROVED after an edit while Meta is PENDING.
+  // Read the authoritative template object, not the cached /v1/configs status.
+  const effective = []
+  for (const cached of selected) {
+    assert.match(cached.external_id, /^\d+$/)
+    const live = await request('/message_templates/' + cached.external_id)
+    assert.equal(live.id, cached.external_id, 'Template identity mismatch')
+    assert.equal(live.name, cached.name, 'Template name mismatch')
+    assert.equal(live.language, cached.language, 'Template language mismatch')
+    assert.ok(Array.isArray(live.components), 'Missing effective components')
+    effective.push({ ...live, cachedStatus: cached.status })
+  }
+  return effective
+}
+export function assertTemplatesApproved(templates) {
+  assert.equal(templates.length, 24, 'All 24 production templates must be checked')
+  assert.equal(new Set(templates.map(t => t.name)).size, 24, 'Duplicate templates')
+  for (const template of templates) {
+    assert.equal(template.status, 'APPROVED', 'Meta has not approved: ' + template.name)
+    if (template.name.endsWith('_production'))
+      assert.equal(productionURLUpdate(template).changed, false, 'Production URL is not ready')
+  }
+}
 export function productionURLUpdate(template) {
   assert.match(template.name, /^noqueue_v4_[a-z_]+_(es|en)_production$/)
   assert.ok(['es_ES', 'en_US'].includes(template.language))
@@ -22,7 +46,7 @@ export function productionURLUpdate(template) {
   return { changed, components }
 }
 async function main() {
-  const { values } = parseArgs({ options: { 'env-file': { type: 'string' }, apply: { type: 'boolean' } } })
+  const { values } = parseArgs({ options: { 'env-file': { type: 'string' }, apply: { type: 'boolean' }, 'require-approved': { type: 'boolean' } } })
   assert.ok(values['env-file'], 'Explicit private --env-file required')
   const match = (await readFile(resolve(values['env-file']), 'utf8')).match(/^D360DIALOG_API_KEY\s*=\s*(.*?)\s*$/m)
   let key = match?.[1] ?? ''
@@ -77,7 +101,10 @@ async function main() {
   }
   const after = values.apply ? (await request('/v1/configs/templates')).waba_templates.filter(t => names.includes(t.name)) : selected
   await writeFile(resolve(directory, stamp + '-after.json'), JSON.stringify(after, null, 2), { mode: 0o600, flag: 'wx' })
-  console.log(JSON.stringify({ report: reportPath, applied: values.apply === true, templates: after.map(t => ({ name: t.name, status: t.status, category: t.category, urls: t.components.filter(c => c.type === 'BUTTONS').flatMap(c => c.buttons ?? []).filter(b => b.type === 'URL').map(b => b.url) })) }, null, 2))
+  const effective = await effectiveTemplateInventory(after, request)
+  await writeFile(resolve(directory, stamp + '-effective.json'), JSON.stringify(effective, null, 2), { mode: 0o600, flag: 'wx' })
+  console.log(JSON.stringify({ report: reportPath, applied: values.apply === true, templates: effective.map(t => ({ name: t.name, status: t.status, cachedStatus: t.cachedStatus, category: t.category, urls: t.components.filter(c => c.type === 'BUTTONS').flatMap(c => c.buttons ?? []).filter(b => b.type === 'URL').map(b => b.url) })) }, null, 2))
+  if (values['require-approved']) assertTemplatesApproved(effective)
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href)
   try { await main() } catch (error) { console.error(error.message); process.exitCode = 1 }

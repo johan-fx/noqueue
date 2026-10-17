@@ -189,6 +189,9 @@ test.describe('commercial provisioning save retry', () => {
     page,
     request,
   }, testInfo) => {
+    // This full wizard/retry/reload/two-login journey takes ~30s in CI WebKit.
+    // Keep assertion deadlines unchanged; budget the whole journey explicitly.
+    test.setTimeout(60_000)
     const suffix = crypto.randomUUID().replaceAll('-', '').slice(0, 18)
     const sales = 'sales_' + suffix
     const owner = 'owner_' + suffix
@@ -373,7 +376,15 @@ test.describe('commercial provisioning save retry', () => {
     })
 
     await page.getByRole('button', { name: 'Ajustes', exact: true }).click()
+    const signedOut = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/auth/sign-out' &&
+        response.request().method() === 'POST',
+    )
     await page.getByRole('menuitem', { name: 'Cerrar sesión' }).click()
+    expect((await signedOut).ok()).toBe(true)
+    // Do not interrupt the asynchronous logout with signInOwner's navigation.
+    await expect(page).toHaveURL(/\/login$/)
     await signInOwner(page, owner, password, 'Hotel Madrid E2E')
     await expect(
       page.getByRole('button', { name: 'Opciones del servicio' }),

@@ -1,3 +1,4 @@
+import { discoveryQrDestination } from '@/platform/capacitor/discovery-capabilities'
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
@@ -8,7 +9,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog'
 import type { Locale } from './shared'
-import { qrDestination, visitService } from './discovery-state'
+import { visitService } from './discovery-state'
 export function QrScanner({
   locale,
   onClose,
@@ -72,10 +73,7 @@ function CameraPreview({
           element,
           (result) => {
             if (!active || !result) return
-            const target = qrDestination(
-              result.getText(),
-              window.location.origin,
-            )
+            const target = discoveryQrDestination(result.getText())
             if (!target) {
               setError(
                 locale === 'es'
@@ -86,9 +84,9 @@ function CameraPreview({
             }
             active = false
             controls?.stop()
-            if (target.startsWith('/q/')) visitService(target.slice(3))
+            if (target.startsWith('/q/')) visitService(target.split('?')[0]!.slice(3))
             onClose()
-            navigate(`${target}?lang=${locale}`)
+            navigate(target.includes('?') ? target : `${target}?lang=${locale}`)
           },
         )
         if (!active) controls.stop()
@@ -101,7 +99,7 @@ function CameraPreview({
           )
       }
     })()
-    return () => {
+    const stop = () => {
       active = false
       controls?.stop()
       const stream = element?.srcObject
@@ -109,6 +107,9 @@ function CameraPreview({
         stream.getTracks().forEach((track) => track.stop())
       if (element) element.srcObject = null
     }
+    const hidden = () => { if (document.visibilityState === 'hidden') { stop(); onClose() } }
+    document.addEventListener('visibilitychange', hidden)
+    return () => { document.removeEventListener('visibilitychange', hidden); stop() }
   }, [locale, navigate, onClose])
   return (
     <>

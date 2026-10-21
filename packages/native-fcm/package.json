@@ -1,0 +1,8 @@
+{
+  "name": "@noqueue/native-fcm",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "capacitor": { "ios": { "src": "ios" } },
+  "peerDependencies": { "@capacitor/core": "^8.0.0" }
+}

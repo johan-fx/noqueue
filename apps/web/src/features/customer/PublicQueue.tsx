@@ -1,22 +1,31 @@
+import { customerFetch } from '@/data/api/customer'
+import { prepareMobileJoin, finishMobileJoin } from '@/platform/capacitor/installation'
+import { detectRuntime } from '@/app/bootstrap/runtime'
 import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { useLocale, usePublicResource } from './public-resource'
 import { useEffect, useState } from 'react'
-import { visitService } from './discovery-state'
+import { nativeDiscoveryReturn, visitService } from './discovery-state'
 import { useLocation, useNavigate, useParams } from 'react-router'
 import {
   joinedEntrySchema,
+  mobileActiveConflictSchema,
   publicServiceSchema,
+  mobileServiceJoinSchema,
+  type ServiceJoin,
+  type PublicServiceJoin,
 } from '@noqueue/contracts/queue'
 import { ServiceForm } from './ServiceForm'
 import { RestaurantForm } from './RestaurantForm'
 import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => publicServiceSchema.parse(value)
 export function PublicQueue() {
+  const channel = detectRuntime() === 'native' ? 'mobile' : 'web'
   const { queueId } = useParams()
   const navigate = useNavigate()
   const [attemptedQueue, setAttemptedQueue] = useState<string | undefined>()
   const route = useLocation()
   const returnTo =
+    channel === 'mobile' ? nativeDiscoveryReturn(route.state?.discoveryReturn) :
     typeof route.state?.discoveryReturn === 'string' &&
     /^\/(?:search(?:\?|$)|\?(?:lang=))/.test(route.state.discoveryReturn)
       ? (route.state.discoveryReturn as string)
@@ -32,6 +41,61 @@ export function PublicQueue() {
   }, [service])
   usePublicAnalyticsPage(Boolean(service), error)
   const Form = service?.type === 'restaurant' ? RestaurantForm : ServiceForm
+
+  async function submit(input: ServiceJoin | PublicServiceJoin, key: string) {
+    setAttemptedQueue(queueId)
+    if (channel === 'mobile') {
+      const intent = await prepareMobileJoin(queueId!, key, mobileServiceJoinSchema.parse(input))
+      key = intent.key
+      input = intent.input
+    }
+    const response = await customerFetch(
+      `/api/v1/public/services/${queueId}/entries`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Idempotency-Key': key,
+        },
+        body: JSON.stringify(input),
+      },
+    ).catch(error => {
+      if (channel === 'mobile') window.dispatchEvent(new Event('noqueue:turn-changed'))
+      throw error
+    })
+    if (!response.ok) {
+      // Definitive validation/admission rejection did not commit a turn. Keep
+      // ambiguous network/5xx/conflict intents, but do not fill the vault with
+      // rejected form edits. A retry still uses the form's idempotency key.
+      if (channel === 'mobile') {
+        const error = await response.json().catch(() => null) as { error?: string } | null
+        const active = mobileActiveConflictSchema.safeParse(error)
+        if (response.status === 409 && active.success) {
+          await finishMobileJoin(key)
+          window.dispatchEvent(new Event('noqueue:turn-changed'))
+          navigate(`/t/${active.data.entry.recoveryToken}?lang=${locale}`, { replace: true })
+          return
+        }
+        if ([400, 403, 404, 413, 422].includes(response.status) ||
+            (response.status === 409 && error?.error === 'queue_unavailable'))
+          await finishMobileJoin(key)
+      }
+      throw new Error(
+        locale === 'es'
+          ? 'No se pudo añadir el turno. Revisa los datos y la disponibilidad del servicio.'
+          : 'Could not join. Check your details and service availability.',
+      )
+    }
+    const joined = joinedEntrySchema.parse(await response.json())
+    if (channel === 'mobile') {
+      await finishMobileJoin(key)
+      window.dispatchEvent(new Event('noqueue:turn-changed'))
+    }
+    navigate(`/t/${joined.recoveryToken}?lang=${locale}`, {
+      state: { joined: true },
+      replace: channel === 'mobile',
+    })
+  }
 
   return (
     <CustomerShell
@@ -63,30 +127,9 @@ export function PublicQueue() {
             service={service}
             locale={locale}
             disabled={!service.canJoin}
-            onSubmit={async (input, key) => {
-              setAttemptedQueue(queueId)
-              const response = await fetch(
-                `/api/v1/public/services/${queueId}/entries`,
-                {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    'Idempotency-Key': key,
-                  },
-                  body: JSON.stringify(input),
-                },
-              )
-              if (!response.ok)
-                throw new Error(
-                  locale === 'es'
-                    ? 'No se pudo añadir el turno. Revisa los datos y la disponibilidad del servicio.'
-                    : 'Could not join. Check your details and service availability.',
-                )
-              const joined = joinedEntrySchema.parse(await response.json())
-              navigate(`/t/${joined.recoveryToken}?lang=${locale}`, {
-                state: { joined: true },
-              })
-            }}
+            channel={channel}
+            onSubmit={submit}
+            onMobileSubmit={submit}
           />
         )}
     </CustomerShell>

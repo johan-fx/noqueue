@@ -1,3 +1,4 @@
+import { dispatchPushSerialized, dispatchQueuePush, cleanupPush } from './features/mobile/push/dispatch'
 import { cleanupPrivacyConsents, cleanupPrivacyLimits } from './features/privacy/routes'
 import { configurationContext } from './features/staff/configuration-context'
 import { recoverScheduledMetrics, runScheduledMetrics, stagingMetricsRecoveryEnabled } from './features/metrics/scheduled'
@@ -91,7 +92,12 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       if (next?.deadline != null)
         await this.ctx.storage.setAlarm(Math.max(now + 1, next.deadline))
       else await this.ctx.storage.deleteAlarm()
+      // Background scheduling avoids deadlocking this coordinator's serialization tail.
+      if (this.env.MOBILE_PUSH_ENABLED === 'true') this.ctx.waitUntil(dispatchQueuePush(this.env, queueId))
     }
+  }
+  dispatchPush(queueId: string, id: string) {
+    return this.serialize(() => dispatchPushSerialized(this.env, queueId, id))
   }
   async alarm() {
     const queueId = await this.ctx.storage.get<string>('queueId')
@@ -239,13 +245,14 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     input: JoinQueue,
     experiment = false,
     source: JoinSource = 'legacy',
+    installationHash?: string,
   ) {
     if (experiment && !confirmationExperimentEnabled(this.env))
       return Promise.resolve({ status: 404, body: { error: 'not_found' } })
     // D1 awaits permit interleaving. Chain entire joins, not individual database calls.
     return this.serialize(() =>
       this.withQueue(queueId, () =>
-        joinQueue(this.env, queueId, key, input, experiment, undefined, source),
+        joinQueue(this.env, queueId, key, input, experiment, undefined, source, installationHash),
       ),
     )
   }
@@ -310,6 +317,8 @@ export default {
       }
     }
     await reconcile(env)
+    // Independent from WhatsApp queue/consent; bounded recovery after a lost wake-up.
+    try { await dispatchQueuePush(env); await cleanupPush(env) } catch { console.error('mobile_push_reconcile_failed') }
     await env.DB.batch([
       env.DB.prepare(
         "DELETE FROM staff_rate WHERE key IN (SELECT key FROM (SELECT key,CASE WHEN substr(key,1,8)='geocode:' THEN substr(key,9) ELSE key END AS normalized FROM staff_rate) WHERE CAST(substr(normalized,instr(normalized,':')+1) AS INTEGER) < ?)",

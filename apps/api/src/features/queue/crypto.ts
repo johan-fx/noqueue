@@ -45,6 +45,8 @@ export const decryptDisplayName = (secret: string, cipher: string) =>
   decryptValue(secret, cipher, 'display-name:v1')
 export const decryptPhone = (secret: string, cipher: string) =>
   decryptValue(secret, cipher, 'phone:v1')
+export const encryptPushToken = (secret: string, token: string) => encryptValue(secret, token, "push-token:v1")
+export const decryptPushToken = (secret: string, cipher: string) => decryptValue(secret, cipher, "push-token:v1")
 async function encryptValue(secret: string, phone: string, domain: string) {
   const key = await crypto.subtle.importKey(
     'raw',

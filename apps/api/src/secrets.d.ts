@@ -1,4 +1,18 @@
 interface CloudflareBindings {
+  MOBILE_PUSH_ENABLED?: string
+  MOBILE_PUSH_TOKEN_KEY?: string
+  APNS_KEY_ID?: string
+  APNS_TEAM_ID?: string
+  APNS_PRIVATE_KEY?: string
+  APNS_TOPIC?: string
+  APNS_ENVIRONMENT?: string
+  APNS_TRANSPORT_VERIFIED?: string
+  FCM_IOS_ENABLED?: string
+  FCM_IOS_BUNDLE_ID?: string
+  FCM_PROJECT_ID?: string
+  FCM_CLIENT_EMAIL?: string
+  FCM_PRIVATE_KEY?: string
+
   PRODUCTION_WHATSAPP_APPROVED?: string
   METRICS_SERVICE_SNAPSHOT_CAPTURE_SINCE?: string
   METRICS_CRON_RECOVERY_ENABLED?: string

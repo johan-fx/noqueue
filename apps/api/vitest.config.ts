@@ -30,6 +30,8 @@ export default defineConfig({
     }),
   ],
   test: {
+    // Node CLI tests run separately; workerd does not implement node:test.
+    include: ['src/**/*.test.ts', 'test/**/*.test.ts'],
     setupFiles: ['./test/setup.ts'],
     env: {
       QUEUE_PROPERTY_RUNS: process.env.QUEUE_PROPERTY_RUNS ?? '200',

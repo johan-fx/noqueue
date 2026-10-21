@@ -1,3 +1,6 @@
+import { detectRuntime } from '@/app/bootstrap/runtime'
+import { NativePushControls } from '@/platform/capacitor/NativePush'
+import { customerFetch } from '@/data/api/customer'
 import { useLocale, usePublicResource } from './public-resource'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
@@ -83,7 +86,7 @@ function CustomerTurnContent({
     return () => clearInterval(timer)
   }, [])
   async function command(input: CustomerCommand, key: string) {
-    const response = await fetch(
+    const response = await customerFetch(
       `/api/v1/public/entries/${recoveryToken}/commands`,
       {
         method: 'POST',
@@ -145,7 +148,7 @@ function CustomerTurnContent({
     <CustomerShell
       title={c?.service.name ?? (es ? 'Tu turno' : 'Your turn')}
       back={
-        c?.service.venueId
+        !(detectRuntime() === 'native' && (!entry || ['waiting', 'called'].includes(entry.status))) && c?.service.venueId
           ? `/v/${c.service.venueId}?lang=${locale}`
           : undefined
       }
@@ -171,6 +174,7 @@ function CustomerTurnContent({
             yieldConfirmation?.version === c.version &&
             yieldConfirmation.phase === c.phase
           }
+          extra={entry && ['waiting', 'called'].includes(entry.status) ? <NativePushControls locale={locale} /> : undefined}
           onAction={(action) => {
             setYieldConfirmation(null)
             setSheet({
@@ -197,6 +201,7 @@ function CustomerTurnContent({
             if (input.action === 'yield')
               setYieldConfirmation({ version: input.version + 1, phase: null })
             await refresh()
+            if (detectRuntime() === 'native') window.dispatchEvent(new Event('noqueue:turn-changed'))
           }}
         />
       )}

@@ -1,3 +1,4 @@
+import { customerFetch } from '@/data/api/customer'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import type { Locale } from './shared'
@@ -43,7 +44,7 @@ export function usePublicResource<T>(
       clearTimeout(timer)
       pending = (async () => {
         try {
-          const response = await fetch(url, {
+          const response = await customerFetch(url, {
             signal: controller.signal,
             cache: 'no-store',
             credentials,
@@ -78,11 +79,13 @@ export function usePublicResource<T>(
     void refresh()
     document.addEventListener('visibilitychange', visible)
     window.addEventListener('focus', visible)
+    window.addEventListener('noqueue:push-refresh', visible)
     return () => {
       controller.abort()
       clearTimeout(timer)
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('focus', visible)
+      window.removeEventListener('noqueue:push-refresh', visible)
     }
   }, [url, parse, polling, credentials, accept])
   const refreshResource = useCallback(() => refreshRef.current(), [])

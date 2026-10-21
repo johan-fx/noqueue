@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router'
 import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
 import { visibleWaitingCount, type Entry } from '@noqueue/contracts/queue'
@@ -21,6 +22,7 @@ export function TurnView({
   joined = false,
   yielded = false,
   onAction,
+  extra,
 }: {
   entry: Entry
   locale: Locale
@@ -29,6 +31,7 @@ export function TurnView({
   online?: boolean
   joined?: boolean
   yielded?: boolean
+  extra?: ReactNode
   onAction: (action: 'update' | 'cancel' | 'yield') => void
 }) {
   const c = entry.customer!,
@@ -463,6 +466,7 @@ export function TurnView({
           </div>
         )}
       </div>
+      {extra}
       {active && c.actions.length > 0 && (
         <CustomerFooter>
           {c.actions.includes('cancel') && (

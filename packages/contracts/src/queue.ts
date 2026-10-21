@@ -22,6 +22,12 @@ export const publicServiceJoinSchema = serviceJoinSchema.extend({
   }),
 })
 export type PublicServiceJoin = z.infer<typeof publicServiceJoinSchema>
+/** Native admission deliberately has no contact or notification-consent fields. */
+export const mobileServiceJoinSchema = serviceJoinSchema.extend({
+  displayName: z.string().trim().min(1).max(100),
+})
+export type MobileServiceJoin = z.infer<typeof mobileServiceJoinSchema>
+
 export const admissionFields = {
   serviceOpen: z.boolean().optional(),
   queueState: z.enum(['inactive', 'active', 'paused']).optional(),
@@ -234,3 +240,14 @@ export const consentCopy = {
 export function visibleWaitingCount(real: number): number {
   return Math.max(1, real)
 }
+
+/** Capability returned only over the installation-authenticated mobile transport. */
+export const mobileActiveEntrySchema = z.object({
+  serviceId: z.string(),
+  locale: z.enum(['es', 'en']),
+  recoveryToken: z.string().regex(/^[a-f0-9]{64}$/),
+})
+export const mobileActiveConflictSchema = z.object({
+  error: z.literal('active_turn_exists'),
+  entry: mobileActiveEntrySchema,
+})

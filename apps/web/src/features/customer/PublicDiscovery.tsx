@@ -1,4 +1,6 @@
+import { discoveryPosition } from '@/platform/capacitor/discovery-capabilities'
 import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
+import { customerFetch } from '@/data/api/customer'
 import { useLocale } from './public-resource'
 import { isActivePublicList } from '@noqueue/contracts/queue'
 import { useCallback, useEffect, useState } from 'react'
@@ -144,7 +146,7 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
       clearTimeout(timer)
       pending = true
       try {
-        const response = await fetch('/api/v1/public/search', {
+        const response = await customerFetch('/api/v1/public/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: bodyKey,
@@ -210,26 +212,12 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
     if (locating) return
     setGeoError(false)
     setLocating(true)
-    if (!navigator.geolocation) {
-      setGeoError(true)
-      setLocating(false)
-      return
-    }
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setDiscoveryCoordinates({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        })
-        setLocating(false)
-      },
-      () => {
-        setGeoError(true)
-        setLocating(false)
-      },
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 0 },
-    )
+    void discoveryPosition().then(
+      position => setDiscoveryCoordinates(position),
+      () => setGeoError(true),
+    ).finally(() => setLocating(false))
   }
+
   function openSearch() {
     const next = new URLSearchParams({ lang: locale })
     if (coordinates) {

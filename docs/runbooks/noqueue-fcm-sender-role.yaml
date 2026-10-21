@@ -1,0 +1,7 @@
+# Definition only. An authorized project IAM administrator must create and grant it.
+# No command in this repository applies this role automatically.
+title: NoQueue FCM Sender
+description: Send transactional push via FCM HTTP v1; no Auth, database, Storage or IAM access.
+stage: GA
+includedPermissions:
+  - cloudmessaging.messages.create

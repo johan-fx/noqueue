@@ -1,11 +1,27 @@
-import { NativeJoinQueueScreen } from '@/features/join-queue/native/NativeJoinQueueScreen'
+import { NativeTurns } from '@/features/customer/NativeTurns'
 import type { RouteObject } from 'react-router'
 import { NativeShell } from '../shells/NativeShell'
+import { NativeNotFound } from '@/features/customer/NativeNotFound'
 
 export const nativeRoutes: RouteObject[] = [
   {
     element: <NativeShell />,
     children: [
+      {
+        path: '/',
+        lazy: async () => {
+          const { PublicDiscovery } = await import('@/features/customer/PublicDiscovery')
+          return { Component: () => <PublicDiscovery /> }
+        },
+      },
+      {
+        path: '/search',
+        lazy: async () => {
+          const { PublicDiscovery } = await import('@/features/customer/PublicDiscovery')
+          return { Component: () => <PublicDiscovery search /> }
+        },
+      },
+      { path: '/turns', element: <NativeTurns /> },
       {
         path: '/v/:venueId',
         lazy: async () => ({
@@ -25,7 +41,7 @@ export const nativeRoutes: RouteObject[] = [
             .CustomerTurn,
         }),
       },
-      { path: '*', element: <NativeJoinQueueScreen /> },
+      { path: '*', element: <NativeNotFound /> },
     ],
   },
 ]

@@ -8,12 +8,14 @@
     "build": "wrangler deploy --dry-run --outdir dist",
     "check-types": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "pnpm test:tools && vitest run",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "smoke:360dialog": "node scripts/smoke-360dialog.mjs",
     "dev:e2e": "node scripts/dev-e2e.mjs",
+    "dev:mobile": "node scripts/dev-mobile.mjs",
     "auth:bootstrap": "node scripts/bootstrap-staff.mjs",
-    "auth:bootstrap:production": "node scripts/bootstrap-production-admin.mjs"
+    "auth:bootstrap:production": "node scripts/bootstrap-production-admin.mjs",
+    "test:tools": "node --test scripts/*.test.mjs"
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.6.3",

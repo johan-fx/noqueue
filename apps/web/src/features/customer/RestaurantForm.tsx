@@ -20,10 +20,14 @@ export function RestaurantForm({
   disabled = false,
   presentation = 'public',
   onSubmit,
+  onMobileSubmit,
   onCancel,
+  channel = 'web',
 }: {
   service: PublicService
   locale: Locale
+  channel?: 'web' | 'mobile'
+  onMobileSubmit?: (input: ServiceJoin, key: string) => Promise<void>
   initial?: ServiceJoin
   disabled?: boolean
   presentation?: 'public' | 'kiosk'
@@ -71,7 +75,7 @@ export function RestaurantForm({
         ((disabled && !request.current) ||
           !name.trim() ||
           !compatible ||
-          (!initial && !validPublicWhatsAppConsent(phone, consent))))
+          (!initial && channel === 'web' && !validPublicWhatsAppConsent(phone, consent))))
     )
       return
     setHasAttempt(true)
@@ -83,7 +87,7 @@ export function RestaurantForm({
       partySize: size,
       preferredSpaceId: space,
       locale,
-      ...(!initial
+      ...(!initial && channel === 'web'
         ? {
             whatsapp: {
               consent: true as const,
@@ -97,7 +101,10 @@ export function RestaurantForm({
     if (!request.current || (!kiosk && request.current.payload !== payload))
       request.current = { payload, key: crypto.randomUUID(), input }
     try {
-      await onSubmit(kiosk ? request.current.input : input, request.current.key)
+      if (channel === 'mobile') {
+        if (!onMobileSubmit) throw new Error('Mobile admission unavailable')
+        await onMobileSubmit(input, request.current.key)
+      } else await onSubmit(kiosk ? request.current.input : input, request.current.key)
     } catch (error) {
       setError(
         error instanceof Error
@@ -215,7 +222,7 @@ export function RestaurantForm({
               setHasAttempt(false)
             }}
           />
-          {!initial && (
+          {!initial && channel === 'web' && (
             <PublicWhatsAppConsentFields
               locale={locale}
               presentation={presentation}
@@ -278,8 +285,8 @@ export function RestaurantForm({
             (!(kiosk && hasAttempt) &&
               ((disabled && !hasAttempt) ||
                 !compatible ||
-                (kiosk && !name.trim()) ||
-                (!initial && !validPublicWhatsAppConsent(phone, consent))))
+                ((kiosk || channel === 'mobile') && !name.trim()) ||
+                (!initial && channel === 'web' && !validPublicWhatsAppConsent(phone, consent))))
           }
         >
           {busy

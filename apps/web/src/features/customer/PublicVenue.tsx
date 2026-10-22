@@ -1,9 +1,12 @@
+import { detectRuntime } from '@/app/bootstrap/runtime'
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { ClosedServiceCard } from './ClosedServiceCard'
 import { PublicWaitingTurns } from './PublicWaitingTurns'
 import { useLocale, usePublicResource } from './public-resource'
 import { availabilityText, publicWaitText } from './availability'
-import { Link, useParams } from 'react-router'
+import { useParams } from 'react-router'
+import { AppLink } from '@/app/navigation/AppLink'
 import { ArrowRight, Clock } from 'lucide-react'
 import { isVisibleVenueService, publicVenueSchema } from '@noqueue/contracts/queue'
 import { CustomerShell, LoadError } from './shared'
@@ -62,7 +65,7 @@ export function PublicVenue() {
               {services.map((service) => service.serviceOpen === false && service.nextOpening ? (
                 <ClosedServiceCard key={service.id} name={service.name} opening={service.nextOpening} receivedAt={updatedAt!} locale={locale} />
               ) : (
-                <Link
+                <AppLink
                   key={service.id}
                   className="block space-y-2 rounded-lg border border-gray-300 p-[15px] focus-visible:ring-2"
                   to={`/q/${service.id}?lang=${locale}`}
@@ -88,7 +91,7 @@ export function PublicVenue() {
                       ? availabilityText(service, locale)
                       : publicWaitText(service.averageWaitMinutes, locale)}
                   </p>
-                </Link>
+                </AppLink>
               ))}
             </div>
             {!services.length && (
@@ -102,9 +105,13 @@ export function PublicVenue() {
         </div>
       ) : (
         !error && (
-          <p className="p-4" role="status">
-            {es ? 'Cargando…' : 'Loading…'}
-          </p>
+          detectRuntime() === 'native' ? (
+            <LoadingSpinner locale={locale} className="flex-1" />
+          ) : (
+            <p className="p-4" role="status">
+              {es ? 'Cargando…' : 'Loading…'}
+            </p>
+          )
         )
       )}
     </CustomerShell>

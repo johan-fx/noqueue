@@ -28,26 +28,30 @@ const coordinator = (env: CloudflareBindings, id: string) =>
     ? env.QUEUE_COORDINATOR
     : env.QUEUE_COORDINATOR.jurisdiction('eu')
   ).getByName(id)
-customerRoutes.get('/venues/:id/services', async (c) => {
-  const venue = await c.env.DB.prepare(
+export async function readPublicVenue(env: CloudflareBindings, id: string) {
+  const venue = await env.DB.prepare(
     "SELECT v.id,v.name FROM venue v JOIN tenant_account t ON t.organization_id=v.organization_id WHERE v.id=? AND t.status='active'",
   )
-    .bind(c.req.param('id'))
+    .bind(id)
     .first<{ id: string; name: string }>()
-  if (!venue) return c.json({ error: 'not_found' }, 404)
-  const queues = await c.env.DB.prepare(
+  if (!venue) return null
+  const queues = await env.DB.prepare(
     'SELECT id FROM queue WHERE venue_id=? AND config IS NOT NULL ORDER BY rowid',
   )
     .bind(venue.id)
     .all<{ id: string }>()
   const services = []
   for (const queue of queues.results) {
-    await coordinator(c.env, queue.id).refresh(queue.id)
-    const service = await publicService(c.env, queue.id)
+    await coordinator(env, queue.id).refresh(queue.id)
+    const service = await publicService(env, queue.id)
     if (!service || !isVisibleVenueService(service)) continue
     services.push({ ...service, waitingPeople: service.waitingPeople ?? 0, averageWaitMinutes: service.averageWaitMinutes ?? null })
   }
-  return c.json({ ...venue, services })
+  return { ...venue, services }
+}
+customerRoutes.get('/venues/:id/services', async (c) => {
+  const venue = await readPublicVenue(c.env, c.req.param('id'))
+  return venue ? c.json(venue) : c.json({ error: 'not_found' }, 404)
 })
 customerRoutes.post(
   '/entries/:token/notices/:notificationId/opened',

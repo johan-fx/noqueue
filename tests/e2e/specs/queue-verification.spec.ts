@@ -504,13 +504,16 @@ test('Q-BROWSER-COUNTDOWN polls and returning to the tab never restart the custo
 
 // Keep this synthetic entry route under Playwright interception across reloads.
 const progressTest = test.extend({ serviceWorkers: 'block' })
-progressTest('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call deadline and arrival', async ({
+progressTest('Q-BROWSER-PROGRESS waiting baseline and independent filling arrival window', async ({
   page,
   evidence,
 }, info) => {
   const token = 'a'.repeat(64)
   const now = 1_800_000_000_000
   await page.clock.install({ time: now })
+  // Only explicit runFor() advances this clock. Otherwise real wall time can
+  // slip into sub-second SVG ratios between an assertion and a screenshot.
+  await page.clock.pauseAt(now + 60000)
   const snapshot = {
     code: 'PROGRESS',
     position: 6,
@@ -602,14 +605,29 @@ progressTest('Q-BROWSER-PROGRESS one baseline reflects numeric ETA, delay, call 
   snapshot.customer.arrivalDeadlineAt = now + 5 * 60000
   snapshot.customer.serverNow = now
   await page.reload()
-  await checkProgress(90, '5:00', 'text-red-700')
+  await checkProgress(0, '5:00', 'text-red-700')
   await page.clock.runFor(1000)
   await expect(ring).toContainText('4:59')
   // Server-time snapshots remain authoritative after refresh/reload.
   snapshot.customer.serverNow = now + 3 * 60000
   await page.reload()
-  await checkProgress(96, '2:00', 'text-red-700')
-  snapshot.customer.serverNow = now + 5 * 60000
+  await checkProgress(60, '2:00', 'text-red-700')
+  // Regression: the iOS capture had a four-minute initial wait but a
+  // ten-minute arrival grace. At 9:44 left the red arc must be visible.
+  snapshot.initialEtaMinutes = 4
+  snapshot.customer.arrivalDeadlineAt = now + 10 * 60000
+  snapshot.customer.serverNow = now + 16000
+  await page.reload()
+  await expect(ring).toHaveAccessibleName('Arrival window progress')
+  await checkProgress(3, '9:44', 'text-red-700')
+  const dash = (await arc.getAttribute('stroke-dasharray'))!.split(' ').map(Number)
+  expect(dash[0]! / dash[1]!).toBeCloseTo(16 / 600, 6)
+  await page.clock.runFor(1000)
+  await expect(ring).toContainText('9:43')
+  const nextDash = (await arc.getAttribute('stroke-dasharray'))!.split(' ').map(Number)
+  expect(nextDash[0]! / nextDash[1]!).toBeCloseTo(17 / 600, 6)
+  await page.screenshot({ path: info.outputPath('called-arrival-arc.png') })
+  snapshot.customer.serverNow = now + 10 * 60000
   await page.reload()
   await checkProgress(100, '0:00', 'text-red-700')
   await expect(

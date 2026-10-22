@@ -397,7 +397,7 @@ it.each(['reception', 'pool'] as const)(
   },
 )
 
-it('uses one temporal baseline through waiting, delay, call and arrival', () => {
+it('keeps the wait baseline through delays then fills a separate arrival window', () => {
   const current: Entry = {
     ...entry('waiting'),
     etaMinutes: 50,
@@ -445,8 +445,8 @@ it('uses one temporal baseline through waiting, delay, call and arrival', () => 
   current.customer!.arrivalDeadlineAt = 301000
   current.estimateQuality = 'unknown'
   for (const [now, percentage, countdown] of [
-    [1000, 90, '5:00'],
-    [181000, 96, '2:00'],
+    [1000, 0, '5:00'],
+    [181000, 60, '2:00'],
     [301000, 100, '0:00'],
   ] as const) {
     rerender(view(now))
@@ -483,6 +483,38 @@ it('keeps unknown progress track-only with no numeric ARIA value', () => {
     'Sin estimación disponible',
   )
   expect(container.querySelectorAll('circle')).toHaveLength(1)
+})
+
+it.each(['es', 'en'] as const)('renders a filling red arrival arc with an independent window (%s)', (locale) => {
+  const turn: Entry = { ...entry('called'), initialEtaMinutes: 4, estimatorVersion: 2 }
+  turn.customer!.calledAt = 1000
+  turn.customer!.arrivalDeadlineAt = 601000
+  const view = (now: number) => (
+    <MemoryRouter>
+      <TurnView entry={turn} locale={locale} now={now} updatedAt={1000} onAction={vi.fn()} />
+    </MemoryRouter>
+  )
+  const { container, rerender } = render(view(17000))
+  const arc = () => container.querySelector('circle[stroke="currentColor"]')
+  expect(screen.getByRole('heading', { name: locale === 'es' ? '¡Es tu turno!' : 'It is your turn!' })).toBeVisible()
+  expect(screen.getByText('9:44', { exact: true })).toBeVisible()
+  expect(screen.getByRole('progressbar')).toHaveClass('text-red-700')
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '3')
+  expect(screen.getByRole('progressbar')).toHaveAccessibleName(locale === 'es' ? 'Progreso del plazo de llegada' : 'Arrival window progress')
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', locale === 'es' ? 'Plazo de llegada transcurrido: 3%. Tiempo restante: 9:44' : 'Arrival window elapsed: 3%. Time remaining: 9:44')
+  const initialDash = arc()!.getAttribute('stroke-dasharray')!.split(' ').map(Number)
+  expect(initialDash[0]! / initialDash[1]!).toBeCloseTo(16 / 600)
+
+  rerender(view(362000))
+  expect(screen.getByText('3:59', { exact: true })).toBeVisible()
+  const [length, circumference] = arc()!.getAttribute('stroke-dasharray')!.split(' ').map(Number)
+  expect(length! / circumference!).toBeCloseTo(361 / 600)
+
+  turn.customer!.phase = 'arrived'
+  rerender(view(362000))
+  expect(screen.getByRole('progressbar')).toHaveClass('text-green-600')
+  expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100')
+  expect(arc()).not.toHaveAttribute('stroke-dasharray')
 })
 
 it.each(['waiting', 'approaching'] as const)(

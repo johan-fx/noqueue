@@ -4,7 +4,7 @@ import {
 } from '../queue/adaptive-model'
 import { sameConfiguration, touchVenueConfiguration } from './configuration'
 import { assignmentContext } from './assignment'
-import { noticeStatement, publishNotice } from '../queue/notices'
+import { lifecycleNoticeStatements, publishNotice } from '../queue/notices'
 import { directoryConfigStatement } from '../discovery/configuration'
 import { activateIfReady } from '../queue/opening-state'
 import {
@@ -262,9 +262,10 @@ export async function runQueueCommand(
     )
       .bind(input.entryId)
       .first()
-    if (consent) {
+    const mobile = await env.DB.prepare('SELECT 1 FROM mobile_entry_installation WHERE entry_id=?').bind(input.entryId).first()
+    if (consent || mobile) {
       extra.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           input.entryId,
           'cancelled',
@@ -316,7 +317,7 @@ export async function runQueueCommand(
         now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
     }
     extra.push(
-      noticeStatement(
+      ...lifecycleNoticeStatements(
         env,
         input.entryId,
         'ready',

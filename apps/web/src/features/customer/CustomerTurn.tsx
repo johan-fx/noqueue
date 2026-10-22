@@ -1,3 +1,7 @@
+import { LoadingSpinner } from '@/components/LoadingSpinner'
+import { detectRuntime } from '@/app/bootstrap/runtime'
+import { NativePushControls } from '@/platform/capacitor/NativePush'
+import { customerFetch } from '@/data/api/customer'
 import { useLocale, usePublicResource } from './public-resource'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useParams } from 'react-router'
@@ -83,7 +87,7 @@ function CustomerTurnContent({
     return () => clearInterval(timer)
   }, [])
   async function command(input: CustomerCommand, key: string) {
-    const response = await fetch(
+    const response = await customerFetch(
       `/api/v1/public/entries/${recoveryToken}/commands`,
       {
         method: 'POST',
@@ -145,8 +149,10 @@ function CustomerTurnContent({
     <CustomerShell
       title={c?.service.name ?? (es ? 'Tu turno' : 'Your turn')}
       back={
-        c?.service.venueId
-          ? `/v/${c.service.venueId}?lang=${locale}`
+        !(detectRuntime() === 'native' && (!entry || ['waiting', 'called'].includes(entry.status))) && c?.service.venueId
+          ? detectRuntime() === 'native' && c.phase === 'cancelled'
+            ? `/?lang=${locale}`
+            : `/v/${c.service.venueId}?lang=${locale}`
           : undefined
       }
       locale={locale}
@@ -155,9 +161,13 @@ function CustomerTurnContent({
       {error && <LoadError locale={locale} retry={() => void refresh()} />}
       {error && entry && <p role="status" className="px-4 text-sm">{es ? 'Datos desactualizados. Se conserva la última estimación disponible.' : 'Information is outdated. Showing the last available estimate.'}</p>}
       {!entry && !error && (
-        <p className="p-4" role="status">
-          {es ? 'Cargando…' : 'Loading…'}
-        </p>
+        detectRuntime() === 'native' ? (
+          <LoadingSpinner locale={locale} className="flex-1" />
+        ) : (
+          <p className="p-4" role="status">
+            {es ? 'Cargando…' : 'Loading…'}
+          </p>
+        )
       )}
       {entry && c && (
         <TurnView
@@ -171,6 +181,7 @@ function CustomerTurnContent({
             yieldConfirmation?.version === c.version &&
             yieldConfirmation.phase === c.phase
           }
+          extra={entry && ['waiting', 'called'].includes(entry.status) ? <NativePushControls locale={locale} /> : undefined}
           onAction={(action) => {
             setYieldConfirmation(null)
             setSheet({
@@ -197,6 +208,7 @@ function CustomerTurnContent({
             if (input.action === 'yield')
               setYieldConfirmation({ version: input.version + 1, phase: null })
             await refresh()
+            if (detectRuntime() === 'native') window.dispatchEvent(new Event('noqueue:turn-changed'))
           }}
         />
       )}

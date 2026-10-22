@@ -1,6 +1,6 @@
 import { availabilityText, publicWaitText } from './availability'
 import { isActivePublicList } from '@noqueue/contracts/queue'
-import { Link } from 'react-router'
+import { AppLink } from '@/app/navigation/AppLink'
 import { ConciergeBell, Utensils, Martini, Clock, MapPin } from 'lucide-react'
 import type { PublicSearchResult } from '@noqueue/contracts/discovery'
 import type { Locale } from './shared'
@@ -31,7 +31,7 @@ export function ServiceResult({
           maximumFractionDigits: 1,
         })}km`
   return (
-    <Link
+    <AppLink
       to={`/q/${service.id}?lang=${locale}`}
       state={{ discoveryReturn: returnTo }}
       onClick={() => visitService(service.id)}
@@ -63,6 +63,6 @@ export function ServiceResult({
         </span>
         <span className="block text-xs text-gray-600">{service.address}</span>
       </span>
-    </Link>
+    </AppLink>
   )
 }

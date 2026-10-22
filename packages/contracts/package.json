@@ -10,7 +10,8 @@
     "./discovery": "./src/discovery.ts",
     "./metrics": "./src/metrics.ts",
     "./privacy": "./src/privacy.ts",
-    "./privacy-policy": "./src/privacy-policy.ts"
+    "./privacy-policy": "./src/privacy-policy.ts",
+    "./mobile-push": "./src/mobile-push.ts"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",

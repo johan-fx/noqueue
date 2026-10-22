@@ -6,7 +6,24 @@
 	objectVersion = 60;
 	objects = {
 
+/* Begin PBXShellScriptBuildPhase section */
+        F50000000000000000000001 /* Optional Firebase client configuration */ = {
+            isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647;
+            files = (); inputPaths = (); outputPaths = (); alwaysOutOfDate = 1;
+            name = "Optional Firebase client configuration";
+            runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh;
+            shellScript = "\"$SRCROOT/../../scripts/copy-firebase-config.sh\"";
+        };
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXBuildFile section */
+		F40000000000000000000001 = {isa = PBXBuildFile; fileRef = F40000000000000000000002; };
+		F30000000000000000000001 = {isa = PBXBuildFile; fileRef = F30000000000000000000002; };
+		A10000000000000000000001 /* TransitionSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* TransitionSmokeTests.swift */; };
+		F20000000000000000000001 /* service-scenarios.js in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000002; };
+		F20000000000000000000004 /* transition-scenarios.js in Resources */ = {isa = PBXBuildFile; fileRef = F20000000000000000000006; };
+		F10000000000000000000001 /* LocalSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F10000000000000000000002; };
+		F00000000000000000000001 /* NoQueueVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = F00000000000000000000002 /* NoQueueVault.swift */; };
 		2FAD9763203C412B000D30F8 /* config.xml in Resources */ = {isa = PBXBuildFile; fileRef = 2FAD9762203C412B000D30F8 /* config.xml */; };
 		4D22ABE92AF431CB00220026 /* CapApp-SPM in Frameworks */ = {isa = PBXBuildFile; productRef = 4D22ABE82AF431CB00220026 /* CapApp-SPM */; };
 		50379B232058CBB4000EE86E /* capacitor.config.json in Resources */ = {isa = PBXBuildFile; fileRef = 50379B222058CBB4000EE86E /* capacitor.config.json */; };
@@ -19,6 +36,14 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		F40000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "discovery-scenarios.js"; sourceTree = "<group>"; };
+		F30000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "lifecycle-scenarios.js"; sourceTree = "<group>"; };
+		F20000000000000000000002 /* service-scenarios.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "service-scenarios.js"; sourceTree = "<group>"; };
+		F20000000000000000000006 /* transition-scenarios.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "transition-scenarios.js"; sourceTree = "<group>"; };
+		F10000000000000000000002 /* LocalSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalSmokeTests.swift; sourceTree = "<group>"; };
+		F10000000000000000000003 /* AppLocalTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AppLocalTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F00000000000000000000002 /* NoQueueVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NoQueueVault.swift; sourceTree = "<group>"; };
+		A10000000000000000000002 /* TransitionSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TransitionSmokeTests.swift; sourceTree = "<group>"; };
 		2FAD9762203C412B000D30F8 /* config.xml */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = config.xml; sourceTree = "<group>"; };
 		50379B222058CBB4000EE86E /* capacitor.config.json */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.json; path = capacitor.config.json; sourceTree = "<group>"; };
 		504EC3041FED79650016851F /* App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = App.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -33,6 +58,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		F10000000000000000000004 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		504EC3011FED79650016851F /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -44,9 +70,11 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		F10000000000000000000005 /* AppLocalTests */ = {isa = PBXGroup; children = (F10000000000000000000002, A10000000000000000000002, F20000000000000000000002, F20000000000000000000006, F30000000000000000000002, F40000000000000000000002,); path = AppLocalTests; sourceTree = "<group>"; };
 		504EC2FB1FED79650016851F = {
 			isa = PBXGroup;
 			children = (
+				F10000000000000000000005 /* AppLocalTests */,
 				958DCC722DB07C7200EA8C5F /* debug.xcconfig */,
 				504EC3061FED79650016851F /* App */,
 				504EC3051FED79650016851F /* Products */,
@@ -56,6 +84,7 @@
 		504EC3051FED79650016851F /* Products */ = {
 			isa = PBXGroup;
 			children = (
+				F10000000000000000000003 /* AppLocalTests.xctest */,
 				504EC3041FED79650016851F /* App.app */,
 			);
 			name = Products;
@@ -64,6 +93,7 @@
 		504EC3061FED79650016851F /* App */ = {
 			isa = PBXGroup;
 			children = (
+				F00000000000000000000002 /* NoQueueVault.swift */,
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
@@ -80,6 +110,7 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		F10000000000000000000006 /* AppLocalTests */ = {isa = PBXNativeTarget; buildConfigurationList = F10000000000000000000007; buildPhases = (F10000000000000000000008, F10000000000000000000004, F20000000000000000000003,); buildRules = (); dependencies = (F10000000000000000000009,); name = AppLocalTests; productName = AppLocalTests; productReference = F10000000000000000000003; productType = "com.apple.product-type.bundle.unit-test"; };
 		504EC3031FED79650016851F /* App */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 504EC3161FED79650016851F /* Build configuration list for PBXNativeTarget "App" */;
@@ -87,6 +118,7 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+                F50000000000000000000001 /* Optional Firebase client configuration */,
 			);
 			buildRules = (
 			);
@@ -102,6 +134,12 @@
 		};
 /* End PBXNativeTarget section */
 
+/* Begin PBXContainerItemProxy section */
+        F1000000000000000000000A = {isa = PBXContainerItemProxy; containerPortal = 504EC2FC1FED79650016851F; proxyType = 1; remoteGlobalIDString = 504EC3031FED79650016851F; remoteInfo = App; };
+/* End PBXContainerItemProxy section */
+/* Begin PBXTargetDependency section */
+        F10000000000000000000009 = {isa = PBXTargetDependency; target = 504EC3031FED79650016851F; targetProxy = F1000000000000000000000A; };
+/* End PBXTargetDependency section */
 /* Begin PBXProject section */
 		504EC2FC1FED79650016851F /* Project object */ = {
 			isa = PBXProject;
@@ -113,6 +151,7 @@
 						CreatedOnToolsVersion = 9.2;
 						LastSwiftMigration = 1100;
 						ProvisioningStyle = Automatic;
+						SystemCapabilities = { com.apple.Push = { enabled = 1; }; };
 					};
 				};
 			};
@@ -133,11 +172,13 @@
 			projectRoot = "";
 			targets = (
 				504EC3031FED79650016851F /* App */,
+				F10000000000000000000006 /* AppLocalTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		F20000000000000000000003 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (F20000000000000000000001, F20000000000000000000004, F30000000000000000000001, F40000000000000000000001,); runOnlyForDeploymentPostprocessing = 0; };
 		504EC3021FED79650016851F /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -154,11 +195,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		F10000000000000000000008 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F10000000000000000000001, A10000000000000000000001 /* TransitionSmokeTests.swift in Sources */,); runOnlyForDeploymentPostprocessing = 0; };
 		504EC3001FED79650016851F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				F00000000000000000000001 /* NoQueueVault.swift in Sources */,
 				9582B6832FE993A70072D4E8 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -185,6 +228,8 @@
 /* End PBXVariantGroup section */
 
 /* Begin XCBuildConfiguration section */
+		F1000000000000000000000B /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/App"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; PRODUCT_BUNDLE_IDENTIFIER = com.noqueue-app.ios.localtests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SUPPORTED_PLATFORMS = iphonesimulator; TARGETED_DEVICE_FAMILY = "1,2"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);}; name = Debug; };
+		F1000000000000000000000C /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/App.app/App"; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 18.0; PRODUCT_BUNDLE_IDENTIFIER = com.noqueue-app.ios.localtests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; SUPPORTED_PLATFORMS = iphonesimulator; TARGETED_DEVICE_FAMILY = "1,2"; LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks",);}; name = Release; };
 		504EC3141FED79650016851F /* Debug */ = {
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 958DCC722DB07C7200EA8C5F /* debug.xcconfig */;
@@ -234,7 +279,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
@@ -285,7 +330,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -300,16 +345,19 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 6VYYNUZPSH;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = App/App.entitlements;
+				APS_ENVIRONMENT = development;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
 				OTHER_SWIFT_FLAGS = "$(inherited) \"-D\" \"COCOAPODS\" \"-DDEBUG\"";
-				PRODUCT_BUNDLE_IDENTIFIER = com.noqueue.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noqueue-app.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
 				SWIFT_VERSION = 5.0;
@@ -322,15 +370,18 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 6VYYNUZPSH;
+				"CODE_SIGN_ENTITLEMENTS[sdk=iphoneos*]" = App/App.entitlements;
+				APS_ENVIRONMENT = production;
 				CURRENT_PROJECT_VERSION = 1;
 				INFOPLIST_FILE = App/Info.plist;
-				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.noqueue.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.noqueue-app.ios;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "";
 				SWIFT_VERSION = 5.0;
@@ -341,6 +392,7 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		F10000000000000000000007 = {isa = XCConfigurationList; buildConfigurations = (F1000000000000000000000B, F1000000000000000000000C,); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 		504EC2FF1FED79650016851F /* Build configuration list for PBXProject "App" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -1,3 +1,4 @@
+import { mobileActiveConflict, isMobileActiveConstraint } from '../mobile/active-turn'
 import { configuredCustomerWork, customerEstimate } from './customer-estimate'
 import {
   copyVersion,
@@ -181,7 +182,7 @@ export function manualJoinRequiresWhatsapp(env: CloudflareBindings) {
     return true
   }
 }
-export type JoinSource = 'legacy' | 'public-service' | 'public-queue'
+export type JoinSource = 'legacy' | 'public-service' | 'public-queue' | 'mobile-app'
 
 function whatsappAdmissionReady(env: CloudflareBindings, locale: 'es' | 'en') {
   if (env.APP_ENV === 'production' && !isApprovedProductionV4(env)) return false
@@ -264,7 +265,13 @@ export async function joinQueue(
   experiment = false,
   actor?: string,
   source: JoinSource = 'legacy',
+  installationHash?: string,
 ) {
+  const mobile = source === 'mobile-app'
+  if (mobile && (actor || experiment || input.whatsapp.consent || !installationHash || !/^[a-f0-9]{64}$/.test(installationHash)))
+    return { status: 400, body: { error: 'invalid_mobile_join' } }
+  // No collision/replay across web, staff or anonymous installations.
+  if (mobile) key = `mobile:${installationHash}:${key}`
   await maintainQueue(env, queueId)
   const access = actor
     ? await queueAccess(env, actor, queueId, 'queue.operate')
@@ -299,11 +306,15 @@ export async function joinQueue(
       },
     }
   }
+  if (mobile) {
+    const conflict = await mobileActiveConflict(env, installationHash!)
+    if (conflict) return conflict
+  }
   const selectedCopyVersion = copyVersion(env)
   // Admission guards apply to new turns, never to recovery of a committed request.
-  if (env.APP_ENV === 'production' && !whatsappAdmissionReady(env, input.locale))
+  if (!mobile && env.APP_ENV === 'production' && !whatsappAdmissionReady(env, input.locale))
     return { status: 503, body: { error: 'whatsapp_unavailable' } }
-  if (source === 'public-service' && !input.displayName?.trim())
+  if ((source === 'public-service' || mobile) && !input.displayName?.trim())
     return { status: 400, body: { error: 'name_required' } }
   if (
     (source === 'public-service' || source === 'public-queue') &&
@@ -399,13 +410,13 @@ export async function joinQueue(
       serviceSchema.parse(JSON.parse(queue.config)),
     )
     if (
-      source === 'public-service' &&
+      (source === 'public-service' || mobile) &&
       config.type === 'pool' &&
       input.partySize !== 1
     )
       return { status: 400, body: { error: 'invalid_party_size' } }
     if (
-      source === 'public-service' &&
+      (source === 'public-service' || mobile) &&
       config.type === 'reception' &&
       !input.receptionService
     )
@@ -541,6 +552,10 @@ export async function joinQueue(
       now,
     ),
   ]
+  if (mobile)
+    statements.push(env.DB.prepare(
+      'INSERT INTO mobile_entry_installation(entry_id,installation_hash,created_at) VALUES (?,?,?)',
+    ).bind(id, installationHash!, now))
   if (actor && access)
     statements.push(
       audit(
@@ -653,7 +668,15 @@ export async function joinQueue(
       )
     }
   }
-  await commitQueueTransition(env, queueId, before, afterModel, statements, now, actor ? 'staff.join' : 'public.join')
+  try {
+    await commitQueueTransition(env, queueId, before, afterModel, statements, now, actor ? 'staff.join' : 'public.join')
+  } catch (error) {
+    if (mobile && isMobileActiveConstraint(error)) {
+      // Another queue can win between the early read and this atomic batch.
+      return await mobileActiveConflict(env, installationHash!) ?? { status: 409, body: { error: 'active_turn_changed' } }
+    }
+    throw error
+  }
   // Maintenance can become due while admission commits; run it before the response.
   await maintainQueue(env, queueId)
   // Publishing is best-effort only after the durable transaction. The scheduled sweep repairs this gap.

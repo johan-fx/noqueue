@@ -1,5 +1,15 @@
 apply plugin: 'com.android.application'
 
+// Opt-in local HTTPS CA. Never part of a normal Debug or any Release build.
+def localTlsDir = providers.gradleProperty('noqueueLocalTlsDir').orNull
+if (localTlsDir != null) {
+    gradle.taskGraph.whenReady { graph ->
+        if (graph.allTasks.any { it.name.toLowerCase().contains('release') }) {
+            throw new GradleException('Local TLS is forbidden in Release builds. Omit -PnoqueueLocalTlsDir.')
+        }
+    }
+}
+
 android {
     namespace = "com.noqueue.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -20,6 +30,12 @@ android {
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+    if (localTlsDir != null) {
+        sourceSets.debug {
+            manifest.srcFile 'src/localDebug/AndroidManifest.xml'
+            res.srcDirs += ['src/localDebug/res', file(localTlsDir)]
         }
     }
 }

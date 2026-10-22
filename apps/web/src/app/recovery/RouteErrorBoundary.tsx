@@ -1,3 +1,4 @@
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useRouteError } from 'react-router'
 import { detectRuntime } from '../bootstrap/runtime'
@@ -90,5 +91,6 @@ export function RouteErrorBoundary() {
 
 export function RouteLoadingScreen() {
   const en = new URLSearchParams(window.location.search).get('lang') === 'en'
+  if (detectRuntime() === 'native') return <LoadingSpinner fullScreen locale={en ? 'en' : 'es'} />
   return <p className="p-6" role="status">{en ? 'Loading…' : 'Cargando…'}</p>
 }

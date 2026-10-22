@@ -19,3 +19,25 @@ BETTER_AUTH_SECRET=""
 # Never expose either in VITE_*.
 AUTH_EMAIL_API_KEY=""
 AUTH_EMAIL_FROM="NoQueue <access@your-verified-domain.example>"
+
+# Native push: keep OFF until explicitly authorized, migrated and configured.
+# Separate secrets per local/staging/production; never expose them in VITE_*.
+MOBILE_PUSH_ENABLED=false
+MOBILE_PUSH_TOKEN_KEY=
+# Legacy direct APNs adapter only; current routes/dispatcher use FCM on both platforms.
+APNS_KEY_ID=
+APNS_TEAM_ID=
+APNS_PRIVATE_KEY=
+APNS_TOPIC=
+# Explicit sandbox or production, matched to the signed app entitlement (not inferred).
+APNS_ENVIRONMENT=
+# Operational gate, not a protocol switch. Set only after verifying HTTP/2 in
+# the actual target runtime/environment; local Node probes and mocks do not count.
+APNS_TRANSPORT_VERIFIED=false
+FCM_PROJECT_ID=
+FCM_CLIENT_EMAIL=
+FCM_PRIVATE_KEY=
+
+# Independent rollout for FCM on iOS; APNs keys live in Firebase, never the app.
+FCM_IOS_ENABLED=false
+FCM_IOS_BUNDLE_ID=com.noqueue-app.ios

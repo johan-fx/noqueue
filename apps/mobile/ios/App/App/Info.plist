@@ -2,6 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>FirebaseMessagingAutoInitEnabled</key><false/>
+    <key>FirebaseAppDelegateProxyEnabled</key><false/>
+    <key>FIREBASE_ANALYTICS_COLLECTION_ENABLED</key><false/>
+    <key>FIREBASE_ANALYTICS_COLLECTION_DEACTIVATED</key><true/>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Conectar con el servidor local de desarrollo de NoQueue para pruebas en este dispositivo.</string>
+    <key>NSCameraUsageDescription</key>
+    <string>Escanear el código QR del establecimiento para acceder a su lista de espera.</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Encontrar establecimientos cercanos cuando eliges usar tu ubicación.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Encontrar establecimientos cercanos cuando eliges usar tu ubicación.</string>
   <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>
@@ -54,16 +66,14 @@
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>
-		<string>UIInterfaceOrientationPortraitUpsideDown</string>
-		<string>UIInterfaceOrientationLandscapeLeft</string>
-		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- Keep the portrait scene in iPad compatibility mode as well. -->
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 </dict>

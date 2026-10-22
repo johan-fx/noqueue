@@ -1,3 +1,4 @@
+import { mobileRoutes } from './features/mobile/routes'
 import { privacyRoutes } from './features/privacy/routes'
 import { discoveryRoutes } from './features/discovery/routes'
 import { localVenueLogo } from './features/staff/logo'
@@ -83,6 +84,7 @@ app.all('/auth/*', async (c) => {
   }
   return createAuth(c.env).handler(c.req.raw)
 })
+app.route('/mobile', mobileRoutes)
 app.route('/staff', staffRoutes)
 app.route('/public/services', publicServices)
 app.route('/public', discoveryRoutes)

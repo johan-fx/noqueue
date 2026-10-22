@@ -3,6 +3,7 @@ import {
   publicServiceConsentVersion,
   type PublicService,
   type PublicServiceJoin,
+  publicServiceJoinSchema,
   type ServiceJoin,
 } from '@noqueue/contracts/queue'
 import { Check } from 'lucide-react'
@@ -24,12 +25,16 @@ export function ServiceForm({
   disabled = false,
   presentation = 'public',
   onSubmit,
+  onMobileSubmit,
+  channel = 'web',
 }: {
   service: PublicService
   locale: Locale
   disabled?: boolean
   presentation?: 'public' | 'kiosk'
+  channel?: 'web' | 'mobile'
   onSubmit: (input: PublicServiceJoin, key: string) => Promise<void>
+  onMobileSubmit?: (input: ServiceJoin, key: string) => Promise<void>
 }) {
   const es = locale === 'es'
   const kiosk = presentation === 'kiosk'
@@ -47,7 +52,7 @@ export function ServiceForm({
   const [busy, setBusy] = useState(false)
   const [hasAttempt, setHasAttempt] = useState(false)
   const [error, setError] = useState('')
-  const request = useRef<{ input: PublicServiceJoin; key: string } | null>(null)
+  const request = useRef<{ input: ServiceJoin | PublicServiceJoin; key: string } | null>(null)
   const lock = useRef(false)
   const unavailable = reception && !selected
   async function submit(event: FormEvent) {
@@ -58,18 +63,18 @@ export function ServiceForm({
         (disabled ||
           unavailable ||
           !name.trim() ||
-          !validPublicWhatsAppConsent(phone, consent)))
+          (channel === 'web' && !validPublicWhatsAppConsent(phone, consent))))
     )
       return
-    const input: PublicServiceJoin = {
+    const input: ServiceJoin | PublicServiceJoin = {
       displayName: name.trim(),
       partySize: 1,
       locale,
-      whatsapp: {
+      ...(channel === 'web' ? { whatsapp: {
         consent: true,
         phone,
         version: publicServiceConsentVersion,
-      },
+      } } : {}),
       ...(reception ? { receptionService: selected } : {}),
     }
     // Retry the frozen intent even if polling changed admission or configuration.
@@ -79,7 +84,10 @@ export function ServiceForm({
     setBusy(true)
     setError('')
     try {
-      await onSubmit(request.current.input, request.current.key)
+      if (channel === 'mobile') {
+        if (!onMobileSubmit) throw new Error('Mobile admission unavailable')
+        await onMobileSubmit(request.current.input, request.current.key)
+      } else await onSubmit(publicServiceJoinSchema.parse(request.current.input), request.current.key)
     } catch (error) {
       setError(
         error instanceof Error
@@ -187,7 +195,7 @@ export function ServiceForm({
                 : 'No reception services are available.'}
             </p>
           )}
-          <PublicWhatsAppConsentFields
+          {channel === 'web' && <PublicWhatsAppConsentFields
             locale={locale}
             presentation={presentation}
             nameField={kiosk ? nameField : undefined}
@@ -204,7 +212,7 @@ export function ServiceForm({
               request.current = null
               setHasAttempt(false)
             }}
-          />
+          />}
           {error && (
             <p role="alert" className="text-destructive">
               {error}
@@ -221,7 +229,7 @@ export function ServiceForm({
               (disabled ||
                 unavailable ||
                 !name.trim() ||
-                !validPublicWhatsAppConsent(phone, consent)))
+                (channel === 'web' && !validPublicWhatsAppConsent(phone, consent))))
           }
         >
           {busy

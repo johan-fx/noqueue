@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router'
+import { AppLink } from '@/app/navigation/AppLink'
 import { ChevronLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -47,13 +47,14 @@ export function CustomerShell({
         }`}
       >
         {back ? (
-          <Link
+          <AppLink
             className="flex h-11 w-13 items-center"
             to={back}
+            intent="back"
             aria-label={locale === 'es' ? 'Volver' : 'Back'}
           >
             <ChevronLeft className="size-6" />
-          </Link>
+          </AppLink>
         ) : null}
         <p className="font-semibold">{title}</p>
         <Select

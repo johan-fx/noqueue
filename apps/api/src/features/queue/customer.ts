@@ -1,4 +1,4 @@
-import { noticeStatement, publishNotice } from './notices'
+import { lifecycleNoticeStatements, publishNotice } from './notices'
 import { HTTPException } from 'hono/http-exception'
 import {
   customerCommandSchema,
@@ -86,7 +86,7 @@ export async function expireArrivals(
       arrivalDeadlineAt: entry.arrival_deadline_at,
     }
     return [
-      noticeStatement(
+      ...lifecycleNoticeStatements(
         env,
         entry.id,
         'expired',
@@ -264,7 +264,7 @@ export async function runCustomerCommand(
     }
     if (!origin)
       statements.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           entry.id,
           'cancelled',
@@ -379,7 +379,7 @@ export async function runCustomerCommand(
         ).bind(crypto.randomUUID(), successor.id, now),
       )
       statements.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           successor.id,
           'ready',
@@ -500,7 +500,8 @@ export async function runCustomerCommand(
       ).bind(now, origin.webhookEventId),
     )
   }
-  await commitQueueTransition(env, queueId, state, after, statements, now, `customer.${input.action}`)
+  const mobile = await env.DB.prepare('SELECT 1 FROM mobile_entry_installation WHERE entry_id=?').bind(entry.id).first()
+  await commitQueueTransition(env, queueId, state, after, statements, now, `customer.${input.action}`, mobile ? entry.id : undefined)
   if (notifyCancellation) await publishNotice(env, entry.id, 'cancelled')
   if (notifyReadyEntryId) await publishNotice(env, notifyReadyEntryId, 'ready')
   if (origin?.replyWithinServiceWindow)

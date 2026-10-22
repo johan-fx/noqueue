@@ -2,6 +2,7 @@ import { copyVersion } from '../../integrations/whatsapp-copy-v3'
 import type { LifecycleV4Variant } from '../../integrations/whatsapp-copy-v4'
 import type { WhatsAppActionPhase } from './whatsapp-actions'
 import { z } from 'zod'
+import { pushNoticeStatement } from '../mobile/push/lifecycle'
 export type QueueNoticeKind =
   | 'ready'
   | 'approaching'
@@ -256,6 +257,17 @@ export function noticeStatement(
   return env.DB.prepare(
     'INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at) VALUES (?,?,?,?,?)',
   ).bind(crypto.randomUUID(), entryId, idempotencyKey, kind, now)
+}
+
+/** Both channels commit with the domain change; each keeps its own eligibility. */
+export function lifecycleNoticeStatements(
+  env: CloudflareBindings, entryId: string, kind: QueueNoticeKind, now: number,
+  snapshot?: QueueNoticeSnapshot, revision = 0, callCycle = 0, configuredService = false,
+) {
+  return [
+    noticeStatement(env, entryId, kind, now, snapshot, revision, callCycle, configuredService),
+    ...(snapshot && configuredService ? [pushNoticeStatement(env, entryId, kind, now, snapshot, revision, callCycle)] : []),
+  ]
 }
 
 /** Publish after commit. A failed queue publish cannot undo assignment; the scheduled reconciler retries publication. */

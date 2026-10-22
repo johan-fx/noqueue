@@ -10,6 +10,11 @@ export class ApiError extends Error {
   }
 }
 const messages: Record<string, string> = {
+  replacement_changed: 'La lista ha cambiado. Revisa las opciones antes de asignar.',
+  replacement_unavailable: 'Asigna el siguiente turno manualmente desde la lista.',
+  assignment_precondition_required: 'Actualiza la aplicación para asignar turnos.',
+  assignment_next_changed: 'La lista ha cambiado. Revisa el siguiente turno antes de asignar.',
+
   location_confirmation_invalid:
     'La dirección no está confirmada o la selección ha caducado. Busca y confirma de nuevo.',
   location_provider_unavailable:

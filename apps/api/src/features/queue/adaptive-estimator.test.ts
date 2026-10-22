@@ -154,7 +154,7 @@ async function call(
     key,
     f.config.type === 'restaurant'
       ? { action: 'call', entryId: f.ids[i]!, version: 0 }
-      : { action: 'assign_next' },
+      : { action: 'assign_next', expectedEntryId: f.ids[i]!, expectedVersion: 0 },
     Date.now(),
   )
   return key
@@ -669,12 +669,13 @@ it('new demand after an empty queue starts a fresh episode without an idle-gap s
     whatsapp: { consent: false },
   })
   expect(result.status).toBe(201)
+  const next = await env.DB.prepare("SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence,id LIMIT 1").bind(f.queueId).first<{id: string; version: number}>()
   await runQueueCommand(
     env,
     f.actor,
     f.queueId,
     crypto.randomUUID(),
-    { action: 'assign_next' },
+    { action: 'assign_next', expectedEntryId: next!.id, expectedVersion: next!.version },
     Date.now(),
   )
   const obs = await observations(f.queueId)

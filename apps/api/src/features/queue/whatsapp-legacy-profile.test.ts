@@ -110,7 +110,7 @@ for (const configured of [false, true]) {
               t.queue,
               crypto.randomUUID(),
               action === 'call'
-                ? { action: 'assign_next' }
+                ? { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 }
                 : { action, entryId: t.entry, version: 0 },
               now,
             ),
@@ -123,7 +123,7 @@ for (const configured of [false, true]) {
             t.actor,
             t.queue,
             crypto.randomUUID(),
-            { action: 'assign_next' },
+            { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 },
             now,
           )
           await env.DB.prepare(
@@ -216,7 +216,7 @@ it('keeps historical v1 joined and v2 ready rendering despite selecting v3 for l
     t.actor,
     t.queue,
     crypto.randomUUID(),
-    { action: 'assign_next' },
+    { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 },
   )
   const ready = await env.DB.prepare(
     "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='ready'",
@@ -258,7 +258,7 @@ it.each(['call', 'expiry', 'service-end'] as const)(
         t.actor,
         t.queue,
         crypto.randomUUID(),
-        { action: 'assign_next' },
+        { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 },
         now,
       )
       kind = 'ready'

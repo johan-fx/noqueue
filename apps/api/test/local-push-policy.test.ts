@@ -16,7 +16,7 @@ async function scenario(platform: 'ios' | 'android' = 'ios') {
   await env.DB.prepare("INSERT INTO mobile_push_registration(installation_hash,provider,token_hash,token_cipher,locale,enabled,updated_at,platform) VALUES (?,'fcm',?,'not-used','es',1,?,?)").bind(owner, tokenHash, Date.now(), platform).run()
   await joinQueue(bindings, f.queue, crypto.randomUUID(), { displayName: 'Test', partySize: 1, receptionService: 'check_in', locale: 'es', whatsapp: { consent: false } }, false, undefined, 'mobile-app', owner)
   const e = await env.DB.prepare('SELECT id FROM queue_entry WHERE queue_id=?').bind(f.queue).first<{ id: string }>()
-  await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next' })
+  await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next', expectedEntryId: e!.id, expectedVersion: 0 })
   const notice = await env.DB.prepare('SELECT id FROM mobile_push_outbox WHERE entry_id=?').bind(e!.id).first<{ id: string }>()
   await env.DB.prepare("UPDATE mobile_push_outbox SET status='sending',attempts=1 WHERE id=?").bind(notice!.id).run()
   await env.DB.prepare('INSERT INTO local_push_guard VALUES (1,?,?,?,?,?,1,1,NULL,NULL)').bind(platform, owner, tokenHash, e!.id, Date.now() + 120000).run()

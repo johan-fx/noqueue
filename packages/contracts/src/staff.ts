@@ -593,8 +593,34 @@ export const entryCommandSchema = z
     message: 'operation_retired',
     path: ['action'],
   })
+export const replacementCommandSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('resolve_replacement'), decisionId: z.string().uuid(),
+    decisionVersion: z.number().int().nonnegative(), entryId: z.string().uuid(),
+    version: z.number().int().nonnegative() }).strict(),
+  z.object({ action: z.literal('dismiss_replacement'), decisionId: z.string().uuid(),
+    decisionVersion: z.number().int().nonnegative() }).strict(),
+])
+export type ReplacementCommand = z.infer<typeof replacementCommandSchema>
+export type ReplacementDecision = {
+  id: string
+  version: number
+  entryId: string
+  originalPartySize: number
+  createdAt: number
+  reason: 'no_candidate' | 'missing_context' | 'context_changed'
+  unavailable: 'disabled' | 'context' | null
+  seating: { spaceId: string; spaceName: string; seats: number } | null
+  candidates: Array<{ id: string; version: number; code: string; displayName: string | null; partySize: number }>
+}
 export const queueCommandSchema = z.union([
-  z.object({ action: z.literal('assign_next') }).strict(),
+  replacementCommandSchema,
+  // Optional at parsing only: old successful requests can still replay. New
+  // commands without both preconditions fail with 409 in the coordinator.
+  z.object({
+    action: z.literal('assign_next'),
+    expectedEntryId: z.string().uuid().optional(),
+    expectedVersion: z.number().int().min(0).optional(),
+  }).strict(),
   entryCommandSchema,
 ])
 export type QueueCommand = z.infer<typeof queueCommandSchema>
@@ -661,6 +687,7 @@ export type QueueConfigurationContext = Pick<
 >
 
 export type QueueSummary = Partial<AdmissionStatus> & {
+  autoReplacementEnabled?: boolean
   /** Real waiting turns, independent of the paginated staff entry list. */
   waitingCount?: number
   reminderDue?: boolean
@@ -679,6 +706,12 @@ export type QueueSummary = Partial<AdmissionStatus> & {
   readiness?: QueueReadiness
 }
 export type StaffEntry = {
+  automaticReplacement?: {
+    origin: 'staff' | 'yield' | 'arrival_expiry' | 'legacy'
+    eligible: boolean
+    result: CallReplacementResult
+    successor: { id: string; code: string } | null
+  } | null
   /** Confirmed context for the current called/completed cycle, not a prediction. */
   assignedSeating?: { spaceId: string; spaceName: string; seats: number } | null
   cancellationReason?: 'service_ended'
@@ -717,6 +750,11 @@ export type StaffEntry = {
   resourceId?: string | null
   callable?: boolean
 }
+
+export type CallReplacementResult =
+  | 'pending' | 'replaced' | 'yielded' | 'arrived' | 'cancelled' | 'no_show'
+  | 'returned_to_waiting' | 'no_candidate' | 'missing_context' | 'context_changed'
+  | 'service_ended' | 'disabled' | 'legacy'
 
 const occupancyAnswerSchema = z.object({
   spaceId: z.string().min(1).max(100),

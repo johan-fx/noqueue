@@ -1,3 +1,10 @@
+import {
+  prepareCall,
+  finishCallReplacement,
+  readCallReplacement,
+  replacementEnabled,
+} from './call'
+import type { CallReplacementResult } from '@noqueue/contracts/staff'
 import { lifecycleNoticeStatements, publishNotice } from './notices'
 import { HTTPException } from 'hono/http-exception'
 import {
@@ -39,91 +46,226 @@ export function customerPhase(
     : 'waiting'
 }
 
-/** Called inside the queue coordinator; every statement commits together. */
+/** Serialized by QueueCoordinator. Each expiration and its single successor commit together. */
 export async function expireArrivals(
   env: CloudflareBindings,
   queueId: string,
   now = Date.now(),
 ) {
+  // A dismissed or ended decision never becomes an automatic reservation.
+  await env.DB.prepare(`UPDATE queue_replacement_decision SET status='ended',version=version+1,updated_at=?
+    WHERE queue_id=? AND status='pending' AND ((service_ends_at IS NOT NULL AND service_ends_at<=?)
+      OR NOT EXISTS(SELECT 1 FROM queue_entry e WHERE e.id=entry_id AND e.status='expired' AND e.call_cycle=queue_replacement_decision.call_cycle))`)
+    .bind(now, queueId, now).run()
+  // Snapshot due calls once: newly called successors always get a full new grace period.
   const due = await env.DB.prepare(
-    `SELECT e.id,e.call_cycle,e.arrival_deadline_at,q.config
-     FROM queue_entry e JOIN queue q ON q.id=e.queue_id
-     WHERE e.queue_id=? AND e.status='called' AND e.arrival_deadline_at<=?`,
+    `SELECT id,call_cycle,party_size,arrival_deadline_at,service_ends_at
+    FROM queue_entry WHERE queue_id=? AND status='called' AND arrival_deadline_at<=?
+    ORDER BY arrival_deadline_at,sequence,id`,
   )
     .bind(queueId, now)
     .all<{
       id: string
       call_cycle: number
+      party_size: number
       arrival_deadline_at: number
-      config: string | null
-      space_id: string | null
+      service_ends_at: number | null
     }>()
-  if (!due.results.length) return
-  const before = await loadQueueState(env, queueId, now)
-  const statements = due.results.flatMap((entry) => {
-    let serviceName = 'Service'
-    let resourceName: string | null = null
-    try {
-      if (entry.config) {
-        const config = JSON.parse(entry.config) as {
-          name?: string
-          type?: string
-          spaces?: Array<{ id?: string; name?: string }>
+  const notices: Array<{ id: string; kind: 'expired' | 'ready' }> = []
+  for (const entry of due.results) {
+    const before = await loadQueueState(env, queueId, now)
+    const policy = await readCallReplacement(env, entry.id, entry.call_cycle)
+    let result: CallReplacementResult = 'no_candidate'
+    const recorded = await env.DB.prepare(
+      `SELECT space_id,seats,baseline_ms,provenance
+      FROM queue_assignment_observation WHERE entry_id=? AND call_cycle=? AND model_revision=2`,
+    )
+      .bind(entry.id, entry.call_cycle)
+      .first<{
+        space_id: string | null
+        seats: number | null
+        baseline_ms: number
+        provenance: 'confirmed' | 'inferred' | 'general'
+      }>()
+    const context = recorded
+      ? {
+          spaceId: recorded.space_id,
+          seats: recorded.seats,
+          baselineMinutes: recorded.baseline_ms / 60000,
+          provenance: recorded.provenance,
         }
-        serviceName = config.name ?? serviceName
-      }
-    } catch {
-      // Keep the safe service fallback; do not break an expiry transition.
+      : undefined
+    const end = policy ? policy.service_ends_at : entry.service_ends_at
+    if (!policy) result = 'legacy'
+    else if (
+      !replacementEnabled(env) ||
+      !policy.eligible ||
+      policy.result !== 'pending'
+    )
+      result = 'disabled'
+    else if (end !== null && now >= end) result = 'service_ended'
+    else if (!before.config || policy.service_type !== before.config.type)
+      result = 'context_changed'
+    else if (before.config.type === 'restaurant') {
+      if (
+        !context ||
+        context.provenance !== 'confirmed' ||
+        !context.spaceId ||
+        context.seats === null
+      )
+        result = 'missing_context'
+      else if (
+        !before.config.spaces.some(
+          (s) =>
+            s.id === context.spaceId &&
+            s.tableTypes?.some((t) => t.seats === context.seats),
+        )
+      )
+        result = 'context_changed'
     }
-    const snapshot: QueueNoticeSnapshot = {
-      schemaVersion: 2,
-      serviceName,
-      ahead: null,
-      etaMinutes: null,
-      predictedAt: null,
-      estimateQuality: 'unknown',
-      resourceName,
-      arrivalDeadlineAt: entry.arrival_deadline_at,
-    }
-    return [
+    // Exclude ended entries even when expiry is invoked directly (outside maintainQueue).
+    const candidates =
+      result === 'no_candidate'
+        ? (
+            await env.DB.prepare(
+              `SELECT id,sequence,version,party_size AS partySize,preferred_space_id AS preferredSpaceId,call_cycle
+          FROM queue_entry WHERE queue_id=? AND status='waiting' AND (service_ends_at IS NULL OR service_ends_at>?)
+          ORDER BY sequence,id`,
+            )
+              .bind(queueId, now)
+              .all<{
+                id: string
+                sequence: number
+                version: number
+                partySize: number
+                preferredSpaceId: string | null
+                call_cycle: number
+              }>()
+          ).results
+        : []
+    const successor = candidates.find(
+      (p) =>
+        before.config?.type !== 'restaurant' ||
+        (p.partySize === entry.party_size && p.partySize <= context!.seats! &&
+          (!p.preferredSpaceId ||
+            p.preferredSpaceId === 'fastest' ||
+            p.preferredSpaceId === context!.spaceId)),
+    )
+    const statements = [
+      // Invalidate all obsolete notices before enqueuing the terminal one.
+      env.DB.prepare(
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND status='pending' AND kind IN ('ready','queue_joined','approaching','delayed','improved')",
+      ).bind(now, entry.id),
       ...lifecycleNoticeStatements(
         env,
         entry.id,
         'expired',
         now,
-        snapshot,
+        {
+          schemaVersion: 2,
+          serviceName: before.config?.name ?? 'Servicio',
+          ahead: null,
+          etaMinutes: null,
+          predictedAt: null,
+          estimateQuality: 'unknown',
+          resourceName: null,
+          arrivalDeadlineAt: entry.arrival_deadline_at,
+        },
         0,
         entry.call_cycle,
-        !!entry.config,
+        !!before.config,
       ),
       env.DB.prepare(
-        "INSERT INTO queue_event(id,entry_id,kind,created_at) SELECT ?,id,'expired',? FROM queue_entry WHERE id=? AND status='called'",
-      ).bind(crypto.randomUUID(), now, entry.id),
+        "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'expired',?)",
+      ).bind(crypto.randomUUID(), entry.id, now),
       env.DB.prepare(
-        "UPDATE queue_entry SET status='expired',version=version+1 WHERE id=? AND status='called' AND arrival_deadline_at<=?",
-      ).bind(entry.id, now),
+        "UPDATE queue_entry SET status='expired',version=version+1 WHERE id=? AND status='called' AND call_cycle=? AND arrival_deadline_at<=?",
+      ).bind(entry.id, entry.call_cycle, now),
     ]
-  })
-  const expired = new Set(due.results.map((entry) => entry.id))
-  await commitQueueTransition(
-    env,
-    queueId,
-    before,
-    {
+    const after: QueueModelInput = {
       config: before.config,
       parties: before.parties,
-      holds: before.holds,
-      allocations: before.allocations.map((a) =>
-        expired.has(a.entry_id) && a.released_at === null
-          ? { ...a, released_at: now, outcome: 'expired' }
-          : a,
-      ),
-    },
-    statements,
-    now,
-    'arrival.expired',
-  )
-  for (const { id } of due.results) await publishNotice(env, id, 'expired')
+    }
+    if (successor) {
+      const cycle = successor.call_cycle + 1
+      const call = await prepareCall(env, queueId, before, successor, {
+        now,
+        callCycle: cycle,
+        origin: 'arrival_expiry',
+        context,
+        inherited: policy,
+      })
+      after.parties = before.parties.filter((p) => p.id !== successor.id)
+      after.assignment = call.assignment
+      statements.push(
+        ...call.statements,
+        env.DB.prepare(
+          `UPDATE queue_entry SET status='called',version=version+1,call_cycle=call_cycle+1,called_at=?,arrival_deadline_at=?,
+          progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?) WHERE id=? AND status='waiting' AND version=?`,
+        ).bind(
+          now,
+          call.deadline,
+          call.graceMinutes,
+          successor.id,
+          successor.version,
+        ),
+        env.DB.prepare(
+          "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'called',?)",
+        ).bind(crypto.randomUUID(), successor.id, now),
+      )
+      result = 'replaced'
+    }
+    if (policy?.eligible && before.config?.type === 'restaurant' &&
+      ['no_candidate', 'missing_context', 'context_changed'].includes(result)) {
+      statements.push(env.DB.prepare(`INSERT OR IGNORE INTO queue_replacement_decision
+        (id,queue_id,entry_id,call_cycle,original_party_size,space_id,seats,service_ends_at,reason,created_at,updated_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),queueId,entry.id,entry.call_cycle,
+          entry.party_size,context?.provenance === 'confirmed' ? context.spaceId : null,
+          context?.provenance === 'confirmed' ? context.seats : null,end,result,now,now))
+    }
+    if (policy)
+      statements.push(
+        finishCallReplacement(
+          env,
+          entry.id,
+          entry.call_cycle,
+          result,
+          now,
+          successor
+            ? { id: successor.id, cycle: successor.call_cycle + 1 }
+            : undefined,
+        ),
+      )
+    else
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO queue_call_replacement(entry_id,call_cycle,queue_id,eligible,origin,service_type,service_ends_at,result,created_at,updated_at)
+      VALUES (?,?,?,0,'legacy',?,?,'legacy',?,?)`,
+        ).bind(
+          entry.id,
+          entry.call_cycle,
+          queueId,
+          before.config?.type ?? 'unknown',
+          entry.service_ends_at,
+          now,
+          now,
+        ),
+      )
+    await commitQueueTransition(
+      env,
+      queueId,
+      before,
+      after,
+      statements,
+      now,
+      'arrival.expired',
+    )
+    console.info({ event: 'arrival_replacement', result })
+    notices.push({ id: entry.id, kind: 'expired' })
+    if (successor) notices.push({ id: successor.id, kind: 'ready' })
+  }
+  // Outbox reconciliation repairs publish failure; committed calls are never rolled back.
+  for (const notice of notices) await publishNotice(env, notice.id, notice.kind)
 }
 
 export async function runCustomerCommand(
@@ -286,6 +428,7 @@ export async function runCustomerCommand(
         "UPDATE queue_entry SET status='cancelled',version=version+1,called_at=NULL,arrival_deadline_at=NULL,call_cycle=CASE WHEN status='called' THEN call_cycle+1 ELSE call_cycle END WHERE id=?",
       ).bind(entry.id),
     )
+    statements.push(finishCallReplacement(env, entry.id, entry.call_cycle, 'cancelled', now))
     notifyCancellation = !origin
     metadata = { outcome: 'cancelled' }
   } else if (entry.status === 'called') {
@@ -340,21 +483,13 @@ export async function runCustomerCommand(
         .bind(successor.id)
         .first<{ call_cycle: number }>()
       const nextCycle = (priorCycle?.call_cycle ?? 0) + 1
-      after.assignment = {
-        entryId: successor.id,
-        callCycle: nextCycle,
-        source: 'handoff',
-        context,
-        partySize: successor.partySize,
-        preferredSpaceId: successor.preferredSpaceId,
-      }
-      const deadline = now + (state.config.graceMinutes ?? 5) * 60_000
-      const resourceName = null
-      statements.push(
-        env.DB.prepare(
-          "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND status='pending' AND kind IN ('queue_joined','approaching','delayed','improved')",
-        ).bind(now, successor.id),
-      )
+      const call = await prepareCall(env, queueId, state, successor, {
+        now, callCycle: nextCycle, origin: 'yield', context,
+        inherited: await readCallReplacement(env, entry.id, entry.call_cycle),
+      })
+      after.assignment = call.assignment
+      statements.push(...call.statements,
+        finishCallReplacement(env, entry.id, entry.call_cycle, 'yielded', now, { id: successor.id, cycle: nextCycle }))
       statements.push(
         env.DB.prepare(
           'UPDATE queue_entry SET sequence=(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) WHERE id=?',
@@ -363,9 +498,9 @@ export async function runCustomerCommand(
           "UPDATE queue_entry SET sequence=?,status='called',version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=call_cycle+1,called_at=?,arrival_deadline_at=? WHERE id=? AND status='waiting'",
         ).bind(
           entry.sequence,
-          state.config.graceMinutes ?? 5,
+          call.graceMinutes,
           now,
-          deadline,
+          call.deadline,
           successor.id,
         ),
         env.DB.prepare(
@@ -378,27 +513,6 @@ export async function runCustomerCommand(
           "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'called',?)",
         ).bind(crypto.randomUUID(), successor.id, now),
       )
-      statements.push(
-        ...lifecycleNoticeStatements(
-          env,
-          successor.id,
-          'ready',
-          now,
-          {
-            schemaVersion: 2,
-            serviceName: state.config.name,
-            ahead: null,
-            etaMinutes: null,
-            predictedAt: null,
-            estimateQuality: 'unknown',
-            resourceName,
-            arrivalDeadlineAt: deadline,
-          },
-          0,
-          nextCycle,
-          true,
-        ),
-      )
       metadata = {
         successorId: successor.id,
         fromSequence: entry.sequence,
@@ -409,6 +523,7 @@ export async function runCustomerCommand(
     } else {
       after.parties!.push(calledParty)
       statements.push(
+        finishCallReplacement(env, entry.id, entry.call_cycle, 'returned_to_waiting', now),
         env.DB.prepare(
           "UPDATE queue_entry SET status='waiting',version=version+1,call_cycle=call_cycle+1,called_at=NULL,arrival_deadline_at=NULL WHERE id=? AND status='called'",
         ).bind(entry.id),

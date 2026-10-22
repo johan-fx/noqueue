@@ -22,6 +22,7 @@ config.assets.directory = path.resolve(root, config.assets.directory)
 config.d1_databases[0].migrations_dir = path.join(root, 'migrations')
 config.vars = {
   ...config.vars,
+  QUEUE_AUTO_REPLACEMENT_ENABLED: process.env.NOQUEUE_E2E_AUTO_REPLACEMENT === 'true' ? 'true' : 'false',
   PUBLIC_APP_ORIGIN: `http://127.0.0.1:${port}`,
   BETTER_AUTH_SECRET: 'e2e-only-auth-secret-at-least-32-characters',
   AUTH_EMAIL_API_KEY: 'e2e-only-mail-key',

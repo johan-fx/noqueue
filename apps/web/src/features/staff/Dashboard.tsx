@@ -1,3 +1,4 @@
+import { ReplacementDecisions } from './ReplacementDecisions'
 import { AssignmentOptions } from './AssignmentOptions'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { ServiceCard } from './ServiceCard'
@@ -597,10 +598,12 @@ export function Dashboard(props: DashboardProps) {
       commandRequest.current = null
       await refresh()
     } catch (e) {
-      setError(errorMessage(e))
       if (e instanceof ApiError && e.status === 409)
         commandRequest.current = null
       await refresh().catch(() => undefined)
+      // refresh clears read errors. Keep the command conflict visible after the
+      // new head is rendered, rather than briefly flashing it before refresh.
+      setError(errorMessage(e))
     } finally {
       commandLock.current = false
       setBusy(false)
@@ -1034,6 +1037,11 @@ export function Dashboard(props: DashboardProps) {
                 {drawerError}
               </p>
             )}
+            {drawer === 'queue' && queue?.config.type === 'restaurant' && permissions.includes('queue.operate') && (
+              <ReplacementDecisions key={`replacement-${queue.id}`} queueId={queue.id}
+                blocked={busy || saving || !!pending || !!adding || !!advanced || !!lifecycle}
+                onBusy={setBusy} onResolved={refresh} returnFocus={() => menuTrigger.current} />
+            )}
             {drawer === 'queue' && queue && (
               <QueueView
                 key={queue.id}
@@ -1057,7 +1065,12 @@ export function Dashboard(props: DashboardProps) {
             queue?.config.type !== 'restaurant' &&
             tab === 'active' &&
             permissions.includes('queue.operate') && (
-              <DrawerFooter className="border-t bg-background p-6 sm:flex-row sm:justify-end">
+              <DrawerFooter className="border-t bg-background p-6">
+                {queue?.autoReplacementEnabled && (
+                  <p className="text-sm text-muted-foreground">
+                    Si no llega, llamaremos al siguiente. Confirma su llegada.
+                  </p>
+                )}
                 {drawer === 'queue' &&
                   tab === 'active' &&
                   permissions.includes('queue.operate') && (
@@ -1068,7 +1081,7 @@ export function Dashboard(props: DashboardProps) {
                         commandTrigger.current =
                           document.activeElement as HTMLElement
                         if (nextEntry)
-                          void directCommand({ action: 'assign_next' })
+                          void directCommand({ action: 'assign_next', expectedEntryId: nextEntry.id, expectedVersion: nextEntry.version })
                       }}
                     >
                       Asignar próximo turno <MoveRight aria-hidden="true" />
@@ -1150,10 +1163,17 @@ export function Dashboard(props: DashboardProps) {
               )}
               {pending?.action === 'call' && (
                 <div className="space-y-4">
-                  <p>
-                    Al asignar confirmas que puedes atender este turno. El
-                    cliente tendrá el plazo configurado para presentarse.
-                  </p>
+                  {pendingQueue?.autoReplacementEnabled && arrivalMode === 'notify' ? (
+                    <p className="text-sm text-muted-foreground">
+                      {restaurantAssignment
+                        ? seating?.mode === 'confirmed'
+                          ? 'Si no llega, llamaremos a otro grupo del mismo tamaño compatible con esta mesa. Si no hay, te avisaremos aquí para que elijas. Confirma su llegada.'
+                          : 'Sin espacio y capacidad confirmados, tendrás que asignar el siguiente turno manualmente.'
+                        : 'Si no llega, llamaremos al siguiente. Confirma su llegada.'}
+                    </p>
+                  ) : (
+                    <p>Al asignar confirmas que puedes atender este turno.{arrivalMode === 'notify' && ' El cliente tendrá el plazo configurado para presentarse.'}</p>
+                  )}
                   {restaurantAssignment && pendingQueue && pendingEntry && (
                     <AssignmentOptions
                       config={pendingQueue.config}

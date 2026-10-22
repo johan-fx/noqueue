@@ -46,6 +46,23 @@ const props: ComponentProps<typeof QueueEntryCard> = {
   onAction: vi.fn(),
 }
 
+it('identifies an automatic replacement without hiding the manual arrival action', () => {
+  render(<QueueEntryCard {...props} revealed="all" entry={{ ...props.entry, status: 'called',
+    automaticReplacement: { origin: 'arrival_expiry', eligible: true, result: 'pending', successor: null },
+  }} />)
+  expect(screen.queryByText('Asignado automáticamente por ausencia')).not.toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: 'Confirmar llegada' }).length).toBeGreaterThan(0)
+})
+
+it('keeps replacement details out of the operational card', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry,status:'expired',
+    automaticReplacement:{origin:'staff',eligible:true,result:'missing_context',successor:{id:'next',code:'T2'}},
+  }} />)
+  expect(screen.queryByText(/Falta confirmar/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button',{name:/Ver turno sucesor/})).not.toBeInTheDocument()
+  expect(screen.getByText('Caducado')).toBeVisible()
+})
+
 it('counts down the public wait, not zero operational availability, and accepts revisions', () => {
   const entry = { ...props.entry, etaMinutes: 0, predictedAt: 0,
     waitEstimate: { predictedAt: 60000, estimateQuality: 'provisional' as const } }

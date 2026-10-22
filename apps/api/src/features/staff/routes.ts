@@ -1,3 +1,4 @@
+import { replacementEnabled } from '../queue/call'
 import { metricsQuerySchema, venueMetricsQuerySchema } from '@noqueue/contracts/metrics'
 import { readMetrics, readVenueMetrics, metricsVenuePage } from '../metrics/read'
 import { touchVenueConfiguration } from './configuration'
@@ -640,6 +641,7 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
           ...row,
           config,
           manualJoinWhatsappRequired: manualJoinRequiresWhatsapp(c.env),
+          autoReplacementEnabled: replacementEnabled(c.env),
           ...(await admissionState(c.env, row.id)),
           outsideSchedule: !serviceWindow(config, venue!.timezone).serviceOpen,
           inventoryConfirmed: await inventoryConfirmed(c.env, row.id, config),
@@ -648,6 +650,10 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
       }),
     ),
   )
+})
+staffRoutes.get('/queues/:id/replacement-decisions', async (c) => {
+  await queueAccess(c.env,c.get('actor').id,c.req.param('id'),'queue.operate')
+  return c.json(await coordinator(c.env,c.req.param('id')).replacementDecisions(c.req.param('id')))
 })
 staffRoutes.get('/queues/:id/entries', async (c) => {
   const access = await queueAccess(
@@ -662,10 +668,14 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
       CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=e.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,
       e.display_name_cipher AS displayNameCipher,e.reception_service AS receptionService,e.preferred_space_id AS preferredSpaceId,
       e.called_at AS calledAt,e.arrival_deadline_at AS arrivalDeadlineAt,NULL AS resourceId,
-      o.space_id AS assignedSpaceId,o.seats AS assignedSeats
+      o.space_id AS assignedSpaceId,o.seats AS assignedSeats,
+      r.origin AS replacementOrigin,r.eligible AS replacementEligible,r.result AS replacementResult,
+      r.successor_entry_id AS successorId,successor.code AS successorCode
       FROM queue_entry e LEFT JOIN queue_assignment_observation o
       ON o.entry_id=e.id AND o.call_cycle=e.call_cycle AND o.provenance='confirmed'
         AND e.status IN ('called','completed','served')
+      LEFT JOIN queue_call_replacement r ON r.entry_id=e.id AND r.call_cycle=(SELECT MAX(call_cycle) FROM queue_call_replacement WHERE entry_id=e.id)
+      LEFT JOIN queue_entry successor ON successor.id=r.successor_entry_id AND successor.queue_id=e.queue_id
       WHERE e.queue_id=? ORDER BY CASE WHEN e.status IN ('waiting','called','completed') THEN 0 ELSE 1 END,
       CASE WHEN e.status IN ('waiting','called','completed') THEN e.sequence ELSE -e.sequence END LIMIT 500`,
   )
@@ -696,6 +706,7 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
           assignedSpaceId,
           assignedSeats,
           cancellationReason,
+          replacementOrigin, replacementEligible, replacementResult, successorId, successorCode,
           ...entry
         } = row
         const projection =
@@ -718,6 +729,10 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
         const space = config?.spaces.find((space) => space.id === spaceId)
         return {
           ...entry,
+          automaticReplacement: replacementOrigin ? {
+            origin: replacementOrigin, eligible: !!replacementEligible, result: replacementResult,
+            successor: successorId && successorCode ? { id: String(successorId), code: String(successorCode) } : null,
+          } : null,
           assignedSeating:
             assignedSpaceId && assignedSeats != null
               ? {

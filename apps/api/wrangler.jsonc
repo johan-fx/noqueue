@@ -76,6 +76,7 @@
     ]
   },
   "vars": {
+    "QUEUE_AUTO_REPLACEMENT_ENABLED": "false",
     "METRICS_CAPTURE_ENABLED": "true",
     "METRICS_DASHBOARD_ENABLED": "true",
     "WHATSAPP_MODE": "sandbox",
@@ -98,6 +99,7 @@
       "workers_dev": false,
       "preview_urls": false,
       "vars": {
+        "QUEUE_AUTO_REPLACEMENT_ENABLED": "false",
         "WHATSAPP_MODE": "sandbox",
         "WHATSAPP_ENABLED": "false",
         "CONFIRMATION_EXPERIMENT_ENABLED": "false",
@@ -171,6 +173,7 @@
       "workers_dev": false,
       "preview_urls": false,
       "vars": {
+        "QUEUE_AUTO_REPLACEMENT_ENABLED": "false",
         "WHATSAPP_MODE": "cloud",
         "WHATSAPP_ENABLED": "false",
         "CONFIRMATION_EXPERIMENT_ENABLED": "false",

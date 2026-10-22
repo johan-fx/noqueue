@@ -13,6 +13,7 @@ import type { QueueSummary, StaffRole } from '@noqueue/contracts/staff'
 import { Dashboard } from './Dashboard'
 import { api, ApiError } from './api'
 
+vi.mock('./ReplacementDecisions', () => ({ ReplacementDecisions: () => null }))
 vi.mock('./api', async (original) => ({
   ...(await original<typeof import('./api')>()),
   api: vi.fn(),
@@ -48,6 +49,28 @@ const service: QueueSummary = {
     receptionServices: ['check_in'],
   },
 }
+
+it('refreshes a stale quick assignment without retrying or assigning the new head', async () => {
+  const commands: unknown[] = []
+  let conflicted = false
+  vi.mocked(api).mockImplementation(async (path, _method, body) => {
+    if (path.endsWith('/commands')) {
+      commands.push(body)
+      conflicted = true
+      throw new ApiError(409, 'assignment_next_changed')
+    }
+    if (path.endsWith('/queues')) return [{ ...service, autoReplacementEnabled: true, config: { ...service.config, type: 'reception' } }]
+    return [{ id: conflicted ? 'second' : 'first', code: 'Q1', partySize: 1, status: 'waiting', version: 0, sequence: 1, calledAt: null }]
+  })
+  render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Empresa', role: 'queue_staff' }} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  expect(await screen.findByText(/Si no llega, llamaremos al siguiente/)).toBeVisible()
+  fireEvent.click(await screen.findByRole('button', { name: 'Asignar próximo turno' }))
+  await screen.findByRole('alert')
+  expect(commands).toEqual([{ action: 'assign_next', expectedEntryId: 'first', expectedVersion: 0 }])
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Asignar próximo turno' })).toBeEnabled())
+  expect(commands).toHaveLength(1)
+})
 describe('establishment list permissions', () => {
   it.each([
     ['owner', true, true],
@@ -1644,7 +1667,7 @@ it.each(['reception', 'pool'] as const)(
     })
     fireEvent.click(next)
     fireEvent.click(next)
-    expect(commands).toEqual([{ action: 'assign_next' }])
+    expect(commands).toEqual([{ action: 'assign_next', expectedEntryId: 'entry', expectedVersion: 0 }])
     expect(
       screen.queryByRole('dialog', { name: 'Asignar turno' }),
     ).not.toBeInTheDocument()

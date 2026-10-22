@@ -22,7 +22,7 @@ async function scenario(platform:'ios'|'android', budget=2,limits={called:1,expi
   await joinQueue(bindings,f.queue,crypto.randomUUID(),{displayName:'Test',partySize:1,receptionService:'check_in',locale:'es',whatsapp:{consent:false}},false,undefined,'mobile-app',owner)
   const entry=(await env.DB.prepare('SELECT id FROM queue_entry WHERE queue_id=?').bind(f.queue).first<{id:string}>())!.id
   await env.DB.prepare('INSERT INTO local_push_lifecycle_guard VALUES (1,?,?,?,?,?,?,?,2,1)').bind(platform,owner,tokenHash,entry,now+90*60000,budget,JSON.stringify(limits)).run()
-  await runQueueCommand(bindings,f.actor,f.queue,crypto.randomUUID(),{action:'assign_next'})
+  await runQueueCommand(bindings,f.actor,f.queue,crypto.randomUUID(),{action:'assign_next',expectedEntryId:entry,expectedVersion:0})
   async function body(kind='called'){
     const n=(await env.DB.prepare('SELECT id,payload_snapshot FROM mobile_push_outbox WHERE entry_id=? AND kind=?').bind(entry,kind).first<{id:string;payload_snapshot:string}>())!
     await env.DB.prepare("UPDATE mobile_push_outbox SET status='sending',attempts=1 WHERE id=?").bind(n.id).run()

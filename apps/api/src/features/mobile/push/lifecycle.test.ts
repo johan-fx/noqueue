@@ -59,7 +59,7 @@ async function change(f: Fixture, averageMinutes: number) {
 }
 async function dispatch(f: Fixture, id: string) { await dispatchPushSerialized(bindings, f.queue, id, now) }
 async function version(f: Fixture) { return (await env.DB.prepare('SELECT version FROM queue_entry WHERE id=?').bind(f.entry).first<{ version: number }>())!.version }
-async function call(f: Fixture) { await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next' }, now) }
+async function call(f: Fixture) { await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next', expectedEntryId: f.entry, expectedVersion: await version(f) }, now) }
 
 it.each(['ios', 'android'] as const)('delivers three distinct extensions and renewed approaches on %s without any WhatsApp dependency', async platform => {
   const f = await setup(platform), start = now
@@ -262,7 +262,8 @@ it('delivers the actual call to the mobile successor in a called-turn handoff', 
   const other=await joinQueue(bindings,f.queue,crypto.randomUUID(),{displayName:'Companion',partySize:1,receptionService:'check_in',locale:'es',whatsapp:{consent:false}},false,f.actor)
   const otherToken=(other.body as {recoveryToken:string}).recoveryToken
   await runCustomerCommand(bindings,f.queue,f.token,crypto.randomUUID(),{action:'yield',version:await version(f)},now)
-  await runQueueCommand(bindings,f.actor,f.queue,crypto.randomUUID(),{action:'assign_next'},now)
+  const head = (await env.DB.prepare("SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence,id LIMIT 1").bind(f.queue).first<{ id: string; version: number }>())!
+  await runQueueCommand(bindings,f.actor,f.queue,crypto.randomUUID(),{action:'assign_next',expectedEntryId:head.id,expectedVersion:head.version},now)
   const companion=(await env.DB.prepare('SELECT version FROM queue_entry WHERE queue_id=? AND id<>?').bind(f.queue,f.entry).first<{version:number}>())!
   await runCustomerCommand(bindings,f.queue,otherToken,crypto.randomUUID(),{action:'yield',version:companion.version},now)
   const n=(await notices(f,'called')).at(-1)!

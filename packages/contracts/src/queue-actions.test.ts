@@ -51,10 +51,12 @@ describe('service action policy', () => {
       }).success,
     ).toBe(false)
   })
-  it('accepts a queue-level FIFO command without a client-selected person', () => {
+  it('parses legacy FIFO payloads for replay and validates new head preconditions', () => {
     expect(
       queueCommandSchema.safeParse({ action: 'assign_next' }).success,
     ).toBe(true)
+    expect(queueCommandSchema.safeParse({ action: 'assign_next', expectedEntryId: '00000000-0000-4000-8000-000000000000', expectedVersion: 0 }).success).toBe(true)
+    expect(queueCommandSchema.safeParse({ action: 'assign_next', expectedEntryId: 'invalid', expectedVersion: -1 }).success).toBe(false)
     expect(queueCommandSchema.safeParse({ action: 'call' }).success).toBe(false)
   })
   it('defaults only new quick queues to two minutes', () => {
@@ -84,4 +86,18 @@ it('hydrates only absent legacy grace and preserves every explicit value', async
   expect(
     storedServiceSchema.parse({ ...base, graceMinutes: 17 }).graceMinutes,
   ).toBe(17)
+})
+
+it('requires versioned explicit candidates for replacement decisions', () => {
+  const command={action:'resolve_replacement',decisionId:'00000000-0000-4000-8000-000000000001',decisionVersion:0,entryId:'00000000-0000-4000-8000-000000000002',version:0}
+  expect(queueCommandSchema.safeParse(command).success).toBe(true)
+  expect(queueCommandSchema.safeParse({...command,version:undefined}).success).toBe(false)
+  expect(queueCommandSchema.safeParse({...command,decisionVersion:undefined}).success).toBe(false)
+  expect(queueCommandSchema.safeParse({...command,seating:{mode:'unspecified'}}).success).toBe(false)
+})
+it('dismisses a specific versioned decision without assigning a candidate', () => {
+  const command={action:'dismiss_replacement',decisionId:'00000000-0000-4000-8000-000000000001',decisionVersion:0}
+  expect(queueCommandSchema.safeParse(command).success).toBe(true)
+  expect(queueCommandSchema.safeParse({...command,entryId:'00000000-0000-4000-8000-000000000002'}).success).toBe(false)
+  expect(queueCommandSchema.safeParse({...command,decisionVersion:-1}).success).toBe(false)
 })

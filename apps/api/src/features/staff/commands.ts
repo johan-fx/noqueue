@@ -28,8 +28,8 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { queueAccess, audit } from '../../auth/access'
 import { hash } from '../queue/crypto'
-import { copyVersion } from '../../integrations/whatsapp-copy-v3'
-import { actualCallCopyVariant } from '../../integrations/whatsapp-copy-v4'
+import { prepareCall, finishCallReplacement } from '../queue/call'
+import { resolveReplacementDecision } from '../queue/replacement-decisions'
 export async function runQueueCommand(
   env: CloudflareBindings,
   actor: string,
@@ -56,16 +56,21 @@ export async function runQueueCommand(
   }
   await maintainQueue(env, queueId, now)
   const state = await loadQueueState(env, queueId, now)
+  if (command.action === 'resolve_replacement' || command.action === 'dismiss_replacement')
+    return resolveReplacementDecision(env, actor, queueId, key, fingerprint, command, state, access, now)
   const quick = state.config?.type !== 'restaurant'
   let input: EntryCommand
   if (command.action === 'assign_next') {
     if (!quick) throw new HTTPException(409, { message: 'unsupported_action' })
+    if (!command.expectedEntryId || command.expectedVersion === undefined)
+      throw new HTTPException(409, { message: 'assignment_precondition_required' })
     const first = await env.DB.prepare(
       "SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence,id LIMIT 1",
     )
       .bind(queueId)
       .first<{ id: string; version: number }>()
-    if (!first) throw new HTTPException(409, { message: 'queue_empty' })
+    if (!first || first.id !== command.expectedEntryId || first.version !== command.expectedVersion)
+      throw new HTTPException(409, { message: 'assignment_next_changed' })
     input = { action: 'call', entryId: first.id, version: first.version }
   } else input = command
   const entry = await env.DB.prepare(
@@ -170,7 +175,6 @@ export async function runQueueCommand(
   }
   if (input.action === 'call') after.appendedCallAt = now
   const extra: D1PreparedStatement[] = []
-  const assignedResourceName: string | null = null
   let seatingContext: EstimateContext | undefined
   if (input.seating) {
     if (input.action !== 'call' || state.config?.type !== 'restaurant')
@@ -228,33 +232,6 @@ export async function runQueueCommand(
         now,
       ),
     )
-  if (input.action === 'call') {
-    const predicted = await env.DB.prepare(
-      'SELECT predicted_at,created_at,legacy_eta_minutes FROM queue_forecast_anchor WHERE entry_id=?',
-    )
-      .bind(input.entryId)
-      .first<{
-        predicted_at: number
-        created_at: number
-        legacy_eta_minutes: number
-      }>()
-    const position = state.parties.findIndex((p) => p.id === input.entryId)
-    extra.push(
-      env.DB.prepare(
-        'INSERT OR IGNORE INTO queue_wait_evidence(entry_id,predicted_at,actual_at,error_minutes,legacy_eta_minutes,forecast_created_at,mode) VALUES (?,?,?,?,?,?,?)',
-      ).bind(
-        input.entryId,
-        predicted?.predicted_at ?? null,
-        now,
-        predicted?.predicted_at == null
-          ? null
-          : (now - predicted.predicted_at) / 60000,
-        predicted?.legacy_eta_minutes ?? Math.max(0, position) * state.baseline,
-        predicted?.created_at ?? null,
-        state.config?.estimationMode ?? 'shadow',
-      ),
-    )
-  }
   let notifyCancellation = false
   if (input.action === 'cancel') {
     const consent = await env.DB.prepare(
@@ -289,46 +266,6 @@ export async function runQueueCommand(
       notifyCancellation = true
     }
   }
-  if (input.action === 'call' && input.arrivalMode !== 'present') {
-    let copyVariant: 'ready' | 'improved_ready' = 'ready'
-    if (copyVersion(env) === 4) {
-      const accepted = await env.DB.prepare(
-        'SELECT last_accepted_predicted_at FROM queue_notification_state WHERE entry_id=?',
-      )
-        .bind(input.entryId)
-        .first<{ last_accepted_predicted_at: number | null }>()
-      copyVariant = actualCallCopyVariant(
-        accepted?.last_accepted_predicted_at ?? null,
-        now,
-        state.config?.etaChangeThresholdMinutes ?? 5,
-      )
-    }
-    const serviceName = state.config?.name ?? 'Servicio'
-    const snapshot = {
-      schemaVersion: 2 as const,
-      ...(copyVersion(env) === 4 ? { copyVariant } : {}),
-      serviceName,
-      ahead: null,
-      etaMinutes: null,
-      predictedAt: null,
-      estimateQuality: 'unknown' as const,
-      resourceName: assignedResourceName,
-      arrivalDeadlineAt:
-        now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
-    }
-    extra.push(
-      ...lifecycleNoticeStatements(
-        env,
-        input.entryId,
-        'ready',
-        now,
-        snapshot,
-        0,
-        entry.call_cycle + 1,
-        !!state.config,
-      ),
-    )
-  }
   if (status !== 'waiting') {
     extra.push(
       env.DB.prepare(
@@ -339,16 +276,37 @@ export async function runQueueCommand(
       ).bind(now, input.entryId),
     )
   }
+  let call: Awaited<ReturnType<typeof prepareCall>> | undefined
   if (input.action === 'call') {
-    const party = state.parties.find((p) => p.id === input.entryId)!
-    after.assignment = {
-      entryId: input.entryId,
-      callCycle: entry.call_cycle + 1,
-      partySize: party.partySize,
-      preferredSpaceId: party.preferredSpaceId,
-      source: 'staff',
-      ...(seatingContext ? { context: seatingContext } : {}),
-    }
+    call = await prepareCall(
+      env,
+      queueId,
+      state,
+      state.parties.find((p) => p.id === input.entryId)!,
+      {
+        now,
+        callCycle: entry.call_cycle + 1,
+        origin: 'staff',
+        context: seatingContext,
+        present: input.arrivalMode === 'present',
+      },
+    )
+    after.assignment = call.assignment
+    extra.push(...call.statements)
+  } else if (['complete', 'cancel', 'no_show'].includes(input.action)) {
+    extra.push(
+      finishCallReplacement(
+        env,
+        input.entryId,
+        entry.call_cycle,
+        input.action === 'complete'
+          ? 'arrived'
+          : input.action === 'cancel'
+          ? 'cancelled'
+          : 'no_show',
+        now,
+      ),
+    )
   }
   await commitQueueTransition(
     env,
@@ -362,7 +320,7 @@ export async function runQueueCommand(
       ).bind(
         status,
         input.action === 'call' && input.arrivalMode !== 'present'
-          ? state.config?.graceMinutes ?? (quick ? 2 : 5)
+          ? call!.graceMinutes
           : null,
         input.action,
         input.action === 'call'
@@ -371,9 +329,7 @@ export async function runQueueCommand(
           ? null
           : entry.called_at,
         input.action,
-        input.arrivalMode === 'present'
-          ? null
-          : now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
+        call?.deadline ?? null,
         input.action,
         input.action,
         queueId,

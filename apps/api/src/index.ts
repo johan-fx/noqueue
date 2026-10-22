@@ -1,3 +1,4 @@
+import { readReplacementDecisions } from './features/queue/replacement-decisions'
 import { dispatchPushSerialized, dispatchQueuePush, cleanupPush } from './features/mobile/push/dispatch'
 import { cleanupPrivacyConsents, cleanupPrivacyLimits } from './features/privacy/routes'
 import { configurationContext } from './features/staff/configuration-context'
@@ -48,8 +49,8 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
   }
   private async withQueue<T>(queueId: string, work: () => Promise<T>, flushPush = true) {
     await this.ctx.storage.put('queueId', queueId)
-    await maintainQueue(this.env, queueId)
     try {
+      await maintainQueue(this.env, queueId)
       return await work()
     } finally {
       const now = Date.now()
@@ -195,6 +196,12 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
         return readEntrySnapshot(this.env, token)
       }),
     )
+  }
+  replacementDecisions(queueId: string) {
+    return this.serialize(() => this.withQueue(queueId,async () => {
+      await refreshQueue(this.env,queueId)
+      return readReplacementDecisions(this.env,queueId)
+    }))
   }
   refresh(queueId: string) {
     return this.serialize(() =>

@@ -291,7 +291,7 @@ it('does not extend the arrival deadline when a human assigns and then confirms 
   const f = await fixture(1)
   await tick(f, 3 * minute)
   const bodies = provider()
-  await runQueueCommand(sendingEnv, f.actor, f.queueId, crypto.randomUUID(), { action: 'assign_next' }, Date.now())
+  await runQueueCommand(sendingEnv, f.actor, f.queueId, crypto.randomUUID(), { action: 'assign_next', expectedEntryId: f.ids[0]!, expectedVersion: 0 }, Date.now())
   const called = await f.read(0)
   const deadline = f.now + 8 * minute
   expect(called?.customer?.arrivalDeadlineAt).toBe(deadline)

@@ -13,6 +13,8 @@ import { MemoryRouter, Route, Routes } from 'react-router'
 import type { Entry } from '@noqueue/contracts/queue'
 import { CustomerTurn } from './CustomerTurn'
 
+const runtime = vi.hoisted(() => ({ value: 'web' as 'web' | 'native' }))
+vi.mock('@/app/bootstrap/runtime', () => ({ detectRuntime: () => runtime.value }))
 const resource = vi.hoisted(() => ({
   data: null as Entry | null,
   updatedAt: 1000,
@@ -103,10 +105,49 @@ async function editGuests() {
   )
 }
 afterEach(() => {
+  runtime.value = 'web'
   cleanup()
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+})
+
+it.each([
+  ['native', 'es', false], ['native', 'en', false], ['web', 'es', false], ['web', 'en', false],
+  ['native', 'es', true], ['native', 'en', true], ['web', 'es', true], ['web', 'en', true],
+] as const)('returns a cancelled turn to the correct destination in %s (%s, service ended: %s)', async (platform, locale, serviceEnded) => {
+  runtime.value = platform
+  resource.data = fixture()
+  resource.data.status = 'cancelled'
+  resource.data.customer!.phase = 'cancelled'
+  resource.data.customer!.actions = []
+  if (serviceEnded) resource.data.customer!.cancellationReason = 'service_ended'
+  const native = platform === 'native'
+  const destination = native ? `/?lang=${locale}` : `/v/venue?lang=${locale}`
+  render(
+    <MemoryRouter initialEntries={[`/t/token?lang=${locale}`]}>
+      <Routes>
+        <Route path="/t/:recoveryToken" element={<CustomerTurn />} />
+        <Route path="/" element={<h1>Home destination</h1>} />
+        <Route path="/v/venue" element={<h1>Venue destination</h1>} />
+      </Routes>
+    </MemoryRouter>,
+  )
+  expect(screen.getByRole('link', { name: locale === 'es' ? 'Volver' : 'Back' }))
+    .toHaveAttribute('href', destination)
+  const exit = screen.getByRole('link', { name: native
+    ? locale === 'es' ? 'Volver al inicio' : 'Back to home'
+    : locale === 'es' ? 'Seleccionar lista de espera' : 'Choose a waiting list' })
+  expect(exit).toHaveAttribute('href', destination)
+  if (native) expect(screen.queryByRole('link', { name: /Seleccionar lista|Choose a waiting list/ })).not.toBeInTheDocument()
+  fireEvent.click(exit)
+  expect(await screen.findByRole('heading', { name: native ? 'Home destination' : 'Venue destination' })).toBeVisible()
+})
+
+it('still prevents native back navigation while a turn is active', () => {
+  runtime.value = 'native'
+  mount()
+  expect(screen.queryByRole('link', { name: 'Volver' })).not.toBeInTheDocument()
 })
 
 it('keeps the turn behind one sheet and opens the modify menu without writing', async () => {
@@ -553,8 +594,11 @@ it('ticks the server-aligned wait and arc and resynchronizes revised snapshots w
   }
   refresh()
   expect(screen.getByText('5:00')).toBeVisible()
+  expect(screen.getByRole('progressbar', { name: 'Progreso del plazo de llegada' })).toHaveAttribute('aria-valuenow', '0')
+  expect(document.querySelector('circle[stroke="currentColor"]')).toBeNull()
   act(() => vi.advanceTimersByTime(1000))
   expect(screen.getByText('4:59')).toBeVisible()
+  expect(progress()).toBeCloseTo(1 / 300, 6)
   unmount()
   expect(vi.getTimerCount()).toBe(0)
 })

@@ -65,7 +65,7 @@ it.each(['unknown', undefined] as const)(
     ).toBeNull()
     expect(
       turnProgress(entry({ estimateQuality }, 'called'), 1000),
-    ).toBeCloseTo(0.9)
+    ).toBe(0)
   },
 )
 it.each([-1, NaN, Infinity])(
@@ -76,17 +76,64 @@ it.each([-1, NaN, Infinity])(
 )
 it('uses server-synced deadline rather than ETA for calls, without inventing legacy timestamps', () => {
   const called = entry({ estimateQuality: 'unknown' }, 'called')
-  expect(turnProgress(called, 181000)).toBeCloseTo(0.96)
+  expect(turnProgress(called, 181000)).toBeCloseTo(0.6)
   expect(turnProgress(called, 301000)).toBe(1)
   expect(
     turnProgress({ ...called, initialEtaMinutes: null }, 181000),
-  ).toBeNull()
+  ).toBeCloseTo(0.6)
   expect(turnProgress({ ...called, initialEtaMinutes: null }, 301000)).toBe(1)
   called.customer!.calledAt = null
   expect(turnProgress(called, 301000)).toBeNull()
   called.customer!.calledAt = 1000
   called.customer!.arrivalDeadlineAt = null
   expect(turnProgress(called, 301000)).toBeNull()
+})
+it('fills the called arc using its arrival window even when it exceeds the initial wait', () => {
+  const called = entry({ initialEtaMinutes: 4, estimatorVersion: 2 }, 'called')
+  called.customer!.arrivalDeadlineAt = 601000
+  // The physical iOS fixture: four-minute initial wait, ten-minute arrival
+  // window, then 9:44 left: the arrival arc must already be filling.
+  expect(turnProgress(called, 1000)).toBe(0)
+  expect(turnProgress(called, 17000)).toBeCloseTo(16 / 600)
+  expect(turnProgress(called, 361000)).toBeCloseTo(0.6)
+  expect(turnProgress(called, 362000)).toBeCloseTo(361 / 600)
+  expect(turnProgress(called, 601000)).toBe(1)
+})
+it.each([null, undefined, 0, -1, NaN, Infinity, 4, 50])(
+  'does not depend on initial ETA %s once a real arrival window exists',
+  (initialEtaMinutes) => {
+    const called = entry({ initialEtaMinutes, estimateQuality: 'unknown' }, 'called')
+    expect(turnProgress(called, 0)).toBe(0)
+    expect(turnProgress(called, 1000)).toBe(0)
+    expect(turnProgress(called, 151000)).toBe(0.5)
+    expect(turnProgress(called, 301000)).toBe(1)
+    expect(turnProgress(called, 401000)).toBe(1)
+    // A later real call uses the new cycle's timestamps, not previous progress.
+    called.customer!.calledAt = 401000
+    called.customer!.arrivalDeadlineAt = 1001000
+    expect(turnProgress(called, 401000)).toBe(0)
+    expect(turnProgress(called, 701000)).toBe(0.5)
+  },
+)
+it.each([
+  [null, 301000, 151000],
+  [1000, null, 151000],
+  [NaN, 301000, 151000],
+  [1000, Infinity, 151000],
+  [301000, 1000, 151000],
+  [1000, 301000, NaN],
+  [1000, 301000, Infinity],
+])('keeps invalid arrival timestamps indeterminate (%s, %s, %s)', (calledAt, arrivalDeadlineAt, now) => {
+  const called = entry({}, 'called')
+  called.customer!.calledAt = calledAt!
+  called.customer!.arrivalDeadlineAt = arrivalDeadlineAt!
+  expect(turnProgress(called, now!)).toBeNull()
+})
+it('handles a zero-length arrival window without NaN or division by zero', () => {
+  const called = entry({}, 'called')
+  called.customer!.arrivalDeadlineAt = called.customer!.calledAt
+  expect(turnProgress(called, 0)).toBe(0)
+  expect(turnProgress(called, 1000)).toBe(1)
 })
 it('renders terminal arrival/expiry full and cancellation without progress', () => {
   expect(

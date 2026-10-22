@@ -10,6 +10,7 @@ import { registerDeepLinkListener } from '@/platform/capacitor/deep-links'
 import { customerRouteFromUrl } from '@/platform/capacitor/deep-link-routing'
 import { initPwaUpdates } from '@/app/pwa/update-coordinator'
 import { PwaUpdateBanner } from '@/app/pwa/PwaUpdateBanner'
+import { navigateApp } from '@/app/navigation/native-transitions'
 
 const runtime = detectRuntime()
 const router = createAppRouter(runtime)
@@ -29,7 +30,7 @@ export default function App() {
         url.href,
         import.meta.env.VITE_PUBLIC_APP_ORIGIN,
       )
-      if (live && route) void router.navigate(route)
+      if (live && route) void navigateApp(router, route, { intent: 'replace' })
     }
     void (async () => {
       removeListener = await registerDeepLinkListener(openCustomerRoute)

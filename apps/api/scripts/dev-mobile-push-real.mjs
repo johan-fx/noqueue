@@ -10,20 +10,21 @@ import assert from 'node:assert/strict'
 import { createTestHarness } from 'wrangler'
 import { createWorkerServer } from './http-worker.mjs'
 import { mobileNetwork } from './mobile-network.mjs'
+import { localPushOptions } from './local-push-options.mjs'
 import { checkCredential } from './check-fcm-credential.mjs'
 
-assert.equal(process.env.NOQUEUE_REAL_PUSH_SMOKE, 'only-my-iphone', 'Explicit real-push opt-in required')
-assert.ok(process.env.NOQUEUE_LOCAL_HOST, 'Private LAN host required')
+const { platform, apiPort, controlPort, reportPath } = localPushOptions(process.env)
 process.umask(0o077)
 const root = fileURLToPath(new URL('../', import.meta.url)), repo = path.resolve(root, '../..')
-const network = mobileNetwork(process.env, repo)
+const network = mobileNetwork(platform === 'android' ? {} : process.env, repo)
+network.origin = `https://${network.host}:${apiPort}`
 const filename = await realpath(process.env.NOQUEUE_FCM_CREDENTIAL ?? '')
 assert.ok(!filename.startsWith(repo + path.sep), 'Credential must remain outside repository')
 assert.equal((await stat(filename)).mode & 0o077, 0, 'Private credential permissions required')
 assert.equal((await stat(path.dirname(filename))).mode & 0o077, 0, 'Private credential directory required')
 const credential = JSON.parse(await readFile(filename, 'utf8')); checkCredential(credential)
 const directory = await mkdtemp(path.join(tmpdir(), 'noqueue-real-push-'))
-const reportDir = path.join(repo, 'reports/ios-device/push-real')
+const reportDir = path.join(repo, reportPath)
 await mkdir(reportDir, { recursive: true, mode: 0o700 })
 const controlFile = path.join(reportDir, 'control.json'), controlToken = randomBytes(32).toString('hex')
 const config = JSON.parse(await readFile(path.join(root, 'test/wrangler.json'), 'utf8'))
@@ -34,7 +35,7 @@ config.vars = { ...config.vars, PUBLIC_APP_ORIGIN: network.origin,
   BETTER_AUTH_SECRET: randomBytes(32).toString('hex'), PII_ENCRYPTION_KEY: randomBytes(32).toString('hex'),
   PHONE_HASH_KEY: randomBytes(32).toString('hex'), RECOVERY_TOKEN_KEY: randomBytes(32).toString('hex'),
   WHATSAPP_ENABLED: 'false', CONFIRMATION_EXPERIMENT_ENABLED: 'false', MOBILE_PUSH_ENABLED: 'true',
-  FCM_IOS_ENABLED: 'true', FCM_IOS_BUNDLE_ID: 'com.noqueue-app.ios', MOBILE_PUSH_TOKEN_KEY: randomBytes(32).toString('hex'),
+  FCM_IOS_ENABLED: platform === 'ios' ? 'true' : 'false', FCM_IOS_BUNDLE_ID: 'com.noqueue-app.ios', MOBILE_PUSH_TOKEN_KEY: randomBytes(32).toString('hex'),
   FCM_PROJECT_ID: credential.project_id, FCM_CLIENT_EMAIL: credential.client_email, FCM_PRIVATE_KEY: credential.private_key,
 }
 // Temporary private config outside Git. Removed at shutdown, never printed.
@@ -67,7 +68,7 @@ try {
   const worker = harness.getWorker(); await worker.applyD1Migrations('DB')
   const bindings = await worker.getEnv(); DB = bindings.DB
   // No migration: smoke-only guard never exists remotely.
-  await DB.exec(`CREATE TABLE local_push_guard (id INTEGER PRIMARY KEY CHECK(id=1), installation_hash TEXT NOT NULL, token_hash TEXT NOT NULL, entry_id TEXT NOT NULL, expires_at INTEGER NOT NULL, remaining INTEGER NOT NULL CHECK(remaining IN (0,1)), oauth_remaining INTEGER NOT NULL, notice_id TEXT, attempted_at INTEGER)`)
+  await DB.exec(`CREATE TABLE local_push_guard (id INTEGER PRIMARY KEY CHECK(id=1), platform TEXT NOT NULL DEFAULT 'ios' CHECK(platform IN ('ios','android')), installation_hash TEXT NOT NULL, token_hash TEXT NOT NULL, entry_id TEXT NOT NULL, expires_at INTEGER NOT NULL, remaining INTEGER NOT NULL CHECK(remaining IN (0,1)), oauth_remaining INTEGER NOT NULL, notice_id TEXT, attempted_at INTEGER)`)
   const actor = crypto.randomUUID(), org = crypto.randomUUID(), venue = crypto.randomUUID(), queue = crypto.randomUUID()
   const settings = { name: 'Restaurante local', type: 'restaurant', capacity: 99, averageMinutes: 30, graceMinutes: 30,
     cutoffMinutes: 0, twentyFourHours: true, schedules: [], receptionServices: [], estimationMode: 'active', resourceStateKnown: true,
@@ -95,7 +96,7 @@ try {
     return response
   }, network.origin)
   api = httpsServer({ key: await readFile(network.key), cert: await readFile(network.cert) }, transport.listeners('request')[0])
-  await new Promise((resolve, reject) => { api.once('error', reject); api.listen(8788, network.host, resolve) })
+  await new Promise((resolve, reject) => { api.once('error', reject); api.listen(apiPort, network.host, resolve) })
   // Operator controls are loopback-only, bearer-protected, never exposed over LAN.
   control = httpServer(async (req, res) => {
     const reply = (status, value) => res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }).end(JSON.stringify(value))
@@ -111,11 +112,11 @@ try {
         assert.equal((await DB.prepare('SELECT count(*) AS n FROM mobile_push_registration').first()).n, 1)
         const row = await DB.prepare(`SELECT e.id,e.version,m.installation_hash,r.token_hash FROM queue_entry e
           JOIN mobile_entry_installation m ON m.entry_id=e.id JOIN mobile_push_registration r ON r.installation_hash=m.installation_hash
-          WHERE e.code=? AND e.queue_id=? AND e.status='waiting' AND r.platform='ios' AND r.provider='fcm' AND r.enabled=1`).bind(body.code, queue).first()
-        assert.ok(row, 'Exactly one confirmed iPhone turn/registration required')
+          WHERE e.code=? AND e.queue_id=? AND e.status='waiting' AND r.platform=? AND r.provider='fcm' AND r.enabled=1`).bind(body.code, queue, platform).first()
+        assert.ok(row, 'Exactly one confirmed platform-matched turn/registration required')
         // INSERT, never upsert: a session can authorize just one provider attempt.
-        await DB.prepare('INSERT INTO local_push_guard(id,installation_hash,token_hash,entry_id,expires_at,remaining,oauth_remaining) VALUES (1,?,?,?,?,1,1)')
-          .bind(row.installation_hash, row.token_hash, row.id, Date.now() + 120000).run()
+        await DB.prepare('INSERT INTO local_push_guard(id,platform,installation_hash,token_hash,entry_id,expires_at,remaining,oauth_remaining) VALUES (1,?,?,?,?,?,1,1)')
+          .bind(platform, row.installation_hash, row.token_hash, row.id, Date.now() + 120000).run()
         const stub = bindings.QUEUE_COORDINATOR.getByName(queue)
         const result = await stub.staffCommand(actor, queue, crypto.randomUUID(), { action: 'call', entryId: row.id, version: row.version, arrivalMode: 'notify' })
         assert.equal(result.status, 200)
@@ -136,11 +137,11 @@ try {
       return reply(404, {})
     } catch { return reply(409, { error: 'smoke_control_rejected' }) }
   })
-  await new Promise((resolve, reject) => { control.once('error', reject); control.listen(8789, '127.0.0.1', resolve) })
-  await writeFile(controlFile, JSON.stringify({ port: 8789, token: controlToken }), { mode: 0o600 })
+  await new Promise((resolve, reject) => { control.once('error', reject); control.listen(controlPort, '127.0.0.1', resolve) })
+  await writeFile(controlFile, JSON.stringify({ port: controlPort, token: controlToken }), { mode: 0o600 })
   // No crons; initial sends come only from the real coordinator. A guard is mandatory.
   timeout = setTimeout(() => void close(), 90 * 60000)
-  console.log(`Local real-push API ready at ${network.origin}; no recipient armed; one iPhone / one attempt maximum; WhatsApp OFF.`)
+  console.log(`Local real-push API ready at ${network.origin}; no recipient armed; one ${platform} / one attempt maximum; WhatsApp OFF.`)
 } catch {
   await close(); console.error('Local push smoke startup failed (details suppressed to protect credentials)'); process.exitCode = 1
 }

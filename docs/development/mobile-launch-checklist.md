@@ -507,12 +507,13 @@ el bundle XCTest separado, su runner y guardas de tooling; sigue sin desplegarse
   MobileAdmission y PublicQueue. No se repiten suites completas API/web ni build
   Release; la implementación de producto no cambia en esta ampliación.
 
-Evidencia privada local: `reports/ios-local/run-GHJTLj`, con `.xcresult` por fase y
-capturas de error exportadas; resumen `reports/ios-local/smoke-result.json` =
-`passed`. Capturas de respuesta perdida y error Keychain revisadas visualmente.
-Xcode mantiene avisos no bloqueantes de SDK y del deployment target del bundle
-XCTest (15 frente a librerías de pruebas17); ejecutado y pasado en iOS27, no prueba
-compatibilidad de la suite con iOS15/16.
+Evidencia privada local (ejecución histórica): `reports/ios-local/run-GHJTLj`, con
+`.xcresult` por fase y capturas de error exportadas; resumen
+`reports/ios-local/smoke-result.json` = `passed`. Capturas de respuesta perdida y
+error Keychain revisadas visualmente. En esa ejecución previa el bundle XCTest
+tenía target15 y algunas librerías de pruebas17; esa observación no describe la
+configuración vigente, que ahora exige iOS18. La suite actual aún requiere una
+build/validación nativa en runtime iOS18 para acreditar el mínimo.
 
 **Límites:** pérdida inyectada en fetch/UI después del commit, no corte de radio
 físico. Corrupción del registro de la app, no del llavero global ni de Secure
@@ -1330,3 +1331,151 @@ esta rama sí modifica componentes compartidos, API y migraciones.
 Logs de esta revisión: `reports/pr-preflight/` (ignorados). Las migraciones
 0029–0032 se incluyen como fuentes, **no se aplican a bases remotas**. Push sigue
 apagado por defecto. Esta revisión no añade envíos a la prueba física anterior.
+
+## Android físico — Samsung SM-T500 / Android12 — 2026-10-21
+
+Alcance: misma prueba local autorizada que en iPhone, ahora exclusivamente en la
+Samsung USB del usuario. No despliegues, cambios remotos ni otros destinatarios.
+
+- [x] USB autorizado; Android12 y WebView154.0.8037.106. APK Debug instalado en
+  `com.noqueue.app`, sin desinstalar/borrar datos; TLS local verificado por USB.
+- [x] Entorno Android independiente HTTPS8790/control8791; APIiPhone8788 y
+  Vite5173 existentes preservados. Datos sintéticos y D1 efímera.
+- [x] Inicio, búsqueda «local», formulario de restaurante y alta «Prueba Android»
+  desde UI real. Sin teléfono/login/WhatsApp; S6UMKJ en espera.
+- [x] Cierre completo/reapertura COLD recupera S6UMKJ sin duplicar alta ni identidad.
+- [x] Activar avisos → Desactivar avisos; exactamente1registro Android/FCM.
+  No envío automático por registrar; contactos, consentimientos y WhatsApp0.
+- [x] Usuario confirma «tablet bloqueada» antes del envío. Coordinador llama al
+  turno; FCM accepted/1attempt a17:27:18UTC. Presupuesto agotado antes de egress;
+  Android registra1notificación NoQueue en canal queue-updates. Bloqueo observado.
+- [x] Usuario confirma apertura desde la notificación; captura «¡Es tu turno!»
+  S6UMKJ y API con1resolución autenticada notice200 seguida de lecturas del turno.
+- [x] Desactivar avisos desde UI elimina registroFCM. Desarmado explícito,
+  cancelación confirmada desde UI (S6UMKJ cancelled v2), feedback y regreso al inicio.
+- [x] Build pushOFF recompilado/reinstalado encima; arranqueCOLD vuelve a inicio
+  sin recuperar turno cancelado. Registro0; shutdown correcto,8790/8791/9225
+  cerrados y túneles retirados, sin directorios privados temporales restantes.
+  iPhone8788/5173 continúa sin reinicios.
+- [x] Validación dirigida:40testsAPIpush,23webpush,45mobile,3opcionesCLI;
+  tiposAPI, buildweb, syncAndroid y assembleDebugON/OFF correctos.
+  No se ha repetido toda la suite web/E2E en esta prueba física.
+
+Evidencia privada/ignorada: `reports/android-device/`. No extrapolar esta prueba
+al permiso Android13+, Google Play, rotación de token ni recepción con proceso
+terminado/force-stopped. La reapertura COLD anterior prueba recuperación del turno,
+no recepción push después de force-stop.
+
+## Seguimiento push completo — implementación local 2026-10-21
+
+Este checkpoint se añade al estado previo; **no** certifica un segundo flujo
+físico ni extiende la autorización de la prueba anterior de una llamada.
+
+- [x] Migración0033 elimina trigger antiguo y conserva IDs/historial legacy sin replay;
+  nuevas intenciones transaccionales con clave por evento y snapshot versionado.
+- [x] Referencia push independiente de WhatsApp, con origen pantalla/sync/FCM;
+  alta, paso, edición y abandono propios sin duplicar confirmaciones.
+- [x] Catálogo ES/EN, acercamiento, retrasos/prórrogas ordenadas, mejoras,
+  llamada normal/anticipada, expiración, cancelación externa/neutral y cierre.
+- [x] Despacho comprueba vigencia/ciclo, TTL, revocación y tenant; navegación
+  propietaria y payload público conservados, foreground sin cambios.
+- [x] Migración y pruebas en bases efímeras, proveedores simulados y red fail-closed.
+- [x] Regresión final API822/822 en66suites, incluyendo migración, equivalencia,
+  tres prórrogas, cesión al sucesor, edición propia y respuestas tardías.
+- [x] Web764/764 con concurrencia acotada (`--maxWorkers=2`), contratos89/89,
+  toolingmobile47/47 y toolingAPI14/14. Dos corridas web con concurrencia por defecto
+  tuvieron fallos de timing diferentes en tests previos (`RouteErrorBoundary` y
+  `NativeDiscovery`); no se modificaron esos archivos ni sus expectativas.
+- [x] Tipos API/web/mobile, buildweb con pushOFF, API dry-run,
+  AndroidDebug offline e iOSSimulator Debug sin firma correctos. No instalación,
+  sincronización nativa, arranque de dispositivo ni envíos reales en esta fase.
+- [x] Harness físico separado con presupuestos por escenario y un solo destinatario;
+  guard probado con mocks, **runner real no ejecutado**.
+- [ ] Ejecutar acta física de ciclo completo en iPhone y Android con autorización
+  específica: variantes, permisos, primer/segundo plano/bloqueo, proceso terminado,
+  apertura antigua y recuperación de red. Android12 y13+ independientes.
+- [ ] Posposición staff efectiva: hoy `skip` es unsupported_action; no se ha añadido
+  una acción de negocio nueva. Si se habilita, añadir su prueba de integración.
+- [ ] Distribución TestFlight/APNs producción y Android de prueba, runtime desplegado
+  y red externa: fase separada con autorización propia.
+
+Matriz, límites y recetas en `docs/runbooks/mobile-push.md`, sección «Seguimiento
+completo». No commits, migraciones remotas ni cambios de gates. No se ha repetido
+la suite E2E integral de208casos de checkpoints anteriores en esta implementación.
+
+## Android físico — seguimiento completo local — 2026-10-21
+
+Autorización posterior solo dispositivo propio Samsung SM-T500 Android12/API31,
+envíos acotados y restauración. Acta detallada y límites en
+`docs/runbooks/mobile-push.md`, «Ejecución física Android de ciclo completo».
+
+- [x] Normal: acercamiento → llamada normal → llegada; aviso antiguo abre estado
+  expirado tras desbloqueo. Recepción bloqueada observada en primera ejecución.
+- [x] Cuatro acercamientos y tres prórrogas diferentes recibidos/abiertos en orden.
+- [x] Recepción visible de llamada final tras prórrogas acreditada en nueva
+  ejecución autorizada22oct (ver apartado siguiente). El21oct solo se acreditó
+  aceptaciónFCM; se mantiene esa limitación histórica, sin reenvío automático.
+- [x] Mejora neutral foreground con callback real sin notificación de sistema;
+  mejora recomendada y llamada anticipada recibidas/abiertas.
+- [x] Apertura desde proceso terminado por `am kill`, PID ausente y stopped=false;
+  no confundir con force-stop ni prometer entrega bajo esa restricción del SO.
+- [x] Paso esperando, paso llamado sin sucesor y con sucesor; nueva llamada.
+  Confirmaciones propias y abandono sin push duplicado. Dos ejecuciones separadas
+  para no confundir el reordenamiento del acompañante con un sucesor posterior.
+- [x] Expiración real, cancelación staff y cierre específico sin duplicado genérico.
+- [x] Apertura sin túnel de API y recuperación del mismo aviso al restablecerlo.
+  No acredita desconexión de internet/FCM ni funcionamiento remoto.
+- [x] Android12: revocar en Ajustes → CTA Activar → ajustes reales → recuperar ON.
+- [x] 24 intentos reales dentro del máximo27; un único receptor por ejecución,
+  sin topics ni destinatarios adicionales, cero WhatsApp en la evidencia.
+- [x] Restauración: APK SHA256,53 archivos privados y124 assets idénticos;
+  vault preservado, permiso ON, inicio original y launcher; mismo proceso8790 y
+  reverse8790, recursos8792/8793/9226 retirados, configuración temporal eliminada.
+- [x] Tooling API15/15 y diff-check OK. Sin producción, commits ni despliegues.
+- [ ] Android13+ (diálogo runtime), iPhone/ciclo completo y fase de distribución
+  remota siguen pendientes de dispositivos/autorizaciones correspondientes.
+
+Evidencia y backups privados ignorados por Git:
+`reports/android-device/push-lifecycle-session/`. No publicar datos privados.
+La aceptación FCM se registra separada de recepción y resolución autenticada;
+no se certifica entrega garantizada ni exactamente una recepción.
+
+## Android — cierre de llamada tras prórrogas — 2026-10-22
+
+- [x] Nueva autorización acotada, misma tablet SM-T500 Android12;8/8intentos dentro
+  del máximo8 de esta ejecución, sin reenvíos ni otros escenarios.
+- [x] Cuatro acercamientos y tres prórrogas aceptados, recibidos/abiertos, seguidos
+  de llamada final real; ID correlacionado entre outbox, FCM, registro Android,
+  panel y resolución autenticada del turno correcto.
+- [x] Antes de llamar: launcher activo y Capacitor `isActive=false`. Después:
+  llamada visible, apertura correcta y llegada confirmada. Cero callbacks foreground.
+- [x] Restauración contra snapshot del22oct: APK y54archivos privados idénticos,
+  vault y permisoON conservados, launcher; entorno8792/8793/9226 retirado y
+  reverse8790 previo intacto. App original arranca con aviso de datos no
+  disponibles porque su API8790 ya estaba apagada y no se reactivó. Assets y
+  código del producto sin cambios.
+- [x] La comprobación pendiente del21oct queda resuelta; no se atribuye una causa
+  al resultado observacional anterior sin evidencia ni se generaliza a otros SO.
+
+Acta detallada en `docs/runbooks/mobile-push.md`; evidencia privada ignorada por
+Git en `reports/android-device/push-final-call-20261022/`. Android13+, iPhone y
+entorno remoto siguen pendientes.
+
+## iOS — llamada física acotada — 2026-10-22
+
+- [x] iPhone14ProMax/iOS27.0.1: única llamada real autorizada, aceptación FCM y
+  notificación visible con pantalla bloqueada acreditadas por separado.
+- [x] Apertura real autenticada del aviso al turno correcto; al haber vencido el
+  plazo, muestra el estado actual `expired`, no la llamada antigua.
+- [x] Sin segundo envío ni aviso de expiración; cero WhatsApp, solo iPhone propio.
+- [x] App original, vault y708archivos del contenedor restaurados y verificados;
+  servicios temporales cerrados, sin modificar producción ni Android.
+- [x] Confirmación de llegada comprobada en ejecución posterior del22oct, con
+  un único aviso: apertura real por el usuario y acción real `complete` del
+  personal; el iPhone muestra «Se ha confirmado tu llegada». No existe botón
+  de llegada del cliente en este escenario de restaurante. Plazo10min solo en
+  la fixture local; aplicación, identidad y708archivos restaurados/verificados.
+- [ ] Resto del ciclo físico completo iOS y distribución remota/TestFlight.
+
+No atribuir esta validación parcial al conjunto del plan. Acta y límites en
+`docs/runbooks/mobile-push.md`, «iOS — llamada única y apertura de aviso antiguo».

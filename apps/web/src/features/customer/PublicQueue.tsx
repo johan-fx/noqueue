@@ -1,11 +1,14 @@
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { customerFetch } from '@/data/api/customer'
 import { prepareMobileJoin, finishMobileJoin } from '@/platform/capacitor/installation'
 import { detectRuntime } from '@/app/bootstrap/runtime'
+import { usePushAfterJoin } from '@/platform/capacitor/native-push-context'
 import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { useLocale, usePublicResource } from './public-resource'
 import { useEffect, useState } from 'react'
 import { nativeDiscoveryReturn, visitService } from './discovery-state'
-import { useLocation, useNavigate, useParams } from 'react-router'
+import { useLocation, useParams } from 'react-router'
+import { useAppNavigate } from '@/app/navigation/native-transitions'
 import {
   joinedEntrySchema,
   mobileActiveConflictSchema,
@@ -21,7 +24,8 @@ const parse = (value: unknown) => publicServiceSchema.parse(value)
 export function PublicQueue() {
   const channel = detectRuntime() === 'native' ? 'mobile' : 'web'
   const { queueId } = useParams()
-  const navigate = useNavigate()
+  const navigate = useAppNavigate()
+  const requestPushAfterJoin = usePushAfterJoin()
   const [attemptedQueue, setAttemptedQueue] = useState<string | undefined>()
   const route = useLocation()
   const returnTo =
@@ -89,6 +93,7 @@ export function PublicQueue() {
     const joined = joinedEntrySchema.parse(await response.json())
     if (channel === 'mobile') {
       await finishMobileJoin(key)
+      requestPushAfterJoin(key)
       window.dispatchEvent(new Event('noqueue:turn-changed'))
     }
     navigate(`/t/${joined.recoveryToken}?lang=${locale}`, {
@@ -109,9 +114,13 @@ export function PublicQueue() {
     >
       {error && <LoadError locale={locale} retry={() => void refresh()} />}
       {!service && !error && (
-        <p className="p-4" role="status">
-          {locale === 'es' ? 'Cargando…' : 'Loading…'}
-        </p>
+        detectRuntime() === 'native' ? (
+          <LoadingSpinner locale={locale} className="flex-1" />
+        ) : (
+          <p className="p-4" role="status">
+            {locale === 'es' ? 'Cargando…' : 'Loading…'}
+          </p>
+        )
       )}
       {service?.canJoin === false && (
         <p className="px-4 pt-4" role="status">

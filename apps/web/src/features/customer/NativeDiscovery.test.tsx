@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import { nativeRoutes } from '@/app/routes/native-routes'
+import { createNativeRoutes } from '@/app/routes/native-routes'
 import { nativeDiscoveryReturn, setDiscoveryCoordinates } from './discovery-state'
 
 vi.mock('@/app/bootstrap/runtime', () => ({ detectRuntime: () => 'native' }))
@@ -14,7 +14,7 @@ const result = { ...service, open: true, waitMinutes: 5, distanceMeters: null, a
 let router: ReturnType<typeof createMemoryRouter>
 let searchFailure = false, recoveryFailure = false
 function mount(path = '/') {
-  router = createMemoryRouter(nativeRoutes, { initialEntries: [path] })
+  router = createMemoryRouter(createNativeRoutes(), { initialEntries: [path] })
   return render(<RouterProvider router={router} />)
 }
 beforeEach(() => {
@@ -50,7 +50,9 @@ it('uses the same result row as web and opens the anonymous form directly', asyn
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   expect(screen.queryByText(/View venue:/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('link', { name: 'Back' }))
-  expect(await screen.findByRole('textbox')).toHaveValue('Sol')
+  await waitFor(() => expect(router.state.location.pathname).toBe('/search'))
+  // Router state can settle before React replaces the admission form's textbox.
+  await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('Sol'))
   expect(screen.getByRole('button', { name: 'Restaurants' })).toHaveAttribute('aria-pressed', 'true')
 })
 it('opens the shared venue presentation, with no native navigation added', async () => {
@@ -103,4 +105,81 @@ it('search still uses authenticated native transport', async () => {
 })
 it.each(['https://evil.example', '//evil.example', '/\\evil.example', '/staff', '/q/id', '/search#x', null])('rejects untrusted native return context %s', value => {
   expect(nativeDiscoveryReturn(value)).toBeUndefined()
+})
+
+it('renders the preloaded destination without a duplicate initial resource request', async () => {
+  mount('/q/q')
+  await screen.findByLabelText('Nombre')
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/entries'))).toHaveLength(1)
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/services/q'))).toHaveLength(1)
+  expect(screen.queryByText('Cargando…')).not.toBeInTheDocument()
+})
+
+it('query changes keep the current screen and do not rerun ownership preparation', async () => {
+  mount('/search?text=Sol')
+  await screen.findByRole('link', { name: /Restaurante Sol/ })
+  const before = fetcher.mock.calls.filter(([url]) => url.endsWith('/entries')).length
+  fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Hotel' } })
+  await waitFor(() => expect(router.state.location.search).toContain('text=Hotel'))
+  await waitFor(() => expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/search'))).toHaveLength(2))
+  expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/entries'))).toHaveLength(before)
+  expect(screen.getByRole('textbox')).toHaveValue('Hotel')
+})
+
+it('keeps the outgoing screen inert until the next authorized resource is prepared', async () => {
+  mount('/search?text=Sol')
+  const link = await screen.findByRole('link', { name: /Restaurante Sol/ })
+  let finish!: (response: Response) => void
+  const original = fetcher.getMockImplementation()!
+  fetcher.mockImplementation((url: string, init: unknown) => url.endsWith('/services/q')
+    ? new Promise<Response>(resolve => { finish = resolve }) : original(url, init))
+  fireEvent.click(link)
+  await waitFor(() => expect(finish).toBeTypeOf('function'))
+  expect(router.state.location.pathname).toBe('/search')
+  expect(screen.getByRole('textbox')).toHaveValue('Sol')
+  expect(screen.getByRole('textbox').closest('[inert]')).not.toBeNull()
+  expect(screen.queryByLabelText('Nombre')).not.toBeInTheDocument()
+  await act(async () => finish(Response.json(service)))
+  expect(await screen.findByLabelText('Nombre')).toBeVisible()
+  expect(screen.getByLabelText('Nombre').closest('[inert]')).toBeNull()
+})
+
+it('restores native search scroll before presenting the prepared return screen', async () => {
+  mount('/search?text=Sol&lang=es')
+  const serviceLink = await screen.findByRole('link', { name: /Restaurante Sol/ })
+  vi.spyOn(window, 'scrollY', 'get').mockReturnValue(240)
+  fireEvent.click(serviceLink)
+  await screen.findByLabelText('Nombre')
+  expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 0, left: 0, behavior: 'instant' })
+  fireEvent.click(screen.getByRole('link', { name: 'Volver' }))
+  await waitFor(() => expect(router.state.location.pathname).toBe('/search'))
+  expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 240, left: 0, behavior: 'instant' })
+})
+
+it('shows only a viewport-centered spinner during native startup', () => {
+  fetcher.mockImplementation(() => new Promise(() => {}))
+  const { container } = mount('/search')
+  const spinner = screen.getByRole('status', { name: 'Cargando' })
+  expect(spinner).toHaveClass('animate-spin')
+  expect(spinner.parentElement).toHaveClass('fixed', 'inset-0', 'items-center', 'justify-center')
+  expect(container.textContent).toBe('')
+})
+
+it('shows a text-free centered spinner during a slow native navigation', async () => {
+  mount('/search?text=Sol')
+  const link = await screen.findByRole('link', { name: /Restaurante Sol/ })
+  let finish!: (response: Response) => void
+  const original = fetcher.getMockImplementation()!
+  fetcher.mockImplementation((url: string, init: unknown) => url.endsWith('/services/q')
+    ? new Promise<Response>(resolve => { finish = resolve }) : original(url, init))
+  fireEvent.click(link)
+  const spinner = await screen.findByRole('status', { name: 'Cargando' })
+  expect(spinner).toHaveClass('animate-spin')
+  expect(spinner.parentElement).toHaveClass('items-center', 'justify-center')
+  expect(spinner.parentElement?.textContent).toBe('')
+  expect(spinner.closest('[inert]')).toBeNull()
+  expect(spinner.parentElement?.style.viewTransitionName).toBe('noqueue-loading')
+  await act(async () => finish(Response.json(service)))
+  await screen.findByLabelText('Nombre')
+  expect(screen.queryByRole('status', { name: 'Cargando' })).not.toBeInTheDocument()
 })

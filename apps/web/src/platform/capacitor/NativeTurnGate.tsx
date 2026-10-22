@@ -1,50 +1,67 @@
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { App } from '@capacitor/app'
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
-import { Navigate, useLocation } from 'react-router'
-import { z } from 'zod'
-import { customerFetch } from '@/data/api/customer'
+import { useCallback, useEffect, useLayoutEffect, useSyncExternalStore, type ReactNode } from 'react'
+import { useLocation, useNavigation, useRevalidator } from 'react-router'
 import { CustomerShell, LoadError } from '@/features/customer/shared'
 import { useLocale } from '@/features/customer/public-resource'
-import { mobileActiveEntrySchema } from '@noqueue/contracts/queue'
+import { useAppNavigate } from '@/app/navigation/native-transitions'
+import type { NativeOwnershipCoordinator } from './native-ownership'
+import type { NativeRouteData } from './native-route-loader'
 
-const schema = z.object({ entries: z.array(mobileActiveEntrySchema).max(1) })
-type Active = z.infer<typeof mobileActiveEntrySchema>
-
-/** Native routing policy; no alternative visual shell and no dependency on push. */
-export function NativeTurnGate({ children }: { children: ReactNode }) {
-  const location = useLocation()
+/** The loader authorizes navigation; this monitor only refreshes ownership/lifecycle. */
+export function NativeTurnGate({ children, coordinator, data }: {
+  children: ReactNode; coordinator: NativeOwnershipCoordinator; data: NativeRouteData
+}) {
+  const location = useLocation(), navigation = useNavigation(), navigate = useAppNavigate()
+  const revalidator = useRevalidator()
   const [locale, setLocale] = useLocale()
-  const [state, setState] = useState<{ path: string; entry: Active | null; error: boolean } | null>(null)
-  const [revision, setRevision] = useState(0)
-  const refresh = useCallback(() => setRevision(value => value + 1), [])
-  const current = useRef(state)
-  useEffect(() => { current.current = state }, [state])
+  const ownership = useSyncExternalStore(coordinator.subscribe, coordinator.getSnapshot, coordinator.getSnapshot)
+  const turnPath = ownership.entry ? `/t/${ownership.entry.recoveryToken}` : null
+  const mismatch = !!turnPath && turnPath !== location.pathname
+  const preparing = navigation.state !== 'idle' || coordinator.preparing
+  const retained = coordinator.retained(location.pathname)
+  const blocked = !data.allowed || (!preparing && ownership.error && !retained)
+
+  useLayoutEffect(() => {
+    if (data.allowed && !mismatch && !ownership.error) coordinator.commit(location.pathname, data.seed)
+  }, [coordinator, data, location.pathname, mismatch, ownership.error])
+
   useEffect(() => {
-    let live = true
+    if (!preparing && !ownership.error && mismatch)
+      void navigate(`${turnPath}?lang=${locale}`, { replace: true, intent: 'replace' })
+  }, [preparing, ownership.error, mismatch, navigate, turnPath, locale])
+
+  useEffect(() => {
+    const lifetime = new AbortController()
     let timer: ReturnType<typeof setTimeout>
-    const controller = new AbortController()
-    const check = async () => {
-      try {
-        const response = await customerFetch('/api/v1/public/entries', { signal: controller.signal })
-        if (!response.ok) throw new Error('recovery_unavailable')
-        const data = schema.parse(await response.json())
-        if (live) setState({ path: location.pathname, entry: data.entries[0] ?? null, error: false })
-      } catch {
-        if (live) setState(previous => ({ path: location.pathname, entry: previous?.entry ?? null, error: true }))
-      } finally {
-        if (live && document.visibilityState !== 'hidden') timer = setTimeout(check, 5000)
-      }
-    }
-    void check()
-    return () => { live = false; controller.abort(); clearTimeout(timer) }
-  }, [location.pathname, revision])
-  useEffect(() => {
     const handles: { remove(): Promise<void> }[] = []
-    let disposed = false
-    const listen = async (promise: Promise<{ remove(): Promise<void> }>) => {
-      try { const handle = await promise; if (disposed) await handle.remove(); else handles.push(handle) } catch { /* Browser tests do not have a native bridge. */ }
+    const schedule = () => {
+      clearTimeout(timer)
+      if (!lifetime.signal.aborted && document.visibilityState !== 'hidden') timer = setTimeout(() => void check(), 5000)
     }
-    const visible = () => { if (document.visibilityState !== 'hidden') refresh() }
+    const check = async () => {
+      clearTimeout(timer)
+      try { if (!coordinator.preparing) await coordinator.check(lifetime.signal) }
+      catch { /* Cancelled by a newer navigation or lifecycle event. */ }
+      finally { schedule() }
+    }
+    const refresh = () => {
+      coordinator.invalidate()
+      void check()
+    }
+    const visible = () => {
+      if (document.visibilityState !== 'hidden') refresh()
+      else clearTimeout(timer)
+    }
+    const listen = async (promise: Promise<{ remove(): Promise<void> }>) => {
+      try {
+        const handle = await promise
+        if (lifetime.signal.aborted) await handle.remove()
+        else handles.push(handle)
+      } catch { /* No native bridge in unit tests. */ }
+    }
+    // Initial ownership is already loaded. Do not duplicate it on mount.
+    schedule()
     window.addEventListener('noqueue:turn-changed', refresh)
     window.addEventListener('focus', visible)
     document.addEventListener('visibilitychange', visible)
@@ -54,25 +71,29 @@ export function NativeTurnGate({ children }: { children: ReactNode }) {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
         return
       }
-      if (current.current?.entry || !canGoBack) void App.minimizeApp()
+      if (coordinator.getSnapshot().entry || !canGoBack) void App.minimizeApp()
       else window.history.back()
     }))
     return () => {
-      disposed = true
+      lifetime.abort(); clearTimeout(timer)
       handles.forEach(handle => { void handle.remove() })
       window.removeEventListener('noqueue:turn-changed', refresh)
       window.removeEventListener('focus', visible)
       document.removeEventListener('visibilitychange', visible)
     }
-  }, [refresh])
-  const turnPath = state?.entry ? `/t/${state.entry.recoveryToken}` : null
-  const checked = state?.path === location.pathname
-  // A retained, already verified turn may stay visible offline; never unlock a form.
-  if (checked && state?.error && turnPath === location.pathname) return children
-  if (!checked || state?.error) return <CustomerShell title="No Queue" locale={locale} setLocale={setLocale}>
-    {checked && state?.error ? <LoadError locale={locale} retry={refresh} /> : <p className="p-4" role="status">{locale === 'es' ? 'Cargando…' : 'Loading…'}</p>}
+  }, [coordinator])
+
+  const retry = useCallback(() => {
+    coordinator.invalidate()
+    void revalidator.revalidate()
+  }, [coordinator, revalidator])
+  if (blocked) return <CustomerShell title="No Queue" locale={locale} setLocale={setLocale}>
+    <LoadError locale={locale} retry={retry} />
   </CustomerShell>
-  if (turnPath && location.pathname !== turnPath)
-    return <Navigate replace to={`${turnPath}?lang=${locale}`} />
-  return children
+  // Public screens remain visible but inert while the authorized turn is prepared.
+  // Never retain a different private ticket after its ownership is revoked.
+  if (mismatch && location.pathname.startsWith('/t/')) return <CustomerShell title="No Queue" locale={locale} setLocale={setLocale}>
+    <LoadingSpinner locale={locale} className="flex-1" />
+  </CustomerShell>
+  return <div inert={mismatch || undefined}>{children}</div>
 }

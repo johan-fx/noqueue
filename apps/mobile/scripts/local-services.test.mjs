@@ -6,7 +6,7 @@ test('service fixtures preserve reception and activate restaurant explicitly in 
   const source = await read('../../api/scripts/dev-mobile.mjs')
   assert.match(source, /services = \{ reception: service, restaurant: crypto.randomUUID\(\), pool: crypto.randomUUID\(\) \}/)
   assert.match(source, /INSERT INTO queue_admission/)
-  assert.match(source, /server.listen\(8788, network.host/)
+  assert.match(source, /server.listen\(network.port, network.host/)
   assert.match(source, /byService: byService.results/)
 })
 test('shared scenario is bundled only in iOS tests and reused by actual Android WebView', async () => {

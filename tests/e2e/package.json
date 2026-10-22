@@ -13,6 +13,7 @@
     "test:production": "playwright test --config production.config.ts",
     "test:android:lifecycle": "node mobile/android-services.mjs --lifecycle",
     "test:android:discovery": "node mobile/android-discovery.mjs",
+    "test:android:transitions": "node mobile/android-transitions.mjs",
     "test:android:capabilities": "node mobile/android-capabilities.mjs",
     "test:web:parity": "node mobile/web-parity.mjs",
     "preview:parity": "node mobile/parity-preview.mjs"

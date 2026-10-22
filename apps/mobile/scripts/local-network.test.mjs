@@ -12,3 +12,14 @@ test('local API keeps loopback by default and only accepts explicit private IPv4
     assert.throws(() => mobileNetwork({ NOQUEUE_LOCAL_HOST: host }, '/repo'))
   }
 })
+test('Android can use its own USB port without changing host/TLS or iPhone defaults', () => {
+  const android = mobileNetwork({ NOQUEUE_LOCAL_PORT: '8790' }, '/repo')
+  assert.equal(android.origin, 'https://127.0.0.1:8790')
+  assert.equal(android.host, '127.0.0.1')
+  assert.equal(android.port, 8790)
+  assert.equal(android.cert, mobileNetwork({}, '/repo').cert)
+  assert.equal(mobileNetwork({}, '/repo').port, 8788)
+  for (const port of ['', '80', '443', '0', '8791', '8790/path', 'NaN']) {
+    assert.throws(() => mobileNetwork({ NOQUEUE_LOCAL_PORT: port }, '/repo'))
+  }
+})

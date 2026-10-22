@@ -2,7 +2,7 @@ import { loadQueueState, commitQueueTransition } from './projection'
 import { storedServiceSchema } from '@noqueue/contracts/staff'
 import { serviceDeadline, serviceWindow } from '../staff/availability'
 import {
-  noticeStatement,
+  lifecycleNoticeStatements,
   publishNotice,
   type QueueNoticeSnapshot,
 } from './notices'
@@ -132,8 +132,8 @@ export async function maintainServiceEntries(
       env.DB.prepare(
         "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE status='pending' AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?)",
       ).bind(now, queueId, now),
-      ...dueEntries.results.map(({ id }) =>
-        noticeStatement(
+      ...dueEntries.results.flatMap(({ id }) =>
+        lifecycleNoticeStatements(
           env,
           id,
           'service_ended',

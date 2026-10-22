@@ -8,13 +8,16 @@ export function privateHost(host) {
 }
 /** Opt-in private interface only; no public/wildcard listeners or production URLs. */
 export function mobileNetwork(env, root) {
+  // Separate USB Android API without interrupting the existing iPhone fixture.
+  const port = env.NOQUEUE_LOCAL_PORT ?? '8788'
+  if (!['8788', '8790'].includes(port)) throw new Error('Select local API port 8788 or 8790')
   if (!env.NOQUEUE_LOCAL_HOST) return {
-    host: '127.0.0.1', origin: 'https://127.0.0.1:8788',
+    host: '127.0.0.1', port: Number(port), origin: `https://127.0.0.1:${port}`,
     key: path.join(root, 'reports/android-local/tls/server.key'),
     cert: path.join(root, 'reports/android-local/tls/res/raw/noqueue_local_ca.pem'),
   }
   if (!privateHost(env.NOQUEUE_LOCAL_HOST)) throw new Error('Select a private IPv4 interface')
   const tls = path.join(root, 'reports/ios-device/tls')
-  return { host: env.NOQUEUE_LOCAL_HOST, origin: `https://${env.NOQUEUE_LOCAL_HOST}:8788`,
+  return { host: env.NOQUEUE_LOCAL_HOST, port: Number(port), origin: `https://${env.NOQUEUE_LOCAL_HOST}:${port}`,
     key: path.join(tls, 'server.key'), cert: path.join(tls, 'server.pem') }
 }

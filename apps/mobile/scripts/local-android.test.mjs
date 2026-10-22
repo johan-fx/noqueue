@@ -22,6 +22,7 @@ test('emulator API uses test config, local-only binding, and fails closed on ext
   assert.match(harness, /db\.remote = false/)
   assert.match(harness, /CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV = 'false'/)
   assert.match(harness, /WHATSAPP_ENABLED: 'false'/)
-  assert.match(harness, /server\.listen\(8788, network.host/)
+  assert.match(harness, /server\.listen\(network.port, network.host/)
+  assert.match(harness, /MOBILE_PUSH_ENABLED: 'false', FCM_IOS_ENABLED: 'false'/)
   assert.match(await read('../../api/test/mobile-local-worker.ts'), /http\.all\('\*', \(\) => HttpResponse\.error\(\)\)/)
 })

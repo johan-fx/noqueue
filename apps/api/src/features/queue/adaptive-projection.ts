@@ -1,7 +1,8 @@
+import { pushProjectionStatements } from '../mobile/push/lifecycle'
 import type { QueueState } from './projection'
 import { safetyMarginMs, protectionRemainingMs } from './adaptive-model'
 import { evaluateAdaptiveNotice } from './estimate-notices'
-import { noticeStatement, type QueueNoticeSnapshot } from './notices'
+import { lifecycleNoticeStatements, type QueueNoticeSnapshot } from './notices'
 
 type Reason = 'safety' | 'resources' | 'cadence' | 'configuration'
 type Prior = {
@@ -39,6 +40,7 @@ export async function adaptiveProjectionStatements(
   state: QueueState,
   now: number,
   before?: QueueState,
+  screenEntryId?: string,
 ) {
   const learning = state.adaptive!,
     config = state.config!
@@ -46,15 +48,15 @@ export async function adaptiveProjectionStatements(
   const rows = await env.DB.prepare(
     `SELECT e.id AS entry_id,e.call_cycle,
     COALESCE((SELECT MAX(x.extension_sequence) FROM queue_wait_extension x WHERE x.entry_id=e.id),0) AS extension_sequence,
-    EXISTS(SELECT 1 FROM notification_outbox x WHERE x.entry_id=e.id AND x.kind='delayed' AND x.status IN ('pending','sending') AND x.call_cycle=e.call_cycle AND json_extract(x.payload_snapshot,'$.extensionSequence') IS NOT NULL) AS pending_extension,
+    EXISTS(SELECT 1 FROM queue_notice_history x WHERE x.entry_id=e.id AND x.kind='delayed' AND x.status IN ('pending','sending') AND x.call_cycle=e.call_cycle AND json_extract(x.payload_snapshot,'$.extensionSequence') IS NOT NULL) AS pending_extension,
     p.estimator_version,p.revision,p.position,a.quality,p.resource_id,p.callable,
     a.predicted_at,a.cadence_ms,a.safety_review_at,a.delay_reason,a.delay_since,a.delay_baseline_at,
     a.approach_episode,a.approach_armed,a.correction_reason,a.safety_revision,a.notice_baseline_at,
     n.last_accepted_predicted_at,n.last_correction_accepted_at,n.last_accepted_safety_revision,
-    EXISTS(SELECT 1 FROM notification_outbox o WHERE o.entry_id=e.id AND o.kind='approaching' AND o.status='pending') AS pending_approach
+    EXISTS(SELECT 1 FROM queue_notice_history o WHERE o.entry_id=e.id AND o.kind='approaching' AND o.status='pending') AS pending_approach
     FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id
     LEFT JOIN queue_adaptive_projection a ON a.entry_id=e.id
-    LEFT JOIN queue_notification_state n ON n.entry_id=e.id WHERE e.queue_id=? AND e.id IN (SELECT value FROM json_each(?))`,
+    LEFT JOIN queue_notice_reference n ON n.entry_id=e.id WHERE e.queue_id=? AND e.id IN (SELECT value FROM json_each(?))`,
   )
     .bind(queueId, JSON.stringify(state.parties.map((p) => p.id)))
     .all<Prior>()
@@ -225,7 +227,7 @@ export async function adaptiveProjectionStatements(
       ).bind(now, p.id, Number(learning.active), Number(activation), callCycle, revision),
     )
     if (
-      !activation &&
+      screenEntryId !== p.id && !activation &&
       (approach ||
         (prior?.pending_approach &&
           predictedAt - now <= A &&
@@ -233,7 +235,7 @@ export async function adaptiveProjectionStatements(
       correction !== 'delayed' && !prior?.pending_extension
     )
       statements.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           p.id,
           'approaching',
@@ -244,9 +246,9 @@ export async function adaptiveProjectionStatements(
           true,
         ),
       )
-    else if (correction)
+    else if (correction && screenEntryId !== p.id)
       statements.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           p.id,
           correction,
@@ -257,6 +259,7 @@ export async function adaptiveProjectionStatements(
           true,
         ),
       )
+    statements.push(...pushProjectionStatements(env, p.id, snapshot, revision, now, screenEntryId === p.id || !initialized, learning.active, activation))
     const raw = state.projections.find((item) => item.id === p.id)!
     statements.push(
       env.DB.prepare(

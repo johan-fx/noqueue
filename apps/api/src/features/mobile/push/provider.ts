@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-export type PushMessage = { id: string; kind: string; locale: string; expiresAt: number; platform?: 'ios' | 'android' }
+export type PushMessage = { id: string; kind: string; locale: string; expiresAt: number; platform?: 'ios' | 'android'; body?: string }
 export type PushResult = { outcome: 'accepted' | 'retry' | 'invalid_token' | 'failed'; retryAfterMs?: number }
 const encoder = new TextEncoder()
 const base64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
@@ -72,9 +72,9 @@ export async function sendPush(env: CloudflareBindings, provider: string, token:
     const auth = await authorization(env, provider, now)
     if (message.expiresAt <= Date.now()) return { outcome: 'failed' }
     const en = message.locale === 'en'
-    const body = message.kind === 'called'
+    const body = message.body ?? (message.kind === 'called'
       ? en ? 'It is your turn. Open NoQueue to see the current status.' : 'Es tu turno. Abre NoQueue para consultar el estado actual.'
-      : en ? 'Your turn has changed. Open NoQueue to see the current status.' : 'Tu turno ha cambiado. Abre NoQueue para consultar el estado actual.'
+      : en ? 'Your turn has changed. Open NoQueue to see the current status.' : 'Tu turno ha cambiado. Abre NoQueue para consultar el estado actual.')
     const data = { type: 'queue-update', notificationId: message.id }
     const response = provider === 'apns'
       ? await post(`https://${env.APNS_ENVIRONMENT === 'sandbox' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com'}/3/device/${token}`, {

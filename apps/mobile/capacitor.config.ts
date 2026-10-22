@@ -23,6 +23,9 @@ if (localServer && platform !== 'ios') throw new Error('This local live-reload w
 const config: CapacitorConfig = {
   appId: platform === 'ios' ? 'com.noqueue-app.ios' : 'com.noqueue.app',
   appName: 'No Queue',
+  // iOS 18 support uses PackageDescription 6.0's .iOS(.v18) platform.
+  // Capacitor's generated CapApp-SPM package must use matching Swift tools.
+  experimental: { ios: { spm: { swiftToolsVersion: '6.0' } } },
   ...(localServer ? { server: localServer } : {}),
   webDir: '../web/dist',
   // Native bridge debug logs include plugin arguments (including vault secrets).

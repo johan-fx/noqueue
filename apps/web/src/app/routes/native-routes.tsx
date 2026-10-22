@@ -1,11 +1,19 @@
-import { NativeTurns } from '@/features/customer/NativeTurns'
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 import type { RouteObject } from 'react-router'
 import { NativeShell } from '../shells/NativeShell'
+import { createNativeOwnership } from '@/platform/capacitor/native-ownership'
+import { createNativeRouteLoader, nativeShouldRevalidate } from '@/platform/capacitor/native-route-loader'
 import { NativeNotFound } from '@/features/customer/NativeNotFound'
 
-export const nativeRoutes: RouteObject[] = [
+export function createNativeRoutes(): RouteObject[] {
+  const coordinator = createNativeOwnership()
+  return [
   {
-    element: <NativeShell />,
+    id: 'native-root',
+    loader: createNativeRouteLoader(coordinator),
+    shouldRevalidate: nativeShouldRevalidate,
+    hydrateFallbackElement: <LoadingSpinner fullScreen />,
+    element: <NativeShell coordinator={coordinator} />,
     children: [
       {
         path: '/',
@@ -21,7 +29,7 @@ export const nativeRoutes: RouteObject[] = [
           return { Component: () => <PublicDiscovery search /> }
         },
       },
-      { path: '/turns', element: <NativeTurns /> },
+      { path: '/turns', element: null },
       {
         path: '/v/:venueId',
         lazy: async () => ({
@@ -45,3 +53,8 @@ export const nativeRoutes: RouteObject[] = [
     ],
   },
 ]
+
+}
+
+// Static route inventory compatibility; production and tests use the factory.
+export const nativeRoutes = createNativeRoutes()

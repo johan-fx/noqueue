@@ -4,22 +4,47 @@ import { Capacitor, type PluginListenerHandle } from '@capacitor/core'
 import { PushNotifications } from '@capacitor/push-notifications'
 import { pushNoticeDataSchema, pushResolutionSchema, pushStatusSchema } from '@noqueue/contracts/mobile-push'
 import { nativePushFetch } from '@/data/api/customer'
+import { checkPushPermission, requestPushPermission, openPushSettings, ensurePushChannel, type PushPermission } from './push-permissions'
 
-export type PushState = 'off' | 'busy' | 'enabled' | 'denied' | 'error' | 'unavailable'
-type Options = { locale: () => 'es' | 'en'; status: (state: PushState) => void; navigate: (path: string) => void; refresh: () => void }
-/** One instance owned by NativeShell. Listeners before registration, no unsolicited prompt. */
+export type PushState = {
+  permission: PushPermission
+  registration: 'checking' | 'off' | 'busy' | 'enabled' | 'error' | 'unavailable'
+  settingsError: boolean
+}
+export const initialPushState: PushState = { permission: 'unknown', registration: 'checking', settingsError: false }
+type Options = {
+  locale: () => 'es' | 'en'
+  hasActiveTurn: () => boolean
+  status: (state: PushState) => void
+  navigate: (path: string) => void
+  refresh: () => void
+}
+/** Owned by NativeShell. A confirmed admission or an explicit CTA may prompt, never startup/resume. */
 export function createNativePush(options: Options) {
-  let disposed = false, listenersReady = false, wantsPush = false, tail = Promise.resolve(), pendingNotice: string | undefined
+  let disposed = false, listenersReady = false, wantsPush = false, revocationPending = false
+  let tail = Promise.resolve(), pendingNotice: string | undefined
+  let state = initialPushState, registrationPending = false, epoch = 0
+  let activation: Promise<void> | undefined, reconciliation: Promise<void> | undefined
   let registrationTimer: ReturnType<typeof setTimeout> | undefined
+  const admissions = new Set<string>()
   const listeners: PluginListenerHandle[] = []
-  const set = (state: PushState) => { if (!disposed) options.status(state) }
+  const ios = () => Capacitor.getPlatform() === 'ios'
+  const set = (patch: Partial<PushState>) => {
+    if (!disposed) { state = { ...state, ...patch }; options.status(state) }
+  }
+  const fail = () => {
+    clearTimeout(registrationTimer)
+    registrationPending = false
+    set({ registration: 'error' })
+  }
   const serialize = (work: () => Promise<void>) => {
-    tail = tail.catch(() => undefined).then(async () => { if (!disposed) await work() }).catch(() => set('error'))
+    tail = tail.catch(() => undefined).then(async () => { if (!disposed) await work() }).catch(fail)
     return tail
   }
   async function api(path: string, body?: unknown) {
-    const response = await nativePushFetch(path, body === undefined ? undefined : {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    const response = await nativePushFetch(path, {
+      signal: AbortSignal.timeout(15000),
+      ...(body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
     })
     if (!response.ok) throw Object.assign(new Error('push_request_failed'), { status: response.status })
     return response.json()
@@ -38,118 +63,173 @@ export function createNativePush(options: Options) {
     }
     if (disposed) return
     pendingNotice = undefined
-    // Never navigate to a URL from a notification payload; resolve ownership first.
+    // Resolve ownership first. Never navigate to a URL supplied by the payload.
     options.navigate(`/t/${result.recoveryToken}?lang=${result.locale}`)
     options.refresh()
   }
-  const ios = () => Capacitor.getPlatform() === 'ios'
-  async function localAvailable() {
-    return !ios() || (await IosFcm.availability()).available
+  async function available(status: ReturnType<typeof pushStatusSchema.parse>) {
+    const platform = Capacitor.getPlatform()
+    return status.available && (platform === 'ios' || platform === 'android') && status.providers[platform]
+      && (!ios() || (await IosFcm.availability()).available)
   }
-  async function stopNative() {
-    if (ios()) await IosFcm.stop()
-    await PushNotifications.unregister()
+  async function permission() {
+    const value = await checkPushPermission()
+    set({ permission: value })
+    return value
   }
-  async function saveToken(value: string) {
-    if (!wantsPush || disposed) return
+  async function revoke() {
+    // Block queued/late token callbacks even when backend revocation fails.
+    wantsPush = false
+    epoch++
+    registrationPending = false
+    revocationPending = true
     clearTimeout(registrationTimer)
+    await api('/revoke', {})
+    if (disposed) return
+    if (ios()) await IosFcm.stop()
+    if (disposed) return
+    await PushNotifications.unregister()
+    revocationPending = false
+  }
+  async function saveToken(value: string, tokenEpoch: number) {
+    if (!wantsPush || disposed || tokenEpoch !== epoch) return
+    // A callback can race with the user disabling notifications in Settings.
+    if (await permission() !== 'granted') { await revoke(); set({ registration: 'off' }); return }
+    if (!wantsPush || disposed || tokenEpoch !== epoch) return
     const platform = Capacitor.getPlatform()
     await api('/registration', { platform, ...(ios() ? { provider: 'fcm' } : {}), token: value, locale: options.locale() })
-    if (wantsPush) set('enabled')
+    if (wantsPush && !disposed && tokenEpoch === epoch) {
+      clearTimeout(registrationTimer)
+      registrationPending = false
+      set({ registration: 'enabled' })
+    }
   }
   async function register() {
-    // Readiness/permission requests can finish after the shell has unmounted.
+    if (disposed || !wantsPush || registrationPending) return
+    registrationPending = true
+    set({ registration: 'busy', settingsError: false })
+    if (Capacitor.getPlatform() === 'android') await ensurePushChannel()
     if (disposed || !wantsPush) return
-    const platform = Capacitor.getPlatform()
-    if (platform !== 'ios' && platform !== 'android') { set('unavailable'); return }
-    set('busy')
-    if (platform === 'android') await PushNotifications.createChannel({ id: 'queue-updates', name: 'NoQueue', importance: 4, visibility: 0 })
     clearTimeout(registrationTimer)
-    registrationTimer = setTimeout(() => set('error'), 15000)
+    registrationTimer = setTimeout(fail, 15000)
     if (ios()) await IosFcm.start()
     if (disposed || !wantsPush) { clearTimeout(registrationTimer); if (ios()) await IosFcm.pause(); return }
     await PushNotifications.register()
   }
-  function available(status: ReturnType<typeof pushStatusSchema.parse>) {
-    const platform = Capacitor.getPlatform()
-    return status.available && (platform === 'ios' || platform === 'android') && status.providers[platform]
+  async function readiness() {
+    const status = pushStatusSchema.parse(await api('/registration'))
+    if (!await available(status)) {
+      wantsPush = false
+      epoch++
+      registrationPending = false
+      clearTimeout(registrationTimer)
+      if (ios()) await IosFcm.pause()
+      set({ registration: 'unavailable' })
+      return null
+    }
+    return disposed ? null : status
   }
   async function reconcile() {
     if (pendingNotice) await resolveNotice(pendingNotice)
-    const status = pushStatusSchema.parse(await api('/registration'))
-    wantsPush = status.enabled
-    if (!available(status) || !await localAvailable()) {
+    const status = await readiness()
+    if (!status) return
+    const receive = await permission()
+    if (disposed) return
+    if (revocationPending || (receive !== 'granted' && (status.enabled || wantsPush))) await revoke()
+    if (receive === 'granted' && (status.enabled || options.hasActiveTurn() || wantsPush)) {
+      wantsPush = true
+      await register()
+    } else {
       wantsPush = false
       if (ios()) await IosFcm.pause()
-      set('unavailable'); return
+      set({ registration: 'off' })
     }
-    const permission = await PushNotifications.checkPermissions()
-    if (permission.receive === 'denied') {
-      wantsPush = false
-      if (status.enabled) await api('/revoke', {})
-      await stopNative()
-      set('denied')
-    } else if (permission.receive === 'granted' && status.enabled) await register()
-    else { wantsPush = false; if (ios()) await IosFcm.pause(); set('off') }
+  }
+  async function activate(manual: boolean) {
+    const status = await readiness()
+    if (!status) return
+    let receive = await permission()
+    if (disposed) return
+    const canPrompt = receive === 'prompt' || (manual && receive === 'prompt-with-rationale')
+    if (canPrompt) {
+      receive = await requestPushPermission()
+      if (disposed) return
+      set({ permission: receive })
+      if (receive !== 'granted') {
+        await revoke()
+        set({ registration: 'off' })
+        return // A rejection must not immediately send the user to Settings.
+      }
+    }
+    if (receive !== 'granted') {
+      if (status.enabled || wantsPush || revocationPending) await revoke()
+      if (manual) set({ settingsError: !await openPushSettings() })
+      set({ registration: 'off' })
+      return
+    }
+    if (revocationPending) await revoke()
+    wantsPush = true
+    await register()
   }
   async function listen(promise: Promise<PluginListenerHandle>) {
     const handle = await promise
     if (disposed) await handle.remove(); else listeners.push(handle)
   }
+  function token(value: string) {
+    const tokenEpoch = epoch
+    void serialize(() => saveToken(value, tokenEpoch))
+  }
   const ready = (async () => {
     if (ios()) {
-      await listen(IosFcm.addListener('tokenReceived', ({ token }) => {
-        void serialize(() => saveToken(token))
-      }))
-      await listen(IosFcm.addListener('tokenError', () => {
-        clearTimeout(registrationTimer); if (wantsPush) set('error')
-      }))
+      await listen(IosFcm.addListener('tokenReceived', ({ token: value }) => token(value)))
+      await listen(IosFcm.addListener('tokenError', () => { if (wantsPush) fail() }))
     }
     await listen(PushNotifications.addListener('registration', ({ value }) => {
-      // On iOS this is an APNs token, NOT the FCM recipient. The native bridge
-      // binds it to Firebase and emits tokenReceived only after token exchange.
-      if (!ios()) void serialize(() => saveToken(value))
+      // iOS emits an APNs token here; only the FCM bridge may provide its recipient.
+      if (!ios()) token(value)
     }))
-    await listen(PushNotifications.addListener('registrationError', () => { clearTimeout(registrationTimer); if (wantsPush) set('error') }))
+    await listen(PushNotifications.addListener('registrationError', () => { if (wantsPush) fail() }))
     await listen(PushNotifications.addListener('pushNotificationReceived', () => { if (!disposed) options.refresh() }))
     await listen(PushNotifications.addListener('pushNotificationActionPerformed', event => {
-        const data = pushNoticeDataSchema.safeParse(event.notification.data)
-        if (data.success) void serialize(() => resolveNotice(data.data.notificationId))
-      }))
-    await listen(App.addListener('appStateChange', ({ isActive }) => { if (isActive && listenersReady) void serialize(reconcile) }))
+      const data = pushNoticeDataSchema.safeParse(event.notification.data)
+      if (data.success) void serialize(() => resolveNotice(data.data.notificationId))
+    }))
+    await listen(App.addListener('appStateChange', ({ isActive }) => { if (isActive && listenersReady) void refreshPermission() }))
     listenersReady = true
-  })().catch(() => set('error'))
+  })().catch(fail)
+  function refreshPermission() {
+    if (!reconciliation) reconciliation = (async () => {
+      await ready
+      if (listenersReady) await serialize(reconcile)
+    })().finally(() => { reconciliation = undefined })
+    return reconciliation
+  }
+  function enable(manual: boolean) {
+    if (disposed || registrationPending || state.registration === 'enabled') return Promise.resolve()
+    if (!activation) {
+      set({ registration: 'busy', settingsError: false })
+      activation = (async () => {
+        await ready
+        if (listenersReady) await serialize(() => activate(manual))
+        else fail()
+      })().finally(() => { activation = undefined })
+    }
+    return activation
+  }
   return {
-    start: async () => { await ready; if (listenersReady) await serialize(reconcile) },
-    enable: async () => {
-      await ready
-      if (!listenersReady) return
-      return serialize(async () => {
-        set('busy')
-        // Readiness before prompting; user may always continue without push.
-        const status = pushStatusSchema.parse(await api('/registration'))
-        if (!available(status) || !await localAvailable()) { set('unavailable'); return }
-        let permission = await PushNotifications.checkPermissions()
-        if (disposed) return
-        if (permission.receive === 'prompt' || permission.receive === 'prompt-with-rationale') permission = await PushNotifications.requestPermissions()
-        if (disposed) return
-        wantsPush = permission.receive === 'granted'
-        if (!wantsPush) { await api('/revoke', {}); await stopNative(); set('denied'); return }
-        await register()
-      })
+    start: refreshPermission,
+    reconcile: refreshPermission,
+    enable: () => enable(true),
+    requestAfterJoin: (key: string) => {
+      if (admissions.has(key)) return Promise.resolve()
+      admissions.add(key)
+      return enable(false)
     },
-    disable: async () => {
-      // Stop accepting new registration callbacks immediately, even while POST is in flight.
-      wantsPush = false
-      clearTimeout(registrationTimer)
+    dispose: async () => {
+      disposed = true; wantsPush = false; epoch++; clearTimeout(registrationTimer)
       await ready
-      return serialize(async () => {
-        wantsPush = false
-        await api('/revoke', {}) // Backend first; failed revocation must remain visible/retryable.
-        await stopNative()
-        set('off')
-      })
+      if (ios()) await IosFcm.pause().catch(() => undefined)
+      await Promise.all(listeners.splice(0).map(l => l.remove()))
     },
-    dispose: async () => { disposed = true; wantsPush = false; clearTimeout(registrationTimer); await ready; if (ios()) await IosFcm.pause().catch(() => undefined); await Promise.all(listeners.splice(0).map(l => l.remove())) },
   }
 }

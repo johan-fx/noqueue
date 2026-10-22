@@ -1,3 +1,4 @@
+import { pushProjectionStatements } from '../mobile/push/lifecycle'
 import { captureGapStatement } from '../metrics/reconcile'
 import { loadAdaptiveState, type AssignmentObservation } from './adaptive-state'
 import { projectAdaptiveQueue, type AdaptiveResource } from './adaptive-model'
@@ -10,7 +11,7 @@ import {
   type CustomerMinimum,
 } from './customer-estimate'
 import { maintainServiceEntries } from './service-expiry'
-import { noticeStatement, type QueueNoticeSnapshot } from './notices'
+import { lifecycleNoticeStatements, type QueueNoticeSnapshot } from './notices'
 import { evaluateEstimateNotice } from './estimate-notices'
 import { expireArrivals } from './customer'
 import { activateIfReady, inventorySafety } from './opening-state'
@@ -269,11 +270,18 @@ export async function commitQueueTransition(
   statements: D1PreparedStatement[],
   now: number,
   analyticsOrigin = 'queue.transition',
+  screenEntryId?: string,
 ) {
   const hasOperationalWrites = statements.length > 0
   const after = await loadQueueState(env, queueId, now, afterModel)
   statements.push(
-    ...(await projectionStatements(env, queueId, after, now, before)),
+    ...(await projectionStatements(env, queueId, after, now, before, screenEntryId)),
+    env.DB.prepare(`UPDATE mobile_push_outbox SET status='discarded',last_error='transition_obsolete'
+      WHERE status IN ('pending','sending') AND payload_version=2 AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=?)
+      AND NOT EXISTS(SELECT 1 FROM queue_entry e WHERE e.id=entry_id AND e.call_cycle=mobile_push_outbox.call_cycle AND (
+        (kind IN ('approaching','delayed','improved') AND e.status='waiting') OR
+        (kind='called' AND e.status='called') OR (kind='expired' AND e.status='expired') OR
+        (kind IN ('cancelled','service_ended') AND e.status='cancelled')))` ).bind(queueId),
   )
   if (statements.length) {
     // Context and journal triggers participate in the same atomic D1 transaction.
@@ -296,9 +304,10 @@ async function projectionStatements(
   state: QueueState,
   now: number,
   before?: QueueState,
+  screenEntryId?: string,
 ) {
   if (state.adaptive)
-    return adaptiveProjectionStatements(env, queueId, state, now, before)
+    return adaptiveProjectionStatements(env, queueId, state, now, before, screenEntryId)
   const statements: D1PreparedStatement[] = [
     env.DB.prepare(
       'UPDATE queue_demand_episode SET ended_at=?,end_reason=? WHERE queue_id=? AND ended_at IS NULL',
@@ -339,9 +348,9 @@ async function projectionStatements(
     }
   }
   const priorRows = await env.DB.prepare(
-    `SELECT p.*,e.id AS entry_id,n.last_accepted_predicted_at,n.last_correction_accepted_at,n.last_accepted_operational_delta_ms,n.last_accepted_customer_minimum_at,EXISTS(SELECT 1 FROM notification_outbox a WHERE a.entry_id=e.id AND a.kind='approaching') AS has_approach
+    `SELECT p.*,e.id AS entry_id,n.last_accepted_predicted_at,n.last_correction_accepted_at,n.last_accepted_operational_delta_ms,n.last_accepted_customer_minimum_at,EXISTS(SELECT 1 FROM queue_notice_history a WHERE a.entry_id=e.id AND a.kind='approaching') AS has_approach
      FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id
-     LEFT JOIN queue_notification_state n ON n.entry_id=e.id WHERE e.id IN (SELECT value FROM json_each(?))`,
+     LEFT JOIN queue_notice_reference n ON n.entry_id=e.id WHERE e.id IN (SELECT value FROM json_each(?))`,
   )
     .bind(JSON.stringify(state.projections.map((p) => p.id)))
     .all<{
@@ -478,13 +487,14 @@ async function projectionStatements(
       : null
     if (
       snapshot &&
+      screenEntryId !== p.id &&
       approachingNow &&
       !approachingBefore &&
       !prior?.has_approach &&
       (initialized || (before && !beforeProjection))
     )
       statements.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           p.id,
           'approaching',
@@ -532,9 +542,9 @@ async function projectionStatements(
       cooldownMinutes: state.config?.notificationCooldownMinutes ?? 10,
       now,
     })
-    if (initialized && correction && snapshot)
+    if (initialized && correction && snapshot && screenEntryId !== p.id)
       statements.push(
-        noticeStatement(
+        ...lifecycleNoticeStatements(
           env,
           p.id,
           correction,
@@ -566,6 +576,7 @@ async function projectionStatements(
       ),
     )
     const joinedSnapshot = pendingJoinedSnapshots.get(p.id)
+    if (snapshot) statements.push(...pushProjectionStatements(env, p.id, snapshot, revision, now, screenEntryId === p.id || !initialized))
     if (joinedSnapshot) {
       const frozen = { ...joinedSnapshot.snapshot }
       delete frozen.projectionPending

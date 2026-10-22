@@ -1,6 +1,6 @@
 import { discoveryQrDestination } from '@/platform/capacitor/discovery-capabilities'
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAppNavigate } from '@/app/navigation/native-transitions'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -17,7 +17,11 @@ export function QrScanner({
   locale: Locale
   onClose: () => void
 }) {
-  const navigate = useNavigate()
+  const navigate = useAppNavigate()
+  const stopCamera = useRef<() => void>(() => {})
+  const registerCameraStop = useCallback((stop: () => void) => {
+    stopCamera.current = stop
+  }, [])
   return (
     <Dialog
       open
@@ -32,12 +36,13 @@ export function QrScanner({
             ? 'Apunta al QR del establecimiento para acceder a la lista.'
             : 'Point at the venue QR to access the waiting list.'}
         </DialogDescription>
-        <CameraPreview locale={locale} onClose={onClose} />
+        <CameraPreview locale={locale} onClose={onClose} registerStop={registerCameraStop} />
         <Button
           variant="outline"
           onClick={() => {
+            stopCamera.current()
             onClose()
-            navigate(`/search?lang=${locale}`)
+            navigate(`/search?lang=${locale}`, { intent: 'forward' })
           }}
         >
           {locale === 'es' ? 'Buscar servicio' : 'Search services'}
@@ -53,12 +58,14 @@ export function QrScanner({
 function CameraPreview({
   locale,
   onClose,
+  registerStop,
 }: {
   locale: Locale
   onClose: () => void
+  registerStop: (stop: () => void) => void
 }) {
   const video = useRef<HTMLVideoElement>(null)
-  const navigate = useNavigate()
+  const navigate = useAppNavigate()
   const [error, setError] = useState('')
   useEffect(() => {
     let active = true
@@ -82,9 +89,8 @@ function CameraPreview({
               )
               return
             }
-            active = false
-            controls?.stop()
             if (target.startsWith('/q/')) visitService(target.split('?')[0]!.slice(3))
+            stop()
             onClose()
             navigate(target.includes('?') ? target : `${target}?lang=${locale}`)
           },
@@ -107,10 +113,11 @@ function CameraPreview({
         stream.getTracks().forEach((track) => track.stop())
       if (element) element.srcObject = null
     }
+    registerStop(stop)
     const hidden = () => { if (document.visibilityState === 'hidden') { stop(); onClose() } }
     document.addEventListener('visibilitychange', hidden)
     return () => { document.removeEventListener('visibilitychange', hidden); stop() }
-  }, [locale, navigate, onClose])
+  }, [locale, navigate, onClose, registerStop])
   return (
     <>
       <video

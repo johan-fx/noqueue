@@ -14,7 +14,7 @@ export function remainingWaitMs(entry: Entry, now: number): number | null {
   return Math.max(0, entry.predictedAt - now)
 }
 
-/** One immutable denominator; current estimates may legitimately move backwards. */
+/** Waiting keeps its initial baseline; called progress fills its own arrival window. */
 export function turnProgress(entry: Entry, now: number): number | null {
   const customer = entry.customer
   if (!customer || customer.phase === 'cancelled') return null
@@ -30,7 +30,6 @@ export function turnProgress(entry: Entry, now: number): number | null {
     entry.predictedAt <= now
   )
     return null
-  let remaining: number
   if (customer.phase === 'called') {
     if (
       customer.calledAt == null ||
@@ -41,20 +40,22 @@ export function turnProgress(entry: Entry, now: number): number | null {
       customer.arrivalDeadlineAt < customer.calledAt
     )
       return null
-    remaining = Math.max(0, customer.arrivalDeadlineAt - now) / 60000
-    if (remaining === 0) return 1
-  } else {
-    if (
-      entry.estimateQuality == null ||
-      entry.estimateQuality === 'unknown' ||
-      !Number.isFinite(entry.etaMinutes) ||
-      entry.etaMinutes < 0
-    )
-      return null
-    const waitMs = remainingWaitMs(entry, now)
-    remaining = waitMs == null ? entry.etaMinutes : waitMs / 60000
-    if (waitMs == null && remaining === 0) return 1
+    // A real call starts a new clock. The original ETA may be shorter than the
+    // arrival grace (or unknown), so it cannot be this phase's denominator.
+    if (now >= customer.arrivalDeadlineAt) return 1
+    if (now <= customer.calledAt) return 0
+    return (now - customer.calledAt) / (customer.arrivalDeadlineAt - customer.calledAt)
   }
+  if (
+    entry.estimateQuality == null ||
+    entry.estimateQuality === 'unknown' ||
+    !Number.isFinite(entry.etaMinutes) ||
+    entry.etaMinutes < 0
+  )
+    return null
+  const waitMs = remainingWaitMs(entry, now)
+  const remaining = waitMs == null ? entry.etaMinutes : waitMs / 60000
+  if (waitMs == null && remaining === 0) return 1
   const initial = entry.initialEtaMinutes
   if (
     initial == null ||

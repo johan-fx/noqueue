@@ -150,9 +150,9 @@ try {
   })
   await new Promise((resolve, reject) => {
     server.once('error', reject)
-    server.listen(8788, network.host, resolve)
+    server.listen(network.port, network.host, resolve)
   })
-  console.log(`Mobile local API: ${origin}; service: ${service}; WhatsApp OFF; outbound network blocked.`)
+  console.log(`Mobile local API: ${origin}; service: ${service}; Push OFF; WhatsApp OFF; outbound network blocked.`)
 } catch (error) {
   await close()
   throw error

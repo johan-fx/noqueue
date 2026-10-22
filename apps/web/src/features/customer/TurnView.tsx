@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
-import { Link } from 'react-router'
+import { AppLink } from '@/app/navigation/AppLink'
+import { detectRuntime } from '@/app/bootstrap/runtime'
 import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
 import { visibleWaitingCount, type Entry } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
@@ -159,6 +160,11 @@ export function TurnView({
           : 'On your way',
         'Your turn!',
       ]
+  const exitToHome = cancelled && detectRuntime() === 'native'
+  const exitDestination = exitToHome ? `/?lang=${locale}` : `/v/${c.service.venueId}?lang=${locale}`
+  const exitLabel = exitToHome
+    ? es ? 'Volver al inicio' : 'Back to home'
+    : es ? 'Seleccionar lista de espera' : 'Choose a waiting list'
   if (cancelled && !serviceEnded) {
     return (
       <>
@@ -168,12 +174,14 @@ export function TurnView({
             {es ? 'Ya no estás en la lista de espera' : 'You are no longer on the waiting list'}
           </h1>
           <p className="mt-8 text-base leading-6 text-gray-500">
-            {es ? 'Si aún quieres venir, puedes volver a unirte.' : 'If you still want to visit, you can join again.'}
+            {exitToHome
+              ? es ? 'Puedes buscar otro establecimiento o escanear un QR desde el inicio.' : 'You can find another venue or scan a QR code from home.'
+              : es ? 'Si aún quieres venir, puedes volver a unirte.' : 'If you still want to visit, you can join again.'}
           </p>
         </div>
         <CustomerFooter>
-          <Button render={<Link to={`/v/${c.service.venueId}?lang=${locale}`} />}>
-            {es ? 'Seleccionar lista de espera' : 'Choose a waiting list'}
+          <Button nativeButton={false} role="link" render={<AppLink to={exitDestination} intent="back" />}>
+            {exitLabel}
           </Button>
         </CustomerFooter>
       </>
@@ -248,7 +256,9 @@ export function TurnView({
           <div
             role="progressbar"
             aria-label={
-              active && !called && known
+              called
+                ? es ? 'Progreso del plazo de llegada' : 'Arrival window progress'
+                : active && known
                 ? estimatedWaitLabel
                 : es
                 ? 'Progreso de la espera'
@@ -258,7 +268,13 @@ export function TurnView({
             aria-valuemax={100}
             aria-valuenow={percentage}
             aria-valuetext={
-              active && !called && known
+              called
+                ? percentage == null
+                  ? es ? 'Plazo de llegada no disponible' : 'Arrival window unavailable'
+                  : es
+                    ? `Plazo de llegada transcurrido: ${percentage}%. Tiempo restante: ${countdown}`
+                    : `Arrival window elapsed: ${percentage}%. Time remaining: ${countdown}`
+                : active && known
                 ? percentage == null
                   ? estimatedWaitLabel
                   : `${estimatedWaitLabel}. ${es ? 'Progreso de la espera' : 'Waiting progress'}: ${percentage}%`
@@ -498,9 +514,11 @@ export function TurnView({
       {(expired || cancelled) && (
         <CustomerFooter>
           <Button
-            render={<Link to={`/v/${c.service.venueId}?lang=${locale}`} />}
+            nativeButton={false}
+            role="link"
+            render={<AppLink to={exitDestination} intent="back" />}
           >
-            {es ? 'Seleccionar lista de espera' : 'Choose a waiting list'}
+            {exitLabel}
           </Button>
         </CustomerFooter>
       )}

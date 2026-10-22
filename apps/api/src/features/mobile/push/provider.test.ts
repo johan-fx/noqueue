@@ -135,6 +135,20 @@ it('iOS FCM stays closed independently of Android and legacy APNs configuration'
     expect(spy).not.toHaveBeenCalled()
   } finally { spy.mockRestore() }
 })
+
+it.each(['ios', 'android'] as const)('keeps lifecycle text but only opaque navigation data on %s', async platform => {
+  oauth()
+  const notice = { ...message(), platform, kind: 'delayed', body: 'La espera en Venue se ha ampliado. Abre NoQueue.' }
+  network.use(http.post('https://fcm.googleapis.com/v1/projects/noqueue-test/messages:send', async ({ request }) => {
+    const { message: payload } = await request.json() as any
+    expect(payload.notification).toEqual({ title: 'NoQueue', body: notice.body })
+    expect(payload.data).toEqual({ type: 'queue-update', notificationId: notice.id })
+    if (platform === 'ios') expect(payload.apns.payload.aps.alert.body).toBe(notice.body)
+    else expect(payload.apns).toBeUndefined()
+    return HttpResponse.json({ name: 'synthetic-lifecycle-message' })
+  }))
+  expect(await sendPush({ ...settings(), FCM_IOS_ENABLED: 'true', FCM_IOS_BUNDLE_ID: 'com.noqueue-app.ios' }, 'fcm', 'synthetic-token', notice)).toEqual({ outcome: 'accepted' })
+})
 it('APNs credential errors from FCM never revoke a valid FCM registration', async () => {
   oauth()
   network.use(http.post('https://fcm.googleapis.com/v1/projects/noqueue-test/messages:send', () => HttpResponse.json({ error: { details: [{ errorCode: 'THIRD_PARTY_AUTH_ERROR' }] } }, { status: 401 })))

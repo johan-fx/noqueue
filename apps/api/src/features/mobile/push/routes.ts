@@ -2,6 +2,7 @@ import { pushPlatformReady } from './provider'
 import { Hono } from 'hono'
 import { pushRegistrationSchema } from '@noqueue/contracts/mobile-push'
 import { encryptPushToken, hmac, recoveryToken } from '../../queue/crypto'
+import { registrationReferenceStatements } from './lifecycle'
 
 export const pushRoutes = new Hono<{ Bindings: CloudflareBindings; Variables: { installationHash: string } }>()
 pushRoutes.get('/registration', async c => {
@@ -22,10 +23,10 @@ pushRoutes.post('/registration', async c => {
   const tokenHash = await hmac(c.env.MOBILE_PUSH_TOKEN_KEY, `push:${provider}:${token}`)
   const cipher = await encryptPushToken(c.env.MOBILE_PUSH_TOKEN_KEY, token)
   try {
-    await c.env.DB.prepare(`INSERT INTO mobile_push_registration(installation_hash,provider,token_hash,token_cipher,locale,enabled,updated_at,platform)
+    await c.env.DB.batch([...registrationReferenceStatements(c.env, owner, now), c.env.DB.prepare(`INSERT INTO mobile_push_registration(installation_hash,provider,token_hash,token_cipher,locale,enabled,updated_at,platform)
       VALUES (?,?,?,?,?,1,?,?) ON CONFLICT(installation_hash) DO UPDATE SET provider=excluded.provider,platform=excluded.platform,token_hash=excluded.token_hash,
       token_cipher=excluded.token_cipher,locale=excluded.locale,enabled=1,updated_at=excluded.updated_at`)
-      .bind(owner, provider, tokenHash, cipher, locale, now, platform).run()
+      .bind(owner, provider, tokenHash, cipher, locale, now, platform)])
   } catch {
     return c.json({ error: 'registration_conflict' }, 409)
   }

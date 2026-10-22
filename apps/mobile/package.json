@@ -15,7 +15,8 @@
     "lint": "tsc --noEmit",
     "test": "node --test scripts/*.test.mjs",
     "test:ios:lifecycle": "node scripts/ios-smoke.mjs --lifecycle",
-    "test:ios:discovery": "node scripts/ios-smoke.mjs --discovery"
+    "test:ios:discovery": "node scripts/ios-smoke.mjs --discovery",
+    "test:ios:transitions": "node scripts/ios-transitions.mjs"
   },
   "license": "UNLICENSED",
   "packageManager": "pnpm@10.23.0",
@@ -28,8 +29,10 @@
     "@capacitor/core": "8.5.1",
     "@capacitor/geolocation": "8.2.0",
     "@capacitor/ios": "8.5.1",
+    "@capacitor/local-notifications": "8.3.1",
     "@capacitor/push-notifications": "8.1.2",
-    "@noqueue/native-fcm": "workspace:*"
+    "@noqueue/native-fcm": "workspace:*",
+    "capacitor-native-settings": "8.2.0"
   },
   "devDependencies": {
     "@capacitor/assets": "3.0.5",

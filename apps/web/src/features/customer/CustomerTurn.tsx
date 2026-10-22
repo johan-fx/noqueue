@@ -1,3 +1,4 @@
+import { LoadingSpinner } from '@/components/LoadingSpinner'
 import { detectRuntime } from '@/app/bootstrap/runtime'
 import { NativePushControls } from '@/platform/capacitor/NativePush'
 import { customerFetch } from '@/data/api/customer'
@@ -149,7 +150,9 @@ function CustomerTurnContent({
       title={c?.service.name ?? (es ? 'Tu turno' : 'Your turn')}
       back={
         !(detectRuntime() === 'native' && (!entry || ['waiting', 'called'].includes(entry.status))) && c?.service.venueId
-          ? `/v/${c.service.venueId}?lang=${locale}`
+          ? detectRuntime() === 'native' && c.phase === 'cancelled'
+            ? `/?lang=${locale}`
+            : `/v/${c.service.venueId}?lang=${locale}`
           : undefined
       }
       locale={locale}
@@ -158,9 +161,13 @@ function CustomerTurnContent({
       {error && <LoadError locale={locale} retry={() => void refresh()} />}
       {error && entry && <p role="status" className="px-4 text-sm">{es ? 'Datos desactualizados. Se conserva la última estimación disponible.' : 'Information is outdated. Showing the last available estimate.'}</p>}
       {!entry && !error && (
-        <p className="p-4" role="status">
-          {es ? 'Cargando…' : 'Loading…'}
-        </p>
+        detectRuntime() === 'native' ? (
+          <LoadingSpinner locale={locale} className="flex-1" />
+        ) : (
+          <p className="p-4" role="status">
+            {es ? 'Cargando…' : 'Loading…'}
+          </p>
+        )
       )}
       {entry && c && (
         <TurnView

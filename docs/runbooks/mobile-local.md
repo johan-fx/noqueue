@@ -265,6 +265,35 @@ Referencias oficiales: [entorno Capacitor](https://capacitorjs.com/docs/getting-
 
 ## iOS: simulador, Keychain y smoke local sin despliegue
 
+### Compatibilidad y transiciones
+
+La app iOS requiere **iOS18.0 o superior**. El target de XCTest y el paquete
+Capacitor propio `@noqueue/native-fcm` también fijan18.0. React Router View
+Transitions se habilita en los WebViews que la implementen; Android conserva su
+mínimo actual y continúa navegando sin animación si el WebView no ofrece la API.
+No hay un segundo motor de animación ni se modifican rutas web/PWA.
+El paquete Swift nativo fija Swift tools6.0 porque `.iOS(.v18)` requiere
+PackageDescription6; `capacitor.config.ts` fija la misma versión para el paquete
+SPM generado por Capacitor.
+
+La validación de compatibilidad requiere ejecutar la misma prueba en **runtime
+iOS18** (mínimo) y **runtime iOS27**. Un resultado de iOS27 no acredita el mínimo.
+Comprueba `xcrun simctl list runtimes`; si falta iOS18, instálalo mediante
+**Xcode → Settings → Platforms** y crea un simulador NoQueue dedicado compatible
+con ese runtime. No borres ni reinicies otros simuladores para preparar el test.
+Al crear otro simulador, instala también el certificado local de CA solo dentro
+de ese dispositivo según el paso de preparación de abajo.
+
+Tras elevar el deployment target, cuando `apps/web/dist` corresponda al build
+local aprobado, regenera dependencias nativas con:
+
+```bash
+pnpm --filter @noqueue/mobile exec cap sync ios
+```
+
+El `Package.swift` dentro de `CapApp-SPM` es generado: **no lo edites a mano**.
+La build instalada debe anunciar `MinimumOSVersion = 18.0`.
+
 ### Preparación
 
 Validado con Xcode27.1/SDK27.1 y runtime iOS27.0, iPhone17 ARM64. Si `simctl` no
@@ -386,6 +415,97 @@ xcrun xcresulttool export attachments \
 El build utiliza `/tmp/noqueue-mobile-ios` como DerivedData (sobrescribible con
 `NOQUEUE_IOS_DERIVED_DATA`) y `/tmp/noqueue-mobile-spm` como caché SPM. La firma es
 ad-hoc para simulador, no una firma de distribución. No requiere publicar nada.
+
+### Transiciones nativas (iOS18 mínimo e iOS27)
+
+La prueba comparte el mismo escenario UI entre WKWebView y Android WebView. Su
+helper JavaScript y el XCTest están en `AppLocalTests` exclusivamente; no se
+incluyen en `App.app`. Cada ejecución usa la API local fresca, navega por inicio,
+búsqueda, filtros, establecimiento, formulario, volver, alta, recuperación y
+overlays, y cancela los turnos creados. La grabación/capturas y el `.xcresult` se
+guardan bajo `reports/ios-local/transitions/` (ignorado por Git); se registran
+solo las fases y direcciones seguras de transición, nunca URL/capabilities.
+
+Después de compilar/sincronizar los assets locales y añadir CA al simulador
+seleccionado, ejecuta la misma prueba separadamente en los dos runtimes. Mantén
+**Reduce Motion desactivado en el pase visual normal del simulador iOS dedicado**;
+el segundo pase de XCTest simula `prefers-reduced-motion: reduce` solo dentro de
+la vista de prueba y comprueba que navega sin animación. La prueba falla si iOS no
+ofrece/instrumenta View Transitions o no se observan avance, retroceso y replace.
+
+```bash
+IOS_TRANSITIONS_SIMULATOR_ID="$IOS18_SIMULATOR_ID" IOS_TRANSITIONS_EXPECT_RUNTIME=18 \
+  pnpm --filter @noqueue/mobile test:ios:transitions
+IOS_TRANSITIONS_SIMULATOR_ID="$IOS27_SIMULATOR_ID" IOS_TRANSITIONS_EXPECT_RUNTIME=27 \
+  pnpm --filter @noqueue/mobile test:ios:transitions
+```
+
+`IOS_TRANSITIONS_SIMULATOR_ID` debe apuntar a un simulador dedicado arrancado y
+`IOS_TRANSITIONS_EXPECT_RUNTIME` verifica el runtime para evitar certificar iOS27
+como mínimo. El script también inspecciona `MinimumOSVersion=18.0` del artefacto.
+No ejecutarlo en paralelo con otras suites iOS que compartan simulador, DerivedData
+o API.
+
+Para Android, compila/instala el APK Debug con assets locales y arranca el AVD
+dedicado `noqueue-api36` según la sección Android. Reinicia el harness para una DB
+vacía; el runner registra nivel Android y versión Chromium/WebView, captura ambos
+pases (normal, movimiento reducido y API deshabilitada solo en el test), y borra
+solo su vídeo temporal remoto:
+
+```bash
+source apps/mobile/scripts/android-env.sh
+pnpm --filter @noqueue/e2e test:android:transitions
+```
+
+La navegación sigue funcionando normalmente si el Android WebView no expone la
+API; en ese caso el informe debe decir `apiSupported: false`, sin declarar que hubo
+animación. Cada ejecución crea y cancela un turno de prueba; el pase de movimiento
+reducido navega por enlaces reales sin crear un turno adicional. Push, contactos,
+consentimientos y outbox permanecen vacíos. Reinicia `dev:mobile` antes de la otra plataforma;
+no corras ambas suites al mismo tiempo.
+
+### Resultado de transiciones — 21/10/2026
+
+- **Implementación solo nativa**: loader `native-root` secuencial (propiedad →
+  redirect → datos), seed de recursos y coordinador compartido cancelable (15s).
+  Las pantallas públicas salientes permanecen inertes mientras se prepara el
+  destino; un turno privado diferente se oculta inmediatamente al cambiar su
+  propiedad. No se montan dos árboles para animar ni se añaden dependencias.
+- Perfil de la validación inicial: slides forward/back de260ms y fade replace
+  de180ms. Ajuste posterior por feedback en iPhone físico, servido por HMR:
+  slides380ms, fade260ms, easing `cubic-bezier(0.25, 0.65, 0.2, 1)` y velo negro
+  equivalente al28% en el snapshot de fondo (aparece al avanzar y se retira al
+  volver). Usuario aprueba este perfil. Iteración posterior: entrada del turno
+  `bottom-up` de420ms, opaca, con fondo inmóvil oscurecido al28%; conserva el
+  replace del historial, sin convertir la pantalla en sheet ni permitir cierre.
+  Usuario aprueba esta entrada vertical. Se retira la prueba de salida `top-down`:
+  cronómetro y confirmación de abandono son estados de la misma ruta, por lo que
+  se animaba la confirmación, no el cronómetro. Por petición del usuario se conserva
+  la salida lateral `back` de380ms desde la confirmación hacia inicio, sin añadir
+  animación al cambio de estado interno. Los
+  vídeos de la matriz anterior corresponden al perfil inicial. Todo queda scoped
+  al documento nativo; queries, idioma y polling no animan y web/PWA no cambia.
+- **694 tests web y43 tests de scripts mobile pasan**; typechecks web/mobile/e2e
+  y builds web/Android/Xcode pasan. ESLint:0errores,2warnings preexistentes.
+- **iOS27 WKWebView: PASS** avance, retroceso, confirmación, recuperación, red lenta,
+  sustitución rápida del destino y movimiento reducido. Los enlaces se entregan
+  al `SceneDelegate` real mediante XCTest; no certifica asociación universal-link
+  del dominio con el sistema operativo.
+- **Android API36 / Android WebView133.0.6943.137: PASS** mismo flujo, `ACTION_VIEW`
+  dirigido a la Activity, Back cierra scanner, Back con turno minimiza y resume;
+  movimiento reducido y API ausente siguen navegando sin animaciones.
+- **iOS18: pendiente de validación runtime**. Xcode no ofrece la descarga solicitada
+  de iOS18.0/18.5 en este entorno. No sustituirla por la prueba iOS27. Todos los seis
+  deployment targets, plugin propio y SPM requieren18; el binario inspeccionado
+  declara `MinimumOSVersion=18.0`. Dos `sync` consecutivos conservan SPM idéntico.
+- Capacitor usa `experimental.ios.spm.swiftToolsVersion: '6.0'` para regenerar `.v18`.
+  El plugin propio conserva `swiftLanguageModes: [.v5]`; elevar el mínimo no implica
+  migrarlo accidentalmente al chequeo estricto de concurrencia de Swift6.
+- Evidencia local ignorada por Git: `reports/ios-local/transitions/result.json`,
+  vídeos y `.xcresult`; `reports/android-local/transitions/result.json`, vídeos y
+  capturas. Los informes de fases solo contienen intención y tiempos, sin URLs ni
+  capabilities. Cada plataforma termina con1turno cancelado,1asociación y0contactos,
+  consentimientos o notificaciones. No se ha desplegado ni publicado ninguna app.
 
 ### Actualización sobre la app instalada (sin desinstalar)
 
@@ -811,3 +931,48 @@ El runner captura HTML del WebView, no el marco/statusbar del dispositivo; el
 bloqueo nativo se acredita adicionalmente con WindowManager y control positivo.
 Los runners históricos `test:android`/services aún tienen aserciones del listado
 antiguo: no usarlos como evidencia de la navegación actual sin actualizarlos.
+
+## Barra de estado Android blanca (2026-10-21)
+
+Se usa **SystemBars incluido en `@capacitor/core` 8**, no un plugin propio ni una
+segunda dependencia `@capacitor/status-bar`. El bootstrap Android fija
+`SystemBarsStyle.Light` únicamente para `SystemBarType.StatusBar`: significa
+iconos oscuros. No llama al plugin en iOS ni navegador.
+
+Android anterior a15 usa el color blanco del tema y sin scrim de contraste. Para
+edge-to-edge, una superficie CSS fija cubre exclusivamente el inset superior y
+pinta separador1px `#E5E5E5`. Respeta `--safe-area-inset-top` de Capacitor y su
+fallback `env`; no consume insets ni añade padding adicional. La superficie es
+inaccesible/no interactiva y tiene snapshot propio para no deslizar/oscurecer la
+barra durante transiciones. El tema blanco también cubre el fallback de WebView
+antiguo donde Capacitor aplica el margen nativo.
+
+Validado instalando encima con pushOFF en Samsung SM-T500 Android12/WebView154
+y emulador Android16/API36/WebView133. El segundo cubre el fallback de WebView
+anterior a140; no equivale a probar todas las combinaciones modernas. Capturas
+`reports/android-device/status-{before,after,api36}.png` (ignoradas). CSS real
+fondoRGB255 y bordeRGB229; la captura Samsung aplica un tono cálido también al
+resto de pantalla, cuyos ajustes globales no se modificaron.
+
+Comprobaciones de esta modificación:717testsweb, lint de bootstrap, buildweb
+(TypeScript incluido), syncAndroid, assembleDebug y diffcheck correctos. Emulador
+cerrado al terminar; tablet conserva el APK actualizado y pushOFF.
+
+### Reabrir Android por USB sin push ni reinstalar
+
+Para el APK físico que apunta a `https://127.0.0.1:8790`, iniciar **dev-mobile**
+(no `dev-mobile-push-real`):
+
+```bash
+NOQUEUE_LOCAL_PORT=8790 NOQUEUE_LOCAL_HOST= NOQUEUE_LOCAL_LIFECYCLE=0 \
+  pnpm --filter @noqueue/api dev:mobile
+adb -s DISPOSITIVO_AUTORIZADO reverse tcp:8790 tcp:8790
+```
+
+`NOQUEUE_LOCAL_PORT` solo admite8788(default) o8790; host privado/loopback y TLS
+siguen validados. Este harness fuerza push/FCMiOS/WhatsApp OFF y bloquea toda
+salida de red; no carga `.dev.vars` ni credenciales proveedor. Mantener proceso
+y cableUSB mientras se prueba; pulsar Reintentar o reabrir si la app quedó en
+error de red. Buscar «local»: restaurante, recepción y piscina ficticios.
+Cada arranque crea D1 efímera nueva; servicios recientes de una ejecución antigua
+pueden no existir. No borrar identidad/vault para ocultar esa diferencia.

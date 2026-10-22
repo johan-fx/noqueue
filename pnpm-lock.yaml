@@ -121,12 +121,18 @@ importers:
       '@capacitor/ios':
         specifier: 8.5.1
         version: 8.5.1(@capacitor/core@8.5.1)
+      '@capacitor/local-notifications':
+        specifier: 8.3.1
+        version: 8.3.1(@capacitor/core@8.5.1)
       '@capacitor/push-notifications':
         specifier: 8.1.2
         version: 8.1.2(@capacitor/core@8.5.1)
       '@noqueue/native-fcm':
         specifier: workspace:*
         version: link:../../packages/native-fcm
+      capacitor-native-settings:
+        specifier: 8.2.0
+        version: 8.2.0(@capacitor/core@8.5.1)
     devDependencies:
       '@capacitor/assets':
         specifier: 3.0.5
@@ -167,6 +173,9 @@ importers:
       '@capacitor/geolocation':
         specifier: 8.2.0
         version: 8.2.0(@capacitor/core@8.5.1)
+      '@capacitor/local-notifications':
+        specifier: 8.3.1
+        version: 8.3.1(@capacitor/core@8.5.1)
       '@capacitor/push-notifications':
         specifier: 8.1.2
         version: 8.1.2(@capacitor/core@8.5.1)
@@ -191,6 +200,9 @@ importers:
       better-auth:
         specifier: 1.7.5
         version: 1.7.5(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(kysely@0.29.6))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.0(@types/node@24.13.4)(jsdom@30.0.1(@noble/hashes@2.4.0))(msw@2.15.0(@types/node@24.13.4)(typescript@6.0.3))(vite@8.3.0(@types/node@24.13.4)(esbuild@0.28.2)(jiti@2.7.0)(terser@5.51.2)(tsx@4.23.13)(yaml@2.9.0)))
+      capacitor-native-settings:
+        specifier: 8.2.0
+        version: 8.2.0(@capacitor/core@8.5.1)
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -1155,6 +1167,11 @@ packages:
     resolution: {integrity: sha512-0EVqwCYf3RUp2JAjUGZ04xmG6dSpIsPmPacI9zKxn6mu9RSiHhmFF230ghe00HrkyB6ig6SfNdoADvVODxYhlQ==}
     peerDependencies:
       '@capacitor/core': ^8.5.0
+
+  '@capacitor/local-notifications@8.3.1':
+    resolution: {integrity: sha512-F7zu/+p/mIR958YP4axOkeI5hBKRaXDyYjbNPrAil2wWfd7OxScPSTvP9t85NpQ0eULVRu0/sntoxOg6ck477A==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.0'
 
   '@capacitor/push-notifications@8.1.2':
     resolution: {integrity: sha512-TQl4XxqJfNF+KbSYBFMXYYT5WXUaleVKXlByhh/8+KySMVNjp+l5OqAUoGe/sY1IAnGXEuUeCjA/WLZEVvGwrA==}
@@ -3512,6 +3529,11 @@ packages:
 
   caniuse-lite@1.0.30001810:
     resolution: {integrity: sha512-TITQPUkaz+aVk5GL6NhOdwk1aEaNTSDPsGFWrTuhKGtjTF70jL/Oht2W4c6rXUe5fu7Ie19VIahAXHIIiWWNeg==}
+
+  capacitor-native-settings@8.2.0:
+    resolution: {integrity: sha512-jqklDll5YFvPpt2SI+wa+oMy0ykvWESSclDMhSI/t1TvJDnomATa7Iz0eE219DY/6pJxRhI7+8RYE0ePtAYxAw==}
+    peerDependencies:
+      '@capacitor/core': '>=8.0.2'
 
   chai@6.2.2:
     resolution: {integrity: sha512-NUPRluOfOiTKBKvWPtSD4PhFvWCqOi0BGStNWs57X9js7XGTprSmFoz5F0tWhR4WPjNeR9jXqdC7/UpSJTnlRg==}
@@ -7756,6 +7778,10 @@ snapshots:
     dependencies:
       '@capacitor/core': 8.5.1
 
+  '@capacitor/local-notifications@8.3.1(@capacitor/core@8.5.1)':
+    dependencies:
+      '@capacitor/core': 8.5.1
+
   '@capacitor/push-notifications@8.1.2(@capacitor/core@8.5.1)':
     dependencies:
       '@capacitor/core': 8.5.1
@@ -9735,6 +9761,10 @@ snapshots:
   callsites@3.1.0: {}
 
   caniuse-lite@1.0.30001810: {}
+
+  capacitor-native-settings@8.2.0(@capacitor/core@8.5.1):
+    dependencies:
+      '@capacitor/core': 8.5.1
 
   chai@6.2.2: {}
 

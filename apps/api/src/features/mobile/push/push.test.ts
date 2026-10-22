@@ -73,12 +73,14 @@ it('commits independent deduplicated outbox without phone/WA; resolves known not
   expect(await (await request('/notices/' + f.notice)).json()).toEqual(own)
   expect(own).toMatchObject({ recoveryToken: expect.stringMatching(/^[a-f0-9]{64}$/), locale: 'es' })
 })
-it('sends once on provider acceptance; payload never contains capabilities, identity or names', async () => {
+it('sends once on provider acceptance; contextual copy never contains capabilities, identity or personal names', async () => {
   const f = await scenario(), send = vi.spyOn(provider, 'sendPush').mockResolvedValue({ outcome: 'accepted' })
   await dispatchPushSerialized(bindings, f.queue, f.notice)
   await dispatchPushSerialized(bindings, f.queue, f.notice)
   expect(send).toHaveBeenCalledTimes(1)
-  expect(send.mock.calls[0]![3]).toEqual({ id: f.notice, kind: 'called', locale: 'es', platform: 'android', expiresAt: expect.any(Number) })
+  expect(send.mock.calls[0]![3]).toEqual({ id: f.notice, kind: 'called', locale: 'es', platform: 'android', expiresAt: expect.any(Number), body: expect.stringContaining('Example venue') })
+  expect(JSON.stringify(send.mock.calls[0]![3])).not.toContain(identity)
+  expect(send.mock.calls[0]![3].body).not.toContain('Test')
   expect(await env.DB.prepare('SELECT status,attempts FROM mobile_push_outbox WHERE id=?').bind(f.notice).first()).toEqual({ status: 'accepted', attempts: 1 })
 })
 it('discards a called alert after completion, tenant suspension, or TTL expiry without sending', async () => {
@@ -90,7 +92,8 @@ it('discards a called alert after completion, tenant suspension, or TTL expiry w
 })
 it('creates expiry notification through real maintenance, discarding the old called notification', async () => {
   const f = await scenario(), send = vi.spyOn(provider, 'sendPush').mockResolvedValue({ outcome: 'accepted' })
-  await expireArrivals(bindings, f.queue, Date.now() + 6 * 60000)
+  vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 6 * 60000)
+  await expireArrivals(bindings, f.queue, Date.now())
   const rows = await env.DB.prepare('SELECT id,kind FROM mobile_push_outbox WHERE entry_id=? ORDER BY entry_version').bind(f.entry).all<{ id: string; kind: string }>()
   expect(rows.results.map(r => r.kind)).toEqual(['called', 'expired'])
   for (const n of rows.results) await dispatchPushSerialized(bindings, f.queue, n.id)

@@ -51,3 +51,21 @@ test('Turbo build cache separates explicit mobile push opt-in from OFF builds', 
   const turbo = JSON.parse(await read('../../../turbo.json'))
   assert.ok(turbo.tasks.build.env.includes('VITE_MOBILE_PUSH_ENABLED'))
 })
+
+test('notification settings use compatible plugins and strip inherited exact-alarm permission', async () => {
+  const mobile = JSON.parse(await read('../package.json'))
+  const web = JSON.parse(await read('../../web/package.json'))
+  for (const name of ['@capacitor/local-notifications', 'capacitor-native-settings']) {
+    assert.match(mobile.dependencies[name], /^8\./)
+    assert.equal(mobile.dependencies[name], web.dependencies[name])
+  }
+  const manifest = await read('../android/app/src/main/AndroidManifest.xml')
+  for (const permission of ['SCHEDULE_EXACT_ALARM', 'USE_EXACT_ALARM']) {
+    assert.match(manifest, new RegExp(`android:name="android.permission.${permission}" tools:node="remove"`))
+  }
+  const permissions = await read('../../web/src/platform/capacitor/push-permissions.ts')
+  assert.match(permissions, /LocalNotifications\.areEnabled\(\)/)
+  assert.doesNotMatch(permissions, /LocalNotifications\.(?:schedule|requestPermissions|createChannel)\(/)
+  assert.match(permissions, /IOSSettings\.AppNotification/)
+  assert.doesNotMatch(permissions, /App-prefs:/)
+})

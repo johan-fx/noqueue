@@ -46,7 +46,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     this.tail = result.catch(() => undefined)
     return result
   }
-  private async withQueue<T>(queueId: string, work: () => Promise<T>) {
+  private async withQueue<T>(queueId: string, work: () => Promise<T>, flushPush = true) {
     await this.ctx.storage.put('queueId', queueId)
     await maintainQueue(this.env, queueId)
     try {
@@ -76,7 +76,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
               JOIN queue_projection p ON p.entry_id=e.id AND p.estimator_version=2
               JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.correction_reason IS NOT NULL
               JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
-              JOIN queue_notification_state n ON n.entry_id=e.id AND n.last_correction_accepted_at IS NOT NULL
+              JOIN queue_notice_reference n ON n.entry_id=e.id AND n.last_correction_accepted_at IS NOT NULL
               WHERE e.queue_id=? AND e.status='waiting'
                 AND n.last_correction_accepted_at + CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.notificationCooldownMinutes'),10)*60000 AS INTEGER)>?
           )
@@ -93,11 +93,11 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
         await this.ctx.storage.setAlarm(Math.max(now + 1, next.deadline))
       else await this.ctx.storage.deleteAlarm()
       // Background scheduling avoids deadlocking this coordinator's serialization tail.
-      if (this.env.MOBILE_PUSH_ENABLED === 'true') this.ctx.waitUntil(dispatchQueuePush(this.env, queueId))
+      if (flushPush && this.env.MOBILE_PUSH_ENABLED === 'true') this.ctx.waitUntil(dispatchQueuePush(this.env, queueId))
     }
   }
   dispatchPush(queueId: string, id: string) {
-    return this.serialize(() => dispatchPushSerialized(this.env, queueId, id))
+    return this.serialize(() => this.withQueue(queueId, () => dispatchPushSerialized(this.env, queueId, id), false))
   }
   async alarm() {
     const queueId = await this.ctx.storage.get<string>('queueId')

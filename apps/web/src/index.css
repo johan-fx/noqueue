@@ -5,6 +5,28 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Android 15+ draws behind system bars. Older Android uses the matching native
+   theme color and a zero-height safe area here. Never move/consume insets twice. */
+html[data-android-status-bar='true'] #noqueue-android-status-bar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: calc(var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) + 1px);
+  box-sizing: border-box;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e5e5;
+  z-index: 2147483647;
+  pointer-events: none;
+  view-transition-name: noqueue-status-bar;
+}
+
+html[data-android-status-bar='true']::view-transition-group(noqueue-status-bar),
+html[data-android-status-bar='true']::view-transition-new(noqueue-status-bar) {
+  animation: none !important;
+}
+html[data-android-status-bar='true']::view-transition-old(noqueue-status-bar) {
+  display: none;
+}
+
 @layer base {
   /* Native WebKit can zoom small form fields and keep the zoom after navigation.
      Include portalled dialogs; preserve pinch zoom and leave web/kiosk unchanged.
@@ -190,3 +212,125 @@ input {
 [role="menuitem"]:not(:disabled) {
   cursor: pointer;
 }
+
+/* Native-only route transitions; React Router starts the View Transition after
+   the native route loader/turn gate has resolved the destination. */
+html[data-native-viewport='true'] {
+  --noqueue-native-slide-duration: 380ms;
+  --noqueue-native-present-duration: 420ms;
+  --noqueue-native-fade-duration: 260ms;
+  --noqueue-native-slide-easing: cubic-bezier(0.25, 0.65, 0.2, 1);
+  --noqueue-native-background-brightness: 0.72;
+}
+
+@keyframes noqueue-native-enter-forward {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+
+@keyframes noqueue-native-leave-forward {
+  /* On an opaque snapshot, brightness(.72) is equivalent to a 28% black veil.
+     Keep it on the background screen, without adding another DOM/overlay tree. */
+  from { transform: translateX(0); filter: brightness(1); }
+  to { transform: translateX(-25%); filter: brightness(var(--noqueue-native-background-brightness)); }
+}
+
+@keyframes noqueue-native-enter-back {
+  from { transform: translateX(-25%); filter: brightness(var(--noqueue-native-background-brightness)); }
+  to { transform: translateX(0); filter: brightness(1); }
+}
+
+@keyframes noqueue-native-leave-back {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+
+@keyframes noqueue-native-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Full-screen presentation, not a dismissible sheet: keep the previous snapshot
+   stationary and opaque beneath the rising turn, with the same dark veil. */
+@keyframes noqueue-native-enter-bottom-up {
+  from { transform: translateY(100%); opacity: 1; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes noqueue-native-dim-background {
+  from { filter: brightness(1); opacity: 1; }
+  to { filter: brightness(var(--noqueue-native-background-brightness)); opacity: 1; }
+}
+
+@keyframes noqueue-native-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='forward']::view-transition-old(root) {
+  animation: noqueue-native-leave-forward var(--noqueue-native-slide-duration) var(--noqueue-native-slide-easing) both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='forward']::view-transition-new(root) {
+  animation: noqueue-native-enter-forward var(--noqueue-native-slide-duration) var(--noqueue-native-slide-easing) both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='back']::view-transition-old(root) {
+  animation: noqueue-native-leave-back var(--noqueue-native-slide-duration) var(--noqueue-native-slide-easing) both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='back']::view-transition-new(root) {
+  animation: noqueue-native-enter-back var(--noqueue-native-slide-duration) var(--noqueue-native-slide-easing) both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='replace']::view-transition-old(root) {
+  animation: noqueue-native-fade-out var(--noqueue-native-fade-duration) ease-out both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='bottom-up']::view-transition-old(root) {
+  animation: noqueue-native-dim-background var(--noqueue-native-present-duration) var(--noqueue-native-slide-easing) both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='bottom-up']::view-transition-new(root) {
+  animation: noqueue-native-enter-bottom-up var(--noqueue-native-present-duration) var(--noqueue-native-slide-easing) both;
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='replace']::view-transition-new(root) {
+  animation: noqueue-native-fade-in var(--noqueue-native-fade-duration) ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-native-viewport='true']::view-transition-group(root),
+  html[data-native-viewport='true']::view-transition-old(root),
+  html[data-native-viewport='true']::view-transition-new(root) {
+    animation: none !important;
+  }
+}
+
+html[data-native-viewport='true'][data-noqueue-transition-intent='none']::view-transition-group(root),
+html[data-native-viewport='true'][data-noqueue-transition-intent='none']::view-transition-old(root),
+html[data-native-viewport='true'][data-noqueue-transition-intent='none']::view-transition-new(root) {
+  animation: none !important;
+}
+
+html[data-native-viewport='true'] {
+  /* Restoring a native screen must be complete before its snapshot is taken. */
+  scroll-behavior: auto;
+}
+html[data-native-viewport='true']::view-transition-old(root),
+html[data-native-viewport='true']::view-transition-new(root) {
+  mix-blend-mode: normal;
+}
+html[data-native-viewport='true'][data-noqueue-transition-intent='forward']::view-transition-new(root),
+html[data-native-viewport='true'][data-noqueue-transition-intent='bottom-up']::view-transition-new(root),
+html[data-native-viewport='true'][data-noqueue-transition-intent='back']::view-transition-old(root) {
+  z-index: 2;
+}
+html[data-native-viewport='true'][data-noqueue-transition-intent='forward']::view-transition-old(root),
+html[data-native-viewport='true'][data-noqueue-transition-intent='bottom-up']::view-transition-old(root),
+html[data-native-viewport='true'][data-noqueue-transition-intent='back']::view-transition-new(root) {
+  z-index: 1;
+}
+
+/* Keep transient navigation feedback out of the screen snapshots. */
+html[data-native-viewport="true"]::view-transition-group(noqueue-loading) { display: none; }

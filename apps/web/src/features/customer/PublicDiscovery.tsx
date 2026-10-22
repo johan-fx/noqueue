@@ -1,10 +1,15 @@
+import { LoadingSpinner } from '@/components/LoadingSpinner'
+import { detectRuntime } from '@/app/bootstrap/runtime'
+import { useNativeResourceSeed } from '@/platform/capacitor/native-route-data'
+import { discoveryRequest, discoveryResourceKey } from './discovery-request'
+import { useAppNavigate } from '@/app/navigation/native-transitions'
 import { discoveryPosition } from '@/platform/capacitor/discovery-capabilities'
 import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { customerFetch } from '@/data/api/customer'
 import { useLocale } from './public-resource'
 import { isActivePublicList } from '@noqueue/contracts/queue'
-import { useCallback, useEffect, useState } from 'react'
-import { useLocation, useNavigate, useSearchParams } from 'react-router'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLocation, useSearchParams } from 'react-router'
 import { ArrowRight, Clock, MapPin, QrCode, Search } from 'lucide-react'
 import {
   publicSearchResponseSchema,
@@ -86,53 +91,32 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
   const [locale, setLocale] = useLocale(),
     t = copy[locale]
   const coordinates = useDiscoveryCoordinates()
-  const navigate = useNavigate(),
+  const navigate = useAppNavigate(),
     route = useLocation()
   const [params, setParams] = useSearchParams()
-  const typeValue = params.get('type'),
-    type =
-      typeValue === 'restaurant' ||
-      typeValue === 'reception' ||
-      typeValue === 'pool'
-        ? typeValue
-        : undefined
-  const scope =
-    coordinates && (!search || params.get('scope') === 'nearby')
-      ? 'nearby'
-      : 'global'
-  const sort =
-    coordinates &&
-    (params.get('sort') === 'distance' ||
-      (!params.has('sort') && scope === 'nearby'))
-      ? 'distance'
-      : 'wait'
-  const page = Math.max(1, Math.min(1000, Number(params.get('page')) || 1))
-  const text = search ? params.get('text') ?? '' : ''
   const [geoError, setGeoError] = useState(false),
     [locating, setLocating] = useState(false),
     [scan, setScan] = useState(false),
     [revision, setRevision] = useState(0)
   const recent = recentServiceIds()
-  const body: PublicSearchInput = {
-    text,
-    type,
-    scope,
-    coordinates,
-    sort,
-    page,
-    pageSize: search ? 24 : 3,
-    ...(!search && !coordinates ? { recentIds: recent } : {}),
-  }
+  const { body, shouldSearch } = discoveryRequest(params, search, coordinates, recent)
+  const { type, scope, sort, page, text = '' } = body
   const bodyKey = JSON.stringify(body)
+  const seed = useNativeResourceSeed(discoveryResourceKey(bodyKey))
+  const native = detectRuntime() === 'native'
+  const priorRevision = useRef(0)
   const [loaded, setLoaded] = useState<{
     key: string
     items: PublicSearchResult[]
     hasMore: boolean
+    updatedAt: number
   } | null>(null)
   const [failure, setFailure] = useState<string | null>(null)
-  const data = loaded?.key === bodyKey ? loaded : null
-  const shouldSearch = search || !!coordinates || recent.length > 0
-  usePublicAnalyticsPage(!shouldSearch || Boolean(data), failure === bodyKey)
+  const initial = seed && !seed.error ? publicSearchResponseSchema.parse(seed.data) : null
+  const seeded = initial ? { key: bodyKey, items: initial.items.filter(isActivePublicList), hasMore: initial.hasMore, updatedAt: seed!.updatedAt } : null
+  const data = loaded?.key === bodyKey && (!seeded || loaded.updatedAt >= seeded.updatedAt) ? loaded : seeded
+  const failed = failure === bodyKey || Boolean(seed?.error && !data)
+  usePublicAnalyticsPage(!shouldSearch || Boolean(data), failed)
   const returnTo = route.pathname + route.search
   const closeScan = useCallback(() => setScan(false), [setScan])
   useEffect(() => {
@@ -160,6 +144,7 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
             key: bodyKey,
             items: result.items.filter(isActivePublicList),
             hasMore: result.hasMore,
+            updatedAt: Date.now(),
           })
           setFailure(null)
         }
@@ -178,7 +163,9 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
       clearTimeout(timer)
       if (document.visibilityState !== 'hidden') void refresh()
     }
-    timer = setTimeout(() => void refresh(), search && text ? 300 : 0)
+    const hasInitial = seed && priorRevision.current === revision
+    priorRevision.current = revision
+    timer = setTimeout(() => void refresh(), hasInitial ? 5000 : search && text ? 300 : 0)
     window.addEventListener('focus', focus)
     document.addEventListener('visibilitychange', visibility)
     return () => {
@@ -187,15 +174,21 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
       window.removeEventListener('focus', focus)
       document.removeEventListener('visibilitychange', visibility)
     }
-  }, [bodyKey, revision, shouldSearch, search, text])
+  }, [bodyKey, revision, shouldSearch, search, text, seed])
   useEffect(() => {
-    if (data && search) window.scrollTo(0, discoveryScroll.get(returnTo) ?? 0)
-  }, [data, search, returnTo])
+    if (!native && data && search) window.scrollTo(0, discoveryScroll.get(returnTo) ?? 0)
+  }, [data, search, returnTo, native])
+  useLayoutEffect(() => {
+    if (native && search && data?.key) window.scrollTo({ top: discoveryScroll.get(returnTo) ?? 0, left: 0, behavior: 'instant' })
+  }, [native, search, returnTo, data?.key])
+  useLayoutEffect(() => () => {
+    if (native && search) discoveryScroll.set(returnTo, window.scrollY)
+  }, [native, search, returnTo])
   useEffect(
     () => () => {
-      if (search) discoveryScroll.set(returnTo, window.scrollY)
+      if (!native && search) discoveryScroll.set(returnTo, window.scrollY)
     },
-    [search, returnTo],
+    [native, search, returnTo],
   )
   function toggleType(next: NonNullable<PublicSearchInput['type']>) {
     setParams(
@@ -265,11 +258,13 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
       aria-busy={shouldSearch && !data && failure !== bodyKey}
     >
       {shouldSearch && !data && failure !== bodyKey && (
-        <p role="status" className="text-sm text-gray-500">
-          {t.loading}
-        </p>
+        native ? <LoadingSpinner locale={locale} /> : (
+          <p role="status" className="text-sm text-gray-500">
+            {t.loading}
+          </p>
+        )
       )}
-      {failure === bodyKey && (
+      {failed && (
         <div className="space-y-3">
           <p role="alert">{t.error}</p>
           <Button variant="outline" onClick={() => setRevision((v) => v + 1)}>
@@ -469,21 +464,29 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
                 <button
                   type="button"
                   disabled={locating}
+                  aria-label={native ? t.location : undefined}
+                  aria-busy={locating}
                   onClick={locate}
                   className="flex w-full items-center gap-4 rounded-xl border border-gray-300 p-3 text-left disabled:opacity-60"
                 >
-                  <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-gray-100">
-                    <MapPin className="size-6" aria-hidden="true" />
-                  </span>
-                  <span className="flex-1 space-y-1">
-                    <span className="block text-lg font-semibold">
-                      {t.location}
-                    </span>
-                    <span className="block text-sm text-gray-500">
-                      {locating ? t.loading : t.locationHint}
-                    </span>
-                  </span>
-                  <ArrowRight className="size-6" aria-hidden="true" />
+                  {native && locating ? (
+                    <LoadingSpinner locale={locale} className="h-13 py-0" />
+                  ) : (
+                    <>
+                      <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-gray-100">
+                        <MapPin className="size-6" aria-hidden="true" />
+                      </span>
+                      <span className="flex-1 space-y-1">
+                        <span className="block text-lg font-semibold">
+                          {t.location}
+                        </span>
+                        <span className="block text-sm text-gray-500">
+                          {locating ? t.loading : t.locationHint}
+                        </span>
+                      </span>
+                      <ArrowRight className="size-6" aria-hidden="true" />
+                    </>
+                  )}
                 </button>
               </div>
               {geoError && (

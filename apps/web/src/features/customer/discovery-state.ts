@@ -9,6 +9,7 @@ export function setDiscoveryCoordinates(
   coordinates = value
   for (const listener of listeners) listener()
 }
+export const getDiscoveryCoordinates = () => coordinates
 export function useDiscoveryCoordinates() {
   return useSyncExternalStore(
     (listener) => {

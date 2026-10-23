@@ -114,6 +114,7 @@ test('restaurant: captures configured, active and completed automatic-assignment
       status: string
       version: number
       arrivalDeadlineAt: number | null
+    calledAt: number | null
       automaticReplacement: { result: string } | null
       automationCycle: { capacity: number | null; state: string } | null
     }[]
@@ -482,6 +483,7 @@ test('captures all reception call, cancel, pass, priority and expiry Figma state
     version: number
     status: string
     arrivalDeadlineAt: number | null
+    calledAt: number | null
   }
   const readEntries = async () =>
     (await (
@@ -634,7 +636,7 @@ test('captures all reception call, cancel, pass, priority and expiry Figma state
     { exact: true },
   )
   await expect(expiryToast).toHaveCount(1, { timeout: 85_000 })
-  expect(expiryDeadline).toBeGreaterThan(Date.now() - 90_000)
+  expect(expiryDeadline).toBeGreaterThan(calledPriority.calledAt!)
   await captureFigmaNode(page, '1861-33817', true)
   const stalePriorityManage = await manage(priority.code)
   await stalePriorityManage

@@ -201,7 +201,7 @@ una actualización poblada de 0035 a 0036 sin pérdida de historial ni backfill 
 ciclos, y una actualización de 0036 a 0037 que conserva ciclos activos/terminales
 e intentos enlazados sin crear eventos históricos de feedback. Se comprueba que
 el query snapshot conserve al menos 5 kB de margen bajo el límite duro de 95.000
-bytes; no se divide un snapshot en vivo ni se relaja el límite. Ambas migraciones
+bytes; no se divide un snapshot en vivo ni se relaja el límite. Las migraciones
 nuevas deben validarse con `pnpm test:production` antes del rollout.
 
 ### Evidencia local (22/10/2026)
@@ -246,9 +246,33 @@ nuevas deben validarse con `pnpm test:production` antes del rollout.
   viewports no sustituye pruebas de WebView/dispositivo. No se ejecutó despliegue
   ni migración remota.
 
+### Revisión de integración (23/10/2026)
+
+- Revalidación local: API 903/903 + herramientas 15/15, web 819/819,
+  producción 50/50, tipos y lint correctos (dos warnings preexistentes).
+
+- `0038_automation_history_cleanup.sql` añade un trigger anterior al borrado de
+  un ciclo que limpia solo su enlace opcional en el historial de llamadas. Evita
+  un fallo de clave foránea durante la limpieza por privacidad si otro intento
+  del ciclo sigue existiendo; no reescribe 0036/0037, no modifica turnos ni
+  reanima automatización. La regresión reproduce el fallo anterior y comprueba
+  el borrado de origen/sucesor y la restauración del backup.
+- La UI de turnos retenidos no muestra una posición ficticia. Las tarjetas
+  mantienen sus datos accesibles fuera del botón de gestión y describen el
+  estado/contador/intento al enfocar el control.
+- El experimento aislado utiliza el mismo orden efectivo de prioridades y
+  exclusión de retenidos al avanzar, leer posiciones y emitir avisos.
+- La configuración de producción declara el interruptor global explícitamente
+  apagado. La allowlist de scripts de instalación se limita a `esbuild` y
+  `workerd`, que preparan/verifican los binarios usados por Wrangler y las pruebas
+  Worker; no se habilitan scripts de MSW ni Sharp.
+- Se conserva la asignación explícita por tarjeta para los tres tipos de
+  servicio. No se infiere el siguiente candidato desde una lista potencialmente
+  truncada si falla la lectura autoritativa de automatización.
+
 ## Rollout y rollback
 
-Aplicar primero la migración aditiva y desplegar después API y web compatibles,
+Aplicar primero las migraciones aditivas 0036, 0037 y 0038 y desplegar después API y web compatibles,
 manteniendo apagado el kill switch global. En staging, habilitar el ajuste en un
 servicio de prueba y verificar el inicio manual, varios ciclos simultáneos,
 expiración, cancelación, llegada, no-candidatos y avisos/outbox. Confirmar que un

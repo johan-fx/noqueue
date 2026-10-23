@@ -58,8 +58,12 @@ export async function expireArrivals(
   queueId: string,
   now = Date.now(),
 ) {
+  // Legacy cleanup must not depend on a due call, but idle reads need no write.
+  const legacyDecision = await env.DB.prepare(
+    "SELECT 1 FROM queue_replacement_decision WHERE queue_id=? AND status='pending' LIMIT 1",
+  ).bind(queueId).first()
   // A dismissed or ended decision never becomes an automatic reservation.
-  await env.DB.prepare(`UPDATE queue_replacement_decision SET status='ended',version=version+1,updated_at=?
+  if (legacyDecision) await env.DB.prepare(`UPDATE queue_replacement_decision SET status='ended',version=version+1,updated_at=?
     WHERE queue_id=? AND status='pending' AND ((service_ends_at IS NOT NULL AND service_ends_at<=?)
       OR NOT EXISTS(SELECT 1 FROM queue_entry e WHERE e.id=entry_id AND e.status='expired' AND e.call_cycle=queue_replacement_decision.call_cycle))`)
     .bind(now, queueId, now).run()

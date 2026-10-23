@@ -68,7 +68,7 @@ it('initializes legacy waiting only according to current physical open/closed po
   expect(await env.DB.prepare('SELECT status,service_ends_at FROM queue_entry WHERE id=?').bind(id).first()).toEqual({ status: 'waiting', service_ends_at: close })
   const old = await ticket(queueId)
   await maintainServiceEntries(env, queueId, close)
-  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id IN (?,?) ORDER BY id').bind(id, old).all()).results).toEqual(expect.arrayContaining([{ status: 'waiting', manual_only: 1 }, { status: 'waiting', manual_only: 1 }]))
+  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id IN (?,?) ORDER BY id').bind(id, old).all()).results).toEqual([{ status: 'waiting', manual_only: 1 }, { status: 'waiting', manual_only: 1 }])
   expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(called).first())?.status).toBe('called')
 })
 it('preserves bound snapshots across schedule edits, including continuous admission', async () => {

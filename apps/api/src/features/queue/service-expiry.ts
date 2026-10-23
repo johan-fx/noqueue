@@ -71,7 +71,8 @@ export async function maintainServiceEntries(
   )
     .bind(queueId, now)
     .first<{ count: number }>()
-  const configured = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
+  const configured = await env.DB.prepare(`SELECT config FROM queue q WHERE id=?
+    AND EXISTS(SELECT 1 FROM queue_automation_cycle c WHERE c.queue_id=q.id AND c.state='active')`)
     .bind(queueId)
     .first<{ config: string | null }>()
   let serviceAssignmentEnabled = false
@@ -94,15 +95,15 @@ export async function maintainServiceEntries(
   // any waiting entry remains to be retained at this sweep. A disabled global
   // kill flag or per-service opt-in also stops the cycle permanently; turning
   // either flag back on must not resurrect an old cycle.
-  const stopCycles = env.DB.prepare(
+  const stopCycles = configured ? env.DB.prepare(
     `UPDATE queue_automation_cycle SET state='stopped',
        reason=CASE WHEN service_ends_at IS NOT NULL AND service_ends_at<=? THEN 'service_ended' ELSE ? END,
        version=version+1,updated_at=?
      WHERE queue_id=? AND state='active'
        AND ((service_ends_at IS NOT NULL AND service_ends_at<=?) OR ?=0)`,
-  ).bind(now, cycleStopReason, now, queueId, now, Number(serviceAssignmentEnabled))
+  ).bind(now, cycleStopReason, now, queueId, now, Number(serviceAssignmentEnabled)) : null
   if (!due?.count) {
-    await stopCycles.run()
+    await stopCycles?.run()
     return
   }
   const dueEntries = await env.DB.prepare(
@@ -136,7 +137,7 @@ export async function maintainServiceEntries(
       env.DB.prepare(
         "UPDATE queue_entry SET manual_only=1,priority_rank=NULL,version=version+1 WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_ends_at<=?",
       ).bind(queueId, now),
-      stopCycles,
+      ...(stopCycles ? [stopCycles] : []),
     ],
     now,
     'service.ended',

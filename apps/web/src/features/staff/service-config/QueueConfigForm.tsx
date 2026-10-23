@@ -163,10 +163,10 @@ export function QueueConfigForm({
             Modo de gestión automática
           </FieldLabel>
           <p className="text-sm text-muted-foreground">
-            El sistema avisará al siguiente cliente compatible. Si no se
-            confirma su llegada dentro del plazo, cancelará su turno y avisará
-            al siguiente. El personal solo tendrá que intervenir en casos
-            excepcionales.
+            Tras una asignación manual, si la automatización está disponible,
+            el sistema avisará al siguiente cliente compatible cuando venza el
+            plazo sin confirmar la llegada. Confirmar o cancelar manualmente
+            detiene ese ciclo.
           </p>
         </div>
         <Switch

@@ -212,3 +212,33 @@ test('snapshot query still fails closed above 95000 bytes instead of splitting r
   assert.throws(()=>snapshotSQL(schema,padded(padding+1)),/Snapshot SQL exceeds bounded D1 query size; do not paginate/)
  } finally {db.close()}
 })
+
+test('0038 permits privacy deletion after handoff and preserves surviving attempt history across backup restore',()=>{
+ for(const deleted of ['legacy-entry','legacy-successor']) {
+  const db=preAutomationMigration(),restored=new DatabaseSync(':memory:')
+  try {
+   db.exec(readFileSync(new URL('0036_automation_cycles.sql',migrations),'utf8'))
+   db.exec(readFileSync(new URL('0037_staff_queue_interactions.sql',migrations),'utf8'))
+   db.exec(`UPDATE queue_entry SET status='called',call_cycle=1 WHERE id='legacy-successor';
+    INSERT INTO queue_automation_cycle(id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,state,created_at,updated_at)
+    VALUES ('privacy-cycle','demo-queue','legacy-entry',1,'legacy-successor',1,'pool','active',100,200);
+    UPDATE queue_call_replacement SET automation_cycle_id='privacy-cycle' WHERE entry_id='legacy-entry';
+    INSERT INTO queue_call_replacement(entry_id,call_cycle,queue_id,eligible,origin,service_type,result,created_at,updated_at,automation_cycle_id)
+    VALUES ('legacy-successor',1,'demo-queue',1,'arrival_expiry','pool','pending',200,200,'privacy-cycle');`)
+   assert.throws(()=>db.prepare('DELETE FROM queue_entry WHERE id=?').run(deleted),/FOREIGN KEY/)
+   db.exec(readFileSync(new URL('0038_automation_history_cleanup.sql',migrations),'utf8'))
+   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM queue_call_replacement WHERE automation_cycle_id IS NOT NULL').get().n,2)
+   const {captured,sql}=snapshot(db)
+   assert.ok(Buffer.byteLength(sql)<90000,'Keep the existing 95 kB hard limit and 5 kB headroom')
+   restored.exec('PRAGMA foreign_keys=ON; BEGIN;'+restoreStatements(captured).join('\n')+'\nCOMMIT;')
+   for(const target of [db,restored]) {
+    target.prepare('DELETE FROM queue_entry WHERE id=?').run(deleted)
+    const survivor=deleted==='legacy-entry'?'legacy-successor':'legacy-entry'
+    assert.equal(target.prepare('SELECT COUNT(*) AS n FROM queue_automation_cycle').get().n,0)
+    assert.deepEqual({...target.prepare('SELECT entry_id,automation_cycle_id FROM queue_call_replacement').get()}, {entry_id:survivor,automation_cycle_id:null})
+    assert.equal(target.prepare('SELECT status FROM queue_entry WHERE id=?').get(survivor).status, survivor==='legacy-successor'?'called':'expired')
+    assert.deepEqual(target.prepare('PRAGMA foreign_key_check').all(),[])
+   }
+  } finally {db.close();restored.close()}
+ }
+})

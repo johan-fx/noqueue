@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   animate,
   motion,
@@ -66,6 +66,7 @@ export function QueueEntryCard({
   onManage: (entry: StaffEntry) => void
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
+  const detailsId = useId()
   const wait = entry.waitEstimate
   const waitRemaining =
     wait?.predictedAt != null &&
@@ -336,17 +337,19 @@ export function QueueEntryCard({
           }
         }}
       >
-        <button
-          type="button"
-          data-manage-entry=""
-          className="flex w-full min-w-0 items-center gap-4 rounded-md bg-background p-4 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-default"
-          aria-label={`Gestionar turno ${entry.code}`}
-          disabled={!canOperate || !active || busy}
-          onClick={() => {
-            onReveal(null)
-            onManage(entry)
-          }}
-        >
+        <div className="relative flex w-full min-w-0 items-center gap-4 rounded-md bg-background p-4 text-left">
+          <button
+            type="button"
+            data-manage-entry=""
+            className="absolute inset-0 z-10 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-default"
+            aria-label={`Gestionar turno ${entry.code}`}
+            aria-describedby={detailsId}
+            disabled={!canOperate || !active || busy}
+            onClick={() => {
+              onReveal(null)
+              onManage(entry)
+            }}
+          />
         {active && (
           <span
             aria-label={`Posición ${position}`}
@@ -355,7 +358,7 @@ export function QueueEntryCard({
             {position}
           </span>
         )}
-        <div className="min-w-0 flex-1 space-y-2">
+        <div id={detailsId} className="min-w-0 flex-1 space-y-2">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="break-words text-sm font-medium">
@@ -454,7 +457,7 @@ export function QueueEntryCard({
             <p className="text-xs text-muted-foreground">{cycleContext}</p>
           )}
         </div>
-        </button>
+        </div>
       </motion.div>
       {canOperate && revealed === 'all' && (
         <div

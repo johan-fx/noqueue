@@ -128,6 +128,7 @@ it('parses a retained manual-only customer turn and keeps cancellation available
     screen.getByText(/El servicio anterior ha finalizado\. Consulta al personal/),
   ).toBeVisible()
   expect(screen.queryByText('0 min')).not.toBeInTheDocument()
+  expect(screen.queryByText(/delante de ti/)).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Abandonar la lista' })).toBeVisible()
 })
 

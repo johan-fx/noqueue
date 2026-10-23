@@ -341,6 +341,7 @@ it('keeps the card-to-manage action scoped to the selected view and queue', () =
     <QueueView {...props} queue={{ ...queue, id: 'another' }} tab="active" />,
   )
   rerender(<QueueView {...props} queue={queue} tab="active" />)
+  expect(screen.getByRole('button', { name: 'Gestionar turno T0' })).toBeEnabled()
   expect(manage).toHaveBeenCalledTimes(2)
 })
 it('keeps automatic service closure in cancelled history with a truthful reason', () => {

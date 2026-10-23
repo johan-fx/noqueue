@@ -293,6 +293,7 @@
         "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",
         "STAGING_CONSENT_APPROVED": "false",
         "APP_ENV": "production",
+        "QUEUE_AUTO_REPLACEMENT_ENABLED": "false",
         "D360DIALOG_PHONE_NUMBER_ID": "",
         "WHATSAPP_COPY_VERSION": "4",
         "WHATSAPP_QUEUE_V4_QUEUE_JOINED_TEMPLATE_ES": "noqueue_v4_queue_joined_es_production",

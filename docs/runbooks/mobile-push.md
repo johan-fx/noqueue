@@ -18,7 +18,7 @@ histórico; sus referencias a APNs directo no describen la ruta activa actual.
 - `0030_mobile_push.sql` introdujo registro y outbox separados de WhatsApp.
   `0033_mobile_push_lifecycle.sql` sustituye su trigger por intents explícitos en
   la misma transacción del dominio/proyección. Incluye acercamiento, retrasos,
-  mejoras, llamadas y cancelación externa. `service_ended` se conserva para leer
+  mejoras, llamadas, expiración y cancelación externa. `service_ended` se conserva para leer
   historial/outbox antiguos; el cierre físico actual retiene los turnos en espera
   como `manual_only` y no genera un aviso de cierre. Solo para instalación
   con registro habilitado y gate ON. No crea contactos ni consentimientos WhatsApp.
@@ -813,7 +813,9 @@ correlación individual ni lectura humana: completar con observación visual.
 
 1. Secuencia normal hasta llamada/llegada; prórrogas repetidas y recuperación.
 2. Mejora neutral/recomendada, llamada anticipada, paso y nueva llamada.
-3. Expiración, cancelación externa, cierre; ausencia de duplicados por acciones propias.
+3. Expiración y cancelación externa; ausencia de duplicados por acciones propias.
+   Cierre físico actual: retención manual del turno, sin ETA ni aviso `service_ended`;
+   no repetir el escenario histórico de cancelación por cierre.
 4. Segundo plano y bloqueo; primer plano actualiza sin banner/sonido duplicado.
 5. Abrir desde proceso terminado (no confundir con force-stop del SO); aviso antiguo
    abre estado actual. Pérdida de red y recuperación sin perder hint.

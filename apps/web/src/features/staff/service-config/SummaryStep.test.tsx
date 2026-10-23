@@ -20,3 +20,8 @@ it('shows the service-level automatic-management badge when enabled', () => {
   )
   expect(screen.getByText('Gestión automática activa')).toBeVisible()
 })
+
+it('hides the automatic-management badge by default', () => {
+  render(<SummaryStep values={emptyService} />)
+  expect(screen.queryByText('Gestión automática activa')).not.toBeInTheDocument()
+})

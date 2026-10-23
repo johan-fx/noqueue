@@ -296,22 +296,7 @@ test('manual cancellation stops only its own active reception cycle', async ({
   baseURL,
 }) => {
   const f = await setup(page, request, baseURL!, 'reception')
-  const summary = (
-    (await (
-      await page.request.get(`/api/v1/staff/venues/${f.venueId}/queues`)
-    ).json()) as QueueSummary[]
-  )[0]!
-  const saved = await page.request.patch(`/api/v1/staff/queues/${f.queue}`, {
-    headers: f.headers,
-    data: {
-      ...summary.config,
-      automaticAssignmentEnabled: true,
-      version: summary.version,
-      open: !!summary.open,
-      graceMinutes: 1,
-    },
-  })
-  expect(saved.ok(), await saved.text()).toBeTruthy()
+  await configureAutomatic(page, f.venueId, f.queue, f.headers, { graceMinutes: 1 })
 
   for (const name of ['Ciclo cancelado', 'Ciclo confirmado', 'Debe esperar']) {
     const joined = await page.request.post(

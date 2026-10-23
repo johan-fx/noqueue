@@ -7,8 +7,8 @@ catalog:
   typescript: ~6.0.2
   zod: 4.6.1
 
+# Native binaries used by the isolated Worker tests and Wrangler/esbuild builds.
+# Keep the install-script allowlist minimal; MSW and Sharp need no scripts here.
 onlyBuiltDependencies:
   - esbuild
-  - msw
-  - sharp
   - workerd

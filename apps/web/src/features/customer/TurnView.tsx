@@ -417,7 +417,7 @@ export function TurnView({
                 {es ? 'Tu turno:' : 'Your turn:'}{' '}
                 <span className="ml-1 text-2xl">{entry.code}</span>
               </p>
-              {active && !called && (
+              {active && !called && !manualOnly && (
                 <p>
                   {es ? 'Hay ' : ''}
                   <strong>

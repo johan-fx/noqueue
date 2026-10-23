@@ -47,11 +47,10 @@ const props: ComponentProps<typeof QueueEntryCard> = {
   onAction: vi.fn(),
 }
 
-it('identifies an automatic replacement without hiding the manual arrival action', () => {
+it('keeps the manual arrival action available for a legacy automatic replacement', () => {
   render(<QueueEntryCard {...props} revealed="all" entry={{ ...props.entry, status: 'called',
     automaticReplacement: { origin: 'arrival_expiry', eligible: true, result: 'pending', successor: null },
   }} />)
-  expect(screen.queryByText('Asignado automáticamente por ausencia')).not.toBeInTheDocument()
   expect(screen.getAllByRole('button', { name: 'Confirmar llegada' }).length).toBeGreaterThan(0)
 })
 
@@ -286,4 +285,14 @@ it('distinguishes a previous cycle arrival from the waiting client who passed', 
   }} />)
   expect(screen.getByText('Ciclo anterior finalizado por una llegada. Este turno sigue en espera.')).toBeVisible()
   expect(screen.queryByText('Llegada confirmada; ciclo automático finalizado.')).not.toBeInTheDocument()
+})
+
+it('exposes call status and cycle attempt to assistive technology without hiding card text', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry, status: 'called',
+    arrivalDeadlineAt: 60000,
+    automationCycle: { id: 'c', state: 'active', capacity: 2, receptionService: null, reason: null, attempt: 2 },
+  }} />)
+  const manage = screen.getByRole('button', { name: 'Gestionar turno T1' })
+  expect(manage).toHaveAccessibleDescription(/Pendiente de llegada.*1:00.*Automático · Intento 2/)
+  expect(manage).not.toContainElement(screen.getByText('Pendiente de llegada'))
 })

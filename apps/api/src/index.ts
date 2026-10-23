@@ -202,10 +202,7 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
     return this.serialize(() => this.withQueue(queueId, () => readAutomation(this.env, queueId, after)))
   }
   replacementDecisions(queueId: string) {
-    return this.serialize(() => this.withQueue(queueId,async () => {
-      await refreshQueue(this.env,queueId)
-      return []
-    }))
+    return this.serialize(() => this.withQueue(queueId, async () => []))
   }
   refresh(queueId: string) {
     return this.serialize(() =>

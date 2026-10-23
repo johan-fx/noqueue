@@ -70,7 +70,9 @@ export function QueueAutomationFooter({
                   No hay asignaciones de referencia.<br />
                 </>
               )}
-              Asigna próximo turno de forma manual.
+              {canOperate
+                ? 'Asigna próximo turno de forma manual.'
+                : 'El personal con permisos puede iniciar una asignación manual.'}
             </p>
           )}
         </>

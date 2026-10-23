@@ -255,6 +255,8 @@ it.each(['call', 'expiry', 'service-end'] as const)(
         .bind('previous-service-window', now, t.entry)
         .run()
       await maintainServiceEntries(selected, t.queue, now)
+      expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?')
+        .bind(t.entry).first()).toEqual({ status: 'waiting', manual_only: 1 })
       kind = 'service_ended'
     } else {
       await runQueueCommand(

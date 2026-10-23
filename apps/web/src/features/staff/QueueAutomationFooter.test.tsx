@@ -66,3 +66,11 @@ it('keeps a manual assignment CTA when the service opt-in is off', () => {
   expect(screen.queryByText('Gestión automática pausada')).not.toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Asignar próximo turno' })).toBeEnabled()
 })
+
+it('does not instruct a read-only viewer to perform an unauthorized assignment', () => {
+  render(<QueueAutomationFooter type="reception" configured automation={idle}
+    canOperate={false} busy={false} canAssignNext onAssignNext={vi.fn()} />)
+  expect(screen.queryByText('Asigna próximo turno de forma manual.')).not.toBeInTheDocument()
+  expect(screen.getByText('El personal con permisos puede iniciar una asignación manual.')).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Asignar próximo turno' })).not.toBeInTheDocument()
+})

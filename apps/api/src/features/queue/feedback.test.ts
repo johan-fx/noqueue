@@ -277,7 +277,7 @@ it('rolls back a queued feedback event when a later operation in the batch fails
     WHEN NEW.kind='called' AND NEW.entry_id='${successor}'
     BEGIN SELECT RAISE(ABORT,'forced_feedback_batch_failure'); END`).run()
   try {
-    await expect(expireArrivals(enabled, f.queueId, f.now + 2 * minute)).rejects.toThrow()
+    await expect(expireArrivals(enabled, f.queueId, f.now + 2 * minute)).rejects.toThrow('forced_feedback_batch_failure')
     expect(await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(root).first())
       .toEqual({ status: 'called' })
     expect(await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(successor).first())

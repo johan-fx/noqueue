@@ -6,6 +6,7 @@ import { assertProductionConfig, readConfig, repository, productionBuildEnv } fr
 const config = await readConfig()
 test('initial production config is isolated, GA/WhatsApp off and includes receipt cleanup cron', () => {
   assertProductionConfig(config)
+  assert.equal(config.env.production.vars.QUEUE_AUTO_REPLACEMENT_ENABLED, 'false')
   assert.equal(productionBuildEnv.VITE_ANALYTICS_ENABLED, 'false')
   assert.equal(productionBuildEnv.LANDING_ANALYTICS_ENABLED, 'false')
   assert.equal(productionBuildEnv.VITE_API_URL, '')

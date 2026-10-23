@@ -45,7 +45,8 @@ for (const [label, mutate] of Object.entries({
   'contradictory evidence': ({ parts }) => { parts[0].scenarios[0].steps[0].actual = 2 },
 })) test(`rejects ${label} even when a part claims it passed`, () => {
   const value = fixture(); mutate(value)
-  assert.throws(() => mergeEvidence(value.inventory, value.parts, 'commit'))
+  assert.throws(() => mergeEvidence(value.inventory, value.parts, 'commit'),
+    /Invalid|Missing|Unexpected|mismatch|incomplete|another browser/)
 })
 
 test('parser does not treat an empty result as a pass and preserves attachment evidence', () => {
@@ -55,7 +56,7 @@ test('parser does not treat an empty result as a pass and preserves attachment e
   test.results = [{ status: 'passed', attachments: [{ name: 'queue-evidence', body: Buffer.from(JSON.stringify([{ actual: 1, expected: 1 }])).toString('base64') }] }]
   assert.deepEqual(browserScenarios(json)[0].steps, [{ actual: 1, expected: 1 }])
   assert.deepEqual(browserInventory(json), [{ testKey: 'chromium:one', browser: 'chromium' }])
-  assert.throws(() => browserInventory({ suites: [] }))
-  assert.throws(() => browserInventory({ ...json, errors: [{}] }))
-  assert.throws(() => browserInventory({ suites: [...json.suites, ...json.suites] }))
+  assert.throws(() => browserInventory({ suites: [] }), /Empty or duplicated browser inventory/)
+  assert.throws(() => browserInventory({ ...json, errors: [{}] }), /collection errors/)
+  assert.throws(() => browserInventory({ suites: [...json.suites, ...json.suites] }), /Empty or duplicated browser inventory/)
 })

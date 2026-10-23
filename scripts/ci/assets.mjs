@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { treeDigest } from '../production/artifacts.mjs'
@@ -12,7 +12,7 @@ export async function assetManifest(profile, revision, digest = treeDigest) {
 export function verifyAssets(expected, actual) {
   if (JSON.stringify(expected) !== JSON.stringify(actual)) throw new Error('CI assets changed or belong to another commit/profile')
 }
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(await realpath(process.argv[1])).href) {
   const [mode, profile] = process.argv.slice(2)
   if (!['write', 'verify'].includes(mode)) throw new Error('Use assets.mjs write|verify general|production')
   const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()

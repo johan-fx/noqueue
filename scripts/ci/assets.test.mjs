@@ -9,6 +9,6 @@ test('asset manifests bind bytes to commit and profile; stale or rebuilt assets 
     await assetManifest('general', 'other-sha', async () => 'digest'),
     await assetManifest('general', 'sha', async () => 'changed'),
     await assetManifest('production', 'sha', async () => 'digest'),
-  ]) assert.throws(() => verifyAssets(expected, actual))
-  await assert.rejects(assetManifest('unknown', 'sha'))
+  ]) assert.throws(() => verifyAssets(expected, actual), /CI assets changed/)
+  await assert.rejects(assetManifest('unknown', 'sha'), /Unknown asset profile/)
 })

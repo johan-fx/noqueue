@@ -16,7 +16,7 @@ if (!['all', 'api', 'browser'].includes(phase) ||
     (phase !== 'browser' && project)) throw new Error('Invalid verification phase/project')
 const required = phase === 'all' ? allRequired : allRequired.filter((id) =>
   id.startsWith('Q-BROWSER-') === (phase === 'browser'))
-const directory = path.resolve(root, process.env.QUEUE_PART_DIR ??
+const directory = path.resolve(root, process.env.QUEUE_PART_DIR ||
   `queue-reports/${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`)
 await mkdir(directory, { recursive: true })
 console.log(`Queue report: ${directory}/index.html`)

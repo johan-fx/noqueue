@@ -4,14 +4,20 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { render, verdict } from './report.mjs'
 import { verificationEnvironment } from './environment.mjs'
+import { required as allRequired, browserScenarios } from './results.mjs'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const extended = process.argv.includes('--extended'),
   all = process.argv.includes('--all')
-const directory = path.resolve(
-  root,
-  'queue-reports',
-  `${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`,
-)
+const phase = process.argv.find((arg) => arg.startsWith('--phase='))?.slice(8) ?? 'all'
+const project = process.argv.find((arg) => arg.startsWith('--project='))?.slice(10)
+if (!['all', 'api', 'browser'].includes(phase) ||
+    (phase !== 'all' && !all) ||
+    (phase === 'browser' && !['chromium', 'firefox', 'webkit'].includes(project)) ||
+    (phase !== 'browser' && project)) throw new Error('Invalid verification phase/project')
+const required = phase === 'all' ? allRequired : allRequired.filter((id) =>
+  id.startsWith('Q-BROWSER-') === (phase === 'browser'))
+const directory = path.resolve(root, process.env.QUEUE_PART_DIR ??
+  `queue-reports/${new Date().toISOString().replaceAll(':', '-')}-${process.pid}`)
 await mkdir(directory, { recursive: true })
 console.log(`Queue report: ${directory}/index.html`)
 const environment = verificationEnvironment(process.env, directory, { all, extended })
@@ -49,36 +55,41 @@ async function run(label, args) {
   await writeFile(path.join(directory, `${label}.log`), log)
   commands.push({ label, args, code, durationMs: Date.now() - start })
 }
-await run('harness', [
-  'exec',
-  'node',
-  '--test',
-  'scripts/queue-verification/report.test.mjs',
-  'scripts/queue-verification/isolation.test.mjs',
-  'scripts/queue-verification/vitest-reporter.test.mjs',
-  'scripts/queue-verification/replay.test.mjs',
-  'scripts/queue-verification/progress-migration.test.mjs',
-])
-await run('api', [
-  '--filter',
-  '@noqueue/api',
-  'exec',
-  'vitest',
-  'run',
-  ...(all
-    ? []
-    : [
-        'test/queue-history.test.ts',
-        'test/queue-evidence.test.ts',
-        'src/features/queue',
-        'src/features/staff/opening.test.ts',
-        'src/staff.test.ts',
-        'src/vertical.test.ts',
-      ]),
-  '--reporter=default',
-  '--reporter=../../scripts/queue-verification/vitest-reporter.mjs',
-])
-await run('browser', [
+if (phase !== 'browser') {
+  await run('harness', [
+    'exec',
+    'node',
+    '--test',
+    'scripts/queue-verification/report.test.mjs',
+    'scripts/queue-verification/isolation.test.mjs',
+    'scripts/queue-verification/vitest-reporter.test.mjs',
+    'scripts/queue-verification/replay.test.mjs',
+    'scripts/queue-verification/progress-migration.test.mjs',
+    'scripts/queue-verification/distributed.test.mjs',
+    'scripts/ci/assets.test.mjs',
+    'scripts/ci/workflow.test.mjs',
+  ])
+  await run('api', [
+    '--filter',
+    '@noqueue/api',
+    'exec',
+    'vitest',
+    'run',
+    ...(all
+      ? []
+      : [
+          'test/queue-history.test.ts',
+          'test/queue-evidence.test.ts',
+          'src/features/queue',
+          'src/features/staff/opening.test.ts',
+          'src/staff.test.ts',
+          'src/vertical.test.ts',
+        ]),
+    '--reporter=default',
+    '--reporter=../../scripts/queue-verification/vitest-reporter.mjs',
+  ])
+}
+if (phase !== 'api') await run('browser', [
   '--filter',
   '@noqueue/e2e',
   'exec',
@@ -91,30 +102,10 @@ await run('browser', [
         'specs/queue-opening.spec.ts',
         'specs/queue-services.spec.ts',
       ]),
-  ...(extended || all ? [] : ['--project=chromium']),
+  ...(project ? [`--project=${project}`] : extended || all ? [] : ['--project=chromium']),
   `--workers=${browserWorkers}`,
   '--retries=0',
 ])
-const required = [
-  'Q-EVIDENCE',
-  'Q-PRODUCTION',
-  'Q-ANCHOR',
-  'Q-BOUNDARIES',
-  'Q-CLOCK',
-  'Q-COMMAND-LEARNING',
-  'Q-SEQUENCES',
-  'Q-PARALLEL',
-  'Q-LEARNING',
-  'Q-EXPIRY',
-  'Q-PREFERENCES',
-  'Q-PROPERTY',
-  'Q-BROWSER-ORDER',
-  'Q-BROWSER-RESOURCE',
-  'Q-BROWSER-CLOSE',
-  'Q-BROWSER-MEAN',
-  'Q-BROWSER-LEARNING',
-  'Q-BROWSER-PROGRESS',
-]
 let scenarios = []
 try {
   scenarios = JSON.parse(
@@ -134,53 +125,14 @@ try {
   const results = JSON.parse(
     await readFile(path.join(directory, 'playwright.json'), 'utf8'),
   )
-  function visit(suite) {
-    for (const spec of suite.specs ?? [])
-      for (const test of spec.tests ?? []) {
-        const id = spec.title.match(/\bQ-[A-Z-]+\b/)?.[0] ?? spec.title
-        const status =
-          test.status === 'expected' &&
-          test.results.every((r) => r.status === 'passed')
-            ? 'passed'
-            : test.status === 'flaky'
-            ? 'flaky'
-            : test.status === 'skipped'
-            ? 'skipped'
-            : 'failed'
-        const steps = []
-        for (const result of test.results)
-          for (const a of result.attachments ?? [])
-            if (a.name === 'queue-evidence' && a.body)
-              steps.push(
-                ...JSON.parse(Buffer.from(a.body, 'base64').toString()),
-              )
-        scenarios.push({
-          id,
-          browser: test.projectName,
-          status,
-          steps: steps.length
-            ? steps
-            : id.startsWith('Q-')
-            ? []
-            : [
-                {
-                  step: 'Playwright assertions',
-                  expected: 'passed',
-                  actual: status,
-                },
-              ],
-        })
-      }
-    for (const child of suite.suites ?? []) visit(child)
-  }
-  for (const suite of results.suites) visit(suite)
+  scenarios.push(...browserScenarios(results))
 } catch {
   /* Missing output never passes. */
 }
 for (const id of required)
   if (!scenarios.some((s) => s.id === id))
     scenarios.push({ id, status: 'not-run', steps: [] })
-const browsers =
+const browsers = phase === 'api' ? [] : project ? [project] :
   extended || all ? ['chromium', 'firefox', 'webkit'] : ['chromium']
 const browserCoverage = required
   .filter((id) => id.startsWith('Q-BROWSER-'))
@@ -196,6 +148,9 @@ const browserCoverage = required
     ),
   )
 const report = {
+  format: 'queue-verification-v2',
+  phase,
+  project: project ?? null,
   required,
   expectedBrowsers: browsers,
   revision: execFileSync('git', ['rev-parse', 'HEAD'], {

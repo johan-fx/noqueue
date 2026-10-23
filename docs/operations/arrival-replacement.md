@@ -332,3 +332,29 @@ ciclos simultáneos, conflictos y motivos de parada. Distingue las capturas E2E
 integradas del 22/10 de las capturas de UI con respuestas API controladas del
 23/10; todas usan datos ficticios. No acredita activación en producción ni
 sustituye la validación nativa WebView/Capacitor pendiente.
+
+### CI paralelo y guardas de integración
+
+El workflow ejecuta checks rápidos, API/harness, build, Chromium, Firefox, WebKit,
+producción/privacidad/PWA y Android en jobs independientes. Cada navegador conserva
+un solo worker, una base efímera propia, todos sus tests y cero reintentos en la
+suite de cola. No se recortan pruebas ni se mueven regresiones obligatorias fuera
+de la PR. Las suites PWA conservan sus proyectos y su política de reintentos previa.
+
+- Imagen Playwright `v1.63.0-noble`, contrastada con el lockfile: navegadores y
+  dependencias del sistema preinstalados, sin `apt` en cada validación.
+- Compilación general reutilizada por E2E, PWA y Android; compilación de producción
+  OFF archivada por separado. Manifiestos verifican SHA, perfil y hash de los
+  archivos antes de usarlos. Los navegadores no reconstruyen ni mutan esos assets.
+- `verify` depende de **todos** los jobs y rechaza fallos, cancelaciones u omisiones.
+  Combina los cuatro informes API/navegadores del mismo SHA y compara los tests
+  ejecutados contra el inventario completo de `playwright --list`, además de
+  conservar el veredicto estricto de evidencia, cobertura Q-* por motor y límite
+  de backup de 95.000 bytes. Un informe incompleto nunca da verde.
+- Los nuevos commits cancelan automáticamente runs obsoletos de su PR, no los de
+  `main`. Artefactos distintos por bloque y `overwrite` permiten reejecutar un job
+  del mismo commit sin colisiones. La integración sigue esperando todos los checks.
+
+La ejecución local monolítica sigue disponible: `pnpm test:queue` y
+`node scripts/queue-verification/run.mjs --all`. La paralelización no introduce
+ningún despliegue, proveedor real ni activación remota.

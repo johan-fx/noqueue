@@ -70,7 +70,8 @@ export function render(report) {
     report.revision,
   )} · ${escape(report.profile)} · ${
     report.dirty ? 'working tree changes' : 'clean checkout'
-  }</p><p>Deterministic synthetic evidence, not a guarantee of real-world prediction accuracy.</p><p><a href="playwright/index.html">Browser report and traces</a> · <a href="evidence.json">Machine-readable evidence</a></p>${commandTable}${
+  }</p><p>Deterministic synthetic evidence, not a guarantee of real-world prediction accuracy.</p><p>${(report.browserReports ?? [{ label: 'Browser report and traces', href: 'playwright/index.html' }])
+    .map((item) => `<a href="${escape(item.href)}">${escape(item.label)}</a>`).join(' · ')} · <a href="evidence.json">Machine-readable evidence</a></p>${commandTable}${
     diagnostics.length
       ? `<h2>Diagnostics</h2><ul>${diagnostics
           .map((message) => `<li>${escape(message)}</li>`)

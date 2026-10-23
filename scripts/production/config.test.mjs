@@ -18,6 +18,7 @@ for (const [label, change] of [
   ['missing privacy cron', (p) => p.triggers.crons.pop()],
   ['staging database', (p) => p.d1_databases[0].database_id = config.env.staging.d1_databases[0].database_id],
   ['staging origin', (p) => p.vars.PUBLIC_APP_ORIGIN = 'https://staging.noqueue-app.com'],
+  ['enabled automatic assignment', (p) => p.vars.QUEUE_AUTO_REPLACEMENT_ENABLED = 'true'],
   ['enabled WhatsApp', (p) => p.vars.WHATSAPP_ENABLED = 'true'],
   ['staging approval', (p) => p.vars.STAGING_CONSENT_APPROVED = 'true'],
   ['E2E entrypoint override', (p) => p.main = 'test/e2e-worker.ts'],

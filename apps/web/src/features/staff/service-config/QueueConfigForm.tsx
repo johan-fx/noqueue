@@ -164,9 +164,9 @@ export function QueueConfigForm({
           </FieldLabel>
           <p className="text-sm text-muted-foreground">
             Tras una asignación manual, si la automatización está disponible,
-            el sistema avisará al siguiente cliente compatible cuando venza el
-            plazo sin confirmar la llegada. Confirmar o cancelar manualmente
-            detiene ese ciclo.
+            si vence el plazo sin confirmar la llegada, el turno quedará caducado
+            y el sistema avisará al siguiente cliente compatible. Confirmar o
+            cancelar manualmente detiene ese ciclo.
           </p>
         </div>
         <Switch

@@ -249,7 +249,8 @@ nuevas deben validarse con `pnpm test:production` antes del rollout.
 ### Revisión de integración (23/10/2026)
 
 - Revalidación local: API 903/903 + herramientas 15/15, web 819/819,
-  producción 50/50, tipos y lint correctos (dos warnings preexistentes).
+  producción 51/51, tipos y lint correctos (dos warnings preexistentes).
+  E2E focalizados 26/26 y capturas Figma 4/4 tras los ajustes de accesibilidad.
 
 - `0038_automation_history_cleanup.sql` añade un trigger anterior al borrado de
   un ciclo que limpia solo su enlace opcional en el historial de llamadas. Evita
@@ -263,9 +264,10 @@ nuevas deben validarse con `pnpm test:production` antes del rollout.
 - El experimento aislado utiliza el mismo orden efectivo de prioridades y
   exclusión de retenidos al avanzar, leer posiciones y emitir avisos.
 - La configuración de producción declara el interruptor global explícitamente
-  apagado. La allowlist de scripts de instalación se limita a `esbuild` y
-  `workerd`, que preparan/verifican los binarios usados por Wrangler y las pruebas
-  Worker; no se habilitan scripts de MSW ni Sharp.
+  apagado y el preflight rechaza activarlo en el perfil de entrega actual. La
+  allowlist de instalación incluye `esbuild`/`workerd` para sus binarios nativos
+  de Wrangler/pruebas Worker y `sharp` 0.32 para libvips en `@capacitor/assets`;
+  no se habilita el script opcional de MSW.
 - Se conserva la asignación explícita por tarjeta para los tres tipos de
   servicio. No se infiere el siguiente candidato desde una lista potencialmente
   truncada si falla la lectura autoritativa de automatización.

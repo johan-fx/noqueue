@@ -174,8 +174,17 @@ export async function act(
     .getByRole("dialog", { name: "Gestionar lista", exact: true })
     .locator("li")
     .filter({ hasText: name });
-  await row.getByRole("button", { name: /Acciones del turno/ }).click();
-  await row.getByRole("button", { name: label, exact: true }).click();
+  await row.getByRole("button", { name: /^Gestionar turno/ }).click();
+  const managed = page.getByRole("dialog", {
+    name: "Gestionar turno",
+    exact: true,
+  });
+  await managed
+    .getByRole("button", {
+      name: label === "Asignar turno" ? "Asignar próximo turno" : label,
+      exact: true,
+    })
+    .click();
   await beforeConfirm?.();
   // Arrival confirmation is a direct action; the dashboard does not open a sheet.
   if (label === "Confirmar llegada") return;

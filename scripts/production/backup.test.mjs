@@ -13,6 +13,22 @@ function source() {
  INSERT INTO backup_edge(id) VALUES (100); DELETE FROM backup_edge WHERE id=100;`)
  return db
 }
+function preAutomationMigration() {
+ const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON;')
+ const files=readdirSync(migrations).filter(f=>f.endsWith('.sql')&&f<'0036_automation_cycles.sql').sort()
+ for(const file of files)db.exec(readFileSync(new URL(file,migrations),'utf8'))
+ db.exec(`INSERT INTO queue_entry
+   (id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,status,created_at,sequence,call_cycle)
+   VALUES ('legacy-entry','demo-queue','legacy-key','request','recovery','OLD1',2,'es','expired',100,1,1),
+          ('legacy-successor','demo-queue','successor-key','request-2','recovery-2','OLD2',2,'es','waiting',101,2,0);
+   INSERT INTO queue_call_replacement
+   (entry_id,call_cycle,queue_id,eligible,origin,service_type,result,created_at,updated_at)
+   VALUES ('legacy-entry',1,'demo-queue',1,'arrival_expiry','restaurant','no_candidate',200,201);
+   INSERT INTO queue_replacement_decision
+   (id,queue_id,entry_id,call_cycle,original_party_size,reason,status,created_at,updated_at)
+   VALUES ('legacy-decision','demo-queue','legacy-entry',1,2,'no_candidate','pending',202,203);`)
+ return db
+}
 function snapshot(db) {
  const schema=JSON.parse(db.prepare(inventorySQL).get().schema_json)
  const columns=parseColumns(db.prepare(columnsSQL(schema)).get())
@@ -73,6 +89,89 @@ test('backup capture fails closed for oversized output and restoration omits FTS
  } finally {db.close()}
 })
 
+test('0036 upgrades populated 0035 replacement history additively without backfilling cycles',()=>{
+ const db=preAutomationMigration()
+ try {
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM queue_call_replacement').get().n,1)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM queue_replacement_decision').get().n,1)
+  db.exec(readFileSync(new URL('0036_automation_cycles.sql',migrations),'utf8'))
+  assert.deepEqual({...db.prepare(`SELECT entry_id,call_cycle,origin,result,automation_cycle_id,cause
+    FROM queue_call_replacement`).get()}, {
+    entry_id:'legacy-entry',call_cycle:1,origin:'arrival_expiry',result:'no_candidate',automation_cycle_id:null,cause:null,
+  })
+  assert.deepEqual({...db.prepare(`SELECT id,entry_id,call_cycle,reason,status FROM queue_replacement_decision`).get()}, {
+    id:'legacy-decision',entry_id:'legacy-entry',call_cycle:1,reason:'no_candidate',status:'pending',
+  })
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM queue_automation_cycle').get().n,0)
+  assert.deepEqual(db.prepare(`SELECT id,manual_only FROM queue_entry ORDER BY id`).all().map(row=>({...row})),[
+    {id:'legacy-entry',manual_only:0},{id:'legacy-successor',manual_only:0},
+  ])
+  const replacementIndexes=db.prepare("PRAGMA index_list('queue_call_replacement')").all().map(row=>row.name)
+  const decisionIndexes=db.prepare("PRAGMA index_list('queue_replacement_decision')").all().map(row=>row.name)
+  assert.ok(replacementIndexes.includes('replacement_successor'))
+  assert.ok(replacementIndexes.includes('replacement_queue'))
+  assert.ok(replacementIndexes.includes('replacement_cycle'))
+  assert.ok(decisionIndexes.includes('replacement_decision_pending'))
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[])
+  assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok')
+ } finally {db.close()}
+})
+
+test('0037 preserves populated 0036 automation cycles and replacement links without replaying historical staff feedback',()=>{
+ const db=preAutomationMigration()
+ try {
+  db.exec(readFileSync(new URL('0036_automation_cycles.sql',migrations),'utf8'))
+  db.exec(`INSERT INTO queue_entry
+   (id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,status,created_at,sequence,call_cycle)
+   VALUES ('active-origin','demo-queue','active-origin-key','active-request','active-recovery','ACT1',4,'es','expired',300,3,1),
+          ('active-successor','demo-queue','active-successor-key','active-successor-request','active-successor-recovery','ACT2',3,'es','called',301,4,1),
+          ('stopped-origin','demo-queue','stopped-origin-key','stopped-request','stopped-recovery','STOP1',2,'es','cancelled',302,5,1),
+          ('stopped-successor','demo-queue','stopped-successor-key','stopped-successor-request','stopped-successor-recovery','STOP2',2,'es','waiting',303,6,0);
+   INSERT INTO queue_automation_cycle
+   (id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,capacity,reception_service,space_id,seats,service_window_id,service_ends_at,state,reason,version,created_at,updated_at)
+   VALUES ('active-cycle','demo-queue','active-origin',1,'active-successor',1,'restaurant',4,NULL,'terrace',4,'window-active',900000,'active',NULL,2,300,350),
+          ('stopped-cycle','demo-queue','stopped-origin',1,'stopped-origin',1,'reception',NULL,'check_in',NULL,NULL,'window-stopped',800000,'stopped','staff_pass',3,302,360);
+   INSERT INTO queue_call_replacement
+   (entry_id,call_cycle,queue_id,eligible,origin,service_type,service_ends_at,result,successor_entry_id,successor_call_cycle,created_at,updated_at,automation_cycle_id,cause)
+   VALUES ('active-origin',1,'demo-queue',1,'arrival_expiry','restaurant',900000,'replaced','active-successor',1,350,351,'active-cycle','arrival_expiry'),
+          ('stopped-origin',1,'demo-queue',1,'staff','reception',800000,'returned_to_waiting',NULL,NULL,355,360,'stopped-cycle','staff_pass');`)
+  const before = {
+   cycles: db.prepare(`SELECT id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,capacity,reception_service,space_id,seats,service_window_id,service_ends_at,state,reason,version,created_at,updated_at FROM queue_automation_cycle ORDER BY id`).all().map(row=>({...row})),
+   replacements: db.prepare(`SELECT entry_id,call_cycle,origin,result,successor_entry_id,successor_call_cycle,automation_cycle_id,cause FROM queue_call_replacement WHERE entry_id IN ('active-origin','stopped-origin') ORDER BY entry_id`).all().map(row=>({...row})),
+  }
+  assert.equal(before.cycles.length,2)
+  db.exec(readFileSync(new URL('0037_staff_queue_interactions.sql',migrations),'utf8'))
+  const afterCycles = db.prepare(`SELECT id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,capacity,reception_service,space_id,seats,service_window_id,service_ends_at,state,reason,version,created_at,updated_at FROM queue_automation_cycle ORDER BY id`).all().map(row=>({...row}))
+  const afterReplacements = db.prepare(`SELECT entry_id,call_cycle,origin,result,successor_entry_id,successor_call_cycle,automation_cycle_id,cause FROM queue_call_replacement WHERE entry_id IN ('active-origin','stopped-origin') ORDER BY entry_id`).all().map(row=>({...row}))
+  assert.deepEqual(afterCycles,before.cycles)
+  assert.deepEqual(afterReplacements,before.replacements)
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM queue_staff_event').get().n,0,'0037 must not backfill replayable staff toast history')
+  assert.equal(db.prepare("SELECT priority_counter FROM queue WHERE id='demo-queue'").get().priority_counter,0)
+  assert.deepEqual(db.prepare(`SELECT id,priority_rank FROM queue_entry WHERE id IN ('active-origin','active-successor','stopped-origin','stopped-successor') ORDER BY id`).all().map(row=>({...row})),[
+   {id:'active-origin',priority_rank:null},{id:'active-successor',priority_rank:null},
+   {id:'stopped-origin',priority_rank:null},{id:'stopped-successor',priority_rank:null},
+  ])
+  assert.deepEqual(db.prepare(`SELECT id,manual_only FROM queue_entry WHERE id IN ('active-origin','active-successor','stopped-origin','stopped-successor') ORDER BY id`).all().map(row=>({...row})),[
+   {id:'active-origin',manual_only:0},{id:'active-successor',manual_only:0},
+   {id:'stopped-origin',manual_only:0},{id:'stopped-successor',manual_only:0},
+  ])
+  const cycleIndexes=db.prepare("PRAGMA index_list('queue_automation_cycle')").all().map(row=>row.name)
+  const replacementIndexes=db.prepare("PRAGMA index_list('queue_call_replacement')").all().map(row=>row.name)
+  const eventIndexes=db.prepare("PRAGMA index_list('queue_staff_event')").all().map(row=>row.name)
+  const priorityIndexes=db.prepare("PRAGMA index_list('queue_entry')").all().map(row=>row.name)
+  assert.ok(cycleIndexes.includes('automation_current'))
+  assert.ok(replacementIndexes.includes('replacement_successor'))
+  assert.ok(replacementIndexes.includes('replacement_queue'))
+  assert.ok(replacementIndexes.includes('replacement_cycle'))
+  assert.ok(eventIndexes.includes('staff_event_cursor'))
+  assert.ok(priorityIndexes.includes('queue_priority'))
+  const {sql}=snapshot(db)
+  assert.ok(Buffer.byteLength(sql)<90000,`0037 backup snapshot query must retain 5 kB headroom under the unchanged 95 kB D1 bound; got ${Buffer.byteLength(sql)}`)
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[])
+  assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok')
+ } finally {db.close()}
+})
+
 test('backup CLI refuses unconfirmed production reads and an archive without isolated rehearsal',async()=>{
  const {spawnSync}=await import('node:child_process')
  for(const args of [[],['--archive','synthetic.json']]) {
@@ -92,10 +191,7 @@ test('compact literals preserve every SQLite storage class and hostile text with
   db.prepare('INSERT INTO backup_values VALUES (?)').run("💾 café'); DROP TABLE backup_values; --\n\0end")
   const {captured}=snapshot(db)
   const rows=captured.tables.find(t=>t.name==='backup_values').rows
-  const legacy=db.prepare(`SELECT 'INSERT INTO "backup_values"("_rowid_","value") VALUES ('||quote(_rowid_)||','||
-   CASE WHEN typeof(value)='text' THEN 'CAST(X'''||hex(value)||''' AS TEXT)' ELSE quote(value) END||');' AS stmt
-   FROM backup_values ORDER BY _rowid_`).all().map(r=>r.stmt)
-  assert.deepEqual(rows,legacy, 'Compact expressions must emit byte-identical v1 INSERT statements')
+  assert.ok(rows.some(stmt=>stmt.includes("X'610062270A'||''")), 'Embedded-NUL text must be rebuilt as TEXT without quote() truncation')
   restored.exec('PRAGMA foreign_keys=ON; BEGIN;'+restoreStatements(captured).join('\n')+'\nCOMMIT;')
   const inspect=`SELECT _rowid_,typeof(value) AS kind,hex(value) AS bytes,quote(value) AS literal FROM backup_values ORDER BY _rowid_`
   assert.deepEqual(restored.prepare(inspect).all(),db.prepare(inspect).all())

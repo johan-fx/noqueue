@@ -318,7 +318,7 @@ export function validWaitingSql(
   alias = '',
 ) {
   const prefix = alias ? `${alias}.` : ''
-  return `${prefix}status='waiting' AND (${prefix}service_ends_at IS NULL OR ${prefix}service_ends_at>${Math.trunc(
+  return `${prefix}status='waiting' AND ${prefix}manual_only=0 AND (${prefix}service_ends_at IS NULL OR ${prefix}service_ends_at>${Math.trunc(
     now,
   )}) AND (${prefix}service_window_id IS NOT NULL OR ${
     includeLegacy ? 1 : 0

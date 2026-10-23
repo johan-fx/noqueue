@@ -1,4 +1,4 @@
-import { readReplacementDecisions } from './features/queue/replacement-decisions'
+import { readAutomation } from './features/queue/automation'
 import { dispatchPushSerialized, dispatchQueuePush, cleanupPush } from './features/mobile/push/dispatch'
 import { cleanupPrivacyConsents, cleanupPrivacyLimits } from './features/privacy/routes'
 import { configurationContext } from './features/staff/configuration-context'
@@ -62,14 +62,14 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
               JOIN queue_projection p ON p.entry_id=e.id AND p.estimator_version=2
               JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.safety_review_at IS NOT NULL
               JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
-              WHERE e.queue_id=? AND e.status='waiting'
+              WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0
             UNION ALL SELECT a.predicted_at - CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.approachMinutes'),10)*60000 AS INTEGER) AS deadline
               FROM queue_entry e
               JOIN queue q ON q.id=e.queue_id
               JOIN queue_projection p ON p.entry_id=e.id AND p.estimator_version=2
               JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.approach_armed=1
               JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
-              WHERE e.queue_id=? AND e.status='waiting'
+              WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0
                 AND a.predicted_at - CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.approachMinutes'),10)*60000 AS INTEGER)>?
             UNION ALL SELECT n.last_correction_accepted_at + CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.notificationCooldownMinutes'),10)*60000 AS INTEGER) AS deadline
               FROM queue_entry e
@@ -78,17 +78,18 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
               JOIN queue_adaptive_projection a ON a.entry_id=e.id AND a.correction_reason IS NOT NULL
               JOIN queue_cadence_state c ON c.queue_id=e.queue_id AND c.estimator_version=2 AND c.episode_id IS NOT NULL
               JOIN queue_notice_reference n ON n.entry_id=e.id AND n.last_correction_accepted_at IS NOT NULL
-              WHERE e.queue_id=? AND e.status='waiting'
+              WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0
                 AND n.last_correction_accepted_at + CAST(COALESCE(json_extract(CASE WHEN json_valid(q.config) THEN q.config ELSE '{}' END,'$.notificationCooldownMinutes'),10)*60000 AS INTEGER)>?
           )
         )
         SELECT MIN(deadline) AS deadline FROM (
           SELECT arrival_deadline_at AS deadline FROM queue_entry WHERE queue_id=? AND status='called'
-          UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting'
+          UNION ALL SELECT service_ends_at AS deadline FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0
+          UNION ALL SELECT service_ends_at AS deadline FROM queue_automation_cycle WHERE queue_id=? AND state='active'
           UNION ALL SELECT deadline FROM adaptive
         )`,
       )
-        .bind(queueId, queueId, now, queueId, now, queueId, queueId)
+        .bind(queueId, queueId, now, queueId, now, queueId, queueId, queueId)
         .first<{ deadline: number | null }>()
       if (next?.deadline != null)
         await this.ctx.storage.setAlarm(Math.max(now + 1, next.deadline))
@@ -197,10 +198,13 @@ export class QueueCoordinator extends DurableObject<CloudflareBindings> {
       }),
     )
   }
+  automation(queueId: string, after?: number) {
+    return this.serialize(() => this.withQueue(queueId, () => readAutomation(this.env, queueId, after)))
+  }
   replacementDecisions(queueId: string) {
     return this.serialize(() => this.withQueue(queueId,async () => {
       await refreshQueue(this.env,queueId)
-      return readReplacementDecisions(this.env,queueId)
+      return []
     }))
   }
   refresh(queueId: string) {

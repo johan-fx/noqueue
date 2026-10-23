@@ -1,11 +1,12 @@
 // Explicit v1 fixtures retain rollback regressions; default v2 is covered by adaptive-estimator.test.ts.
 import { env } from 'cloudflare:workers'
 import { afterEach, expect, it, vi } from 'vitest'
+import type { ServiceInput } from '@noqueue/contracts/staff'
 import { loadQueueState, recalculateQueue, commitQueueTransition } from './projection'
 import { readEntrySnapshot } from './entries'
 import { hash } from './crypto'
 import { publicService } from './public-context'
-import { publicCustomerAverage } from './customer-estimate'
+import { configuredCustomerWork, publicCustomerAverage } from './customer-estimate'
 import { assignmentContext } from '../staff/assignment'
 import { serviceWindow } from '../staff/availability'
 
@@ -74,6 +75,29 @@ it.each([
 ])('%s', (_name, input, averageWaitMinutes, averageWaitQuality) => {
   expect(publicCustomerAverage(input)).toEqual({ averageWaitMinutes, averageWaitQuality })
 })
+it('accumulates customer configured-work deadlines in effective priority/FIFO order', () => {
+  const f = {
+    name: 'Priority estimate', type: 'reception' as const, capacity: 30,
+    averageMinutes: 4, graceMinutes: 5, cutoffMinutes: 0,
+    twentyFourHours: true, schedules: [], receptionServices: ['other' as const],
+    spaces: [],
+  } as unknown as ServiceInput
+  const work = configuredCustomerWork(
+    [
+      { id: 'fifo', sequence: 1, partySize: 1 },
+      { id: 'rank-2', sequence: 2, priorityRank: 2, partySize: 1 },
+      { id: 'rank-1', sequence: 3, priorityRank: 1, partySize: 1 },
+    ],
+    [],
+    f,
+    4,
+  )
+  expect([...work.entries()]).toEqual([
+    ['rank-1', 4 * 60000],
+    ['rank-2', 8 * 60000],
+    ['fifo', 12 * 60000],
+  ])
+})
 it('uses the same serial 4/8/12 forecast for customers and staff regardless of resource inventory', async () => {
   const f = await fixture()
   await recalculateQueue(env, f.queueId, f.now)
@@ -81,6 +105,22 @@ it('uses the same serial 4/8/12 forecast for customers and staff regardless of r
   expect((await loadQueueState(env, f.queueId, f.now)).projections.map(p => p.etaMinutes)).toEqual([4, 8, 12])
   expect((await loadQueueState(env, f.queueId, f.now)).resources).toEqual([])
   expect((await f.read(0))?.initialEtaMinutes).toBe(4)
+})
+it('loads durable priority rank into customer and staff position/ETA projections', async () => {
+  const f = await fixture('reception')
+  await env.DB.prepare('UPDATE queue_entry SET priority_rank=2 WHERE id=?').bind(f.ids[1]).run()
+  await env.DB.prepare('UPDATE queue_entry SET priority_rank=1 WHERE id=?').bind(f.ids[2]).run()
+  await recalculateQueue(env, f.queueId, f.now)
+
+  const state = await loadQueueState(env, f.queueId, f.now)
+  expect(state.parties.map((party) => party.id)).toEqual([f.ids[2], f.ids[1], f.ids[0]])
+  expect(state.projections.map((row) => [row.id, row.position, row.etaMinutes])).toEqual([
+    [f.ids[2], 1, 4],
+    [f.ids[1], 2, 8],
+    [f.ids[0], 3, 12],
+  ])
+  expect((await Promise.all(f.ids.map((_, i) => f.read(i)))).map((entry) => entry?.position)).toEqual([3, 2, 1])
+  expect((await Promise.all(f.ids.map((_, i) => f.read(i)))).map((entry) => entry?.etaMinutes)).toEqual([12, 8, 4])
 })
 it('approaches at the inclusive threshold before any assignment safety review is due', async () => {
   const f = await fixture('reception', 5)

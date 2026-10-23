@@ -40,8 +40,11 @@ export function QueueView({
   busy,
   lastSync,
   error,
+  clockOffsetMs = 0,
   onAction,
   onAdd,
+  onManage = () => {},
+  nextEntryId,
 }: {
   queue: QueueSummary
   entries: StaffEntry[]
@@ -51,11 +54,15 @@ export function QueueView({
   busy: boolean
   lastSync: string
   error: string
+  clockOffsetMs?: number
   onRefresh: () => void
   onAdd?: (trigger: HTMLElement) => void
+  onManage?: (entry: StaffEntry) => void
+  nextEntryId?: string | null
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
-  const [now, setNow] = useState(Date.now)
+  const [clientNow, setNow] = useState(Date.now)
+  const now = clientNow + clockOffsetMs
   const [online, setOnline] = useState(() => navigator.onLine)
   useEffect(() => {
     const sync = () => {
@@ -237,6 +244,11 @@ export function QueueView({
                     queue={queue}
                     entry={entry}
                     position={allRows.indexOf(entry) + 1}
+                    isNext={
+                      nextEntryId === undefined
+                        ? allRows.indexOf(entry) === 0
+                        : nextEntryId === entry.id
+                    }
                     canOperate={canOperate}
                     busy={busy}
                     revealed={
@@ -252,6 +264,7 @@ export function QueueView({
                       )
                     }
                     onAction={onAction}
+                    onManage={onManage}
                   />
                 ))}
               </ul>

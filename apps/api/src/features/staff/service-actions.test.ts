@@ -131,16 +131,8 @@ it('assigns quick FIFO once, preserves grace and finishes without a resource', a
       second = await entry(t.queue)
     const key = crypto.randomUUID(),
       now = Date.now()
-    await expect(
-      runQueueCommand(
-        env,
-        t.actor,
-        t.queue,
-        crypto.randomUUID(),
-        { action: 'call', entryId: second, version: 0 },
-        now,
-      ),
-    ).rejects.toThrow('unsupported_action')
+    await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(),
+      { action: 'call', entryId: second, version: 0 }, now)
     await runQueueCommand(
       env,
       t.actor,
@@ -188,7 +180,7 @@ it('assigns quick FIFO once, preserves grace and finishes without a resource', a
           .bind(second)
           .first()
       )?.status,
-    ).toBe('waiting')
+    ).toBe('called')
     expect(
       (
         await env.DB.prepare(

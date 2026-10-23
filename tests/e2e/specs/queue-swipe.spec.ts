@@ -83,6 +83,23 @@ async function openQueue(
     },
     {
       method: 'GET',
+      path: '/api/v1/staff/queues/swipe/automation',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: {
+          configured: false,
+          effective: false,
+          activeCycles: 0,
+          serverNow: Date.now(),
+          cursor: 0,
+          events: [],
+          hasMore: false,
+          nextEntry: { id: 'e0', version: 0 },
+        },
+      }),
+    },
+    {
+      method: 'GET',
       path: '/api/v1/staff/venues/venue/location',
       respond: () => ({
         json: { version: 1, confirmedAt: null, location: null },
@@ -157,12 +174,15 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await expect.poll(() => offset(row)).toBeGreaterThan(20)
   await page.mouse.up()
   await expect.poll(() => offset(row)).toBe(0)
-  const button = row.getByRole('button', { name: /Acciones del turno/ })
+  const button = row.getByRole('button', { name: /^Gestionar turno/ })
   const buttonBox = await button.boundingBox()
   await page.mouse.move(buttonBox!.x + 8, buttonBox!.y + 8)
   await page.mouse.down()
   await page.mouse.move(buttonBox!.x + 90, buttonBox!.y + 8, { steps: 10 })
   await page.mouse.up()
+  // The action button is now part of the draggable card surface.
+  await expect.poll(() => offset(row)).toBe(144)
+  await mouseSwipe(page, row, -110)
   await expect.poll(() => offset(row)).toBe(0)
   await mouseSwipe(page, row, 180)
   await expect.poll(() => offset(row)).toBe(144)
@@ -190,14 +210,23 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   ).toHaveClass(/bg-green-600/)
   await expect(drawer).toBeVisible()
   expect(commands()).toBe(0)
-  await called.getByRole('button', { name: /Acciones del turno/ }).click()
+  await called.getByRole('button', { name: /^Gestionar turno/ }).click()
   await expect.poll(() => offset(called)).toBe(0)
+  const manageSheet = page.getByRole('dialog', {
+    name: 'Gestionar turno',
+    exact: true,
+  })
   await expect(
-    called.getByRole('button', { name: 'Confirmar llegada' }),
+    manageSheet.getByRole('button', { name: 'Confirmar llegada', exact: true }),
   ).toBeVisible()
-  await row.getByRole('button', { name: /Acciones del turno/ }).focus()
+  await page.keyboard.press('Escape')
+  await expect(manageSheet).toHaveCount(0)
+  await row.getByRole('button', { name: /^Gestionar turno/ }).focus()
   await page.keyboard.press('Enter')
-  await expect(row.getByRole('button', { name: 'Asignar turno' })).toBeVisible()
+  await expect(
+    page.getByRole('dialog', { name: 'Gestionar turno', exact: true }),
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
   await expect(
     called.getByRole('button', { name: 'Confirmar llegada' }),
   ).toHaveCount(0)
@@ -230,7 +259,12 @@ test('legacy inventory readiness does not block assignment and viewer cannot dra
   row = setup.drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 120)
   await expect.poll(() => offset(row)).toBe(0)
-  await expect(row.getByRole('button')).toHaveCount(0)
+  await expect(row.getByRole('button', { name: /^Gestionar turno/ })).toHaveCount(
+    1,
+  )
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveCount(
+    0,
+  )
   await setup.mocks.assertComplete()
 })
 
@@ -279,19 +313,26 @@ test('native mobile touch progressively reveals, cancels and preserves vertical 
   await expect.poll(() => offset(row)).toBe(144)
   await expect(drawer).toBeVisible()
   // Touch swipes may not emit a compatibility click; keyboard activation must still work.
-  const actions = row.getByRole('button', { name: /Acciones del turno/ })
+  const actions = row.getByRole('button', { name: /^Gestionar turno/ })
   await actions.focus()
   await page.keyboard.press('Enter')
-  await expect(actions).toHaveAttribute('aria-expanded', 'true')
-  await page.keyboard.press('Enter')
-  await expect(actions).toHaveAttribute('aria-expanded', 'false')
+  const manageSheet = page.getByRole('dialog', {
+    name: 'Gestionar turno',
+    exact: true,
+  })
+  await expect(manageSheet).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(manageSheet).toHaveCount(0)
   // A real vertical touch must scroll the drawer instead of dragging the card.
   const lower = drawer.locator('[data-entry-code="T3"]')
+  // The fixed footer may cover the last row while it is technically inside the
+  // viewport; center it in the drawer before injecting a vertical gesture.
+  await lower.evaluate((element) => element.scrollIntoView({ block: 'center' }))
   const lowerBox = await surface(lower).boundingBox()
   const before = lowerBox!.y
-  await touch('touchStart', lowerBox!.x + 100, before + 50)
+  await touch('touchStart', lowerBox!.x + 100, before + lowerBox!.height / 2)
   for (let n = 1; n <= 10; n++)
-    await touch('touchMove', lowerBox!.x + 100, before + 50 - n * 20)
+    await touch('touchMove', lowerBox!.x + 100, before + lowerBox!.height / 2 - n * 20)
   await touch('touchEnd')
   await expect
     .poll(async () => (await lower.boundingBox())!.y)
@@ -302,7 +343,7 @@ test('native mobile touch progressively reveals, cancels and preserves vertical 
   await context.close()
 })
 
-test('quick waiting swipes and keyboard expose only cancellation; footer assigns directly', async ({
+test('quick waiting cards reveal assignment; management and footer stay directly actionable', async ({
   page,
 }) => {
   const { drawer, commands, mocks } = await openQueue(page, {
@@ -311,15 +352,21 @@ test('quick waiting swipes and keyboard expose only cancellation; footer assigns
   })
   const row = drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 160)
+  await expect.poll(() => offset(row)).toBe(144)
+  await expect(row.getByRole('button', { name: 'Asignar turno' })).toBeVisible()
+  await mouseSwipe(page, row, -110)
   await expect.poll(() => offset(row)).toBe(0)
-  await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveCount(
-    0,
-  )
-  await row.getByRole('button', { name: /Acciones del turno/ }).click()
+  await row.getByRole('button', { name: /^Gestionar turno/ }).click()
+  const manageSheet = page.getByRole('dialog', {
+    name: 'Gestionar turno',
+    exact: true,
+  })
   await expect(
-    row.getByRole('button', { name: 'Cancelar turno' }),
+    manageSheet.getByRole('button', { name: 'Cancelar turno', exact: true }),
   ).toBeVisible()
   expect(commands()).toBe(0)
+  await page.keyboard.press('Escape')
+  await expect(manageSheet).toHaveCount(0)
   await drawer.getByRole('button', { name: 'Asignar próximo turno' }).click()
   await expect.poll(commands).toBe(1)
   await expect(

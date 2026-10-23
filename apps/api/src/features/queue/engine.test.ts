@@ -24,6 +24,28 @@ describe('compatible parallel queue projection', () => {
     expect(result.map((x) => x.etaMinutes)).toEqual([0, 0, 10])
     expect(result[0]?.resourceId).toBe('small')
   })
+  it('applies explicit priority before FIFO and projects position and ETA in the same order', () => {
+    const result = projectQueue(
+      [
+        party('fifo-oldest', 1),
+        { ...party('priority-later', 2), priorityRank: 2 },
+        { ...party('priority-first', 3), priorityRank: 1 },
+      ],
+      [resource('one-table', 2, 10)],
+      now,
+    )
+    expect(result.map((row) => row.id)).toEqual([
+      'priority-first',
+      'priority-later',
+      'fifo-oldest',
+    ])
+    expect(result.map((row) => row.position)).toEqual([1, 2, 3])
+    expect(result.map((row) => row.predictedAt)).toEqual([
+      now,
+      now + 10 * 60000,
+      now + 20 * 60000,
+    ])
+  })
   it('lets a small free resource serve the oldest compatible party', () => {
     expect(
       projectQueue(

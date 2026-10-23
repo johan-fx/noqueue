@@ -160,7 +160,7 @@ export async function dispatchNotificationSerialized(
     await recalculateQueue(env, pendingJoin.queue_id)
   const row = await env.DB.prepare(
     `SELECT n.status,n.attempts,n.kind,n.position,n.payload_version,n.payload_snapshot,n.revision,n.call_cycle,n.accepted_at,
-    e.status AS entry_status,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,v.id AS venue_id,
+    e.status AS entry_status,e.manual_only,e.call_cycle AS entry_call_cycle,e.arrival_deadline_at,e.queue_id,e.sequence,f.payload,f.expires_at,e.id,e.locale,e.code,v.id AS venue_id,
     c.phone_cipher,c.phone_hash,v.name AS venue,q.config AS queue_config,p.revision AS projection_revision,p.position AS current_position,p.estimator_version,p.predicted_at AS current_predicted_at,p.quality AS current_quality,p.eta_minutes AS current_eta,p.operational_forecast_delta_ms AS current_operational_delta,p.customer_minimum_at,p.updated_at AS projection_updated_at,p.customer_operational_at,
     ap.predicted_at AS adaptive_predicted_at,ap.quality AS adaptive_quality,ap.approach_episode AS adaptive_approach_episode,ap.correction_reason AS adaptive_correction_reason,ap.safety_revision AS adaptive_safety_revision,ap.notice_baseline_at AS adaptive_notice_baseline_at
     FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id JOIN queue_entry_contact c ON c.entry_id=e.id
@@ -174,6 +174,7 @@ export async function dispatchNotificationSerialized(
       status: string
       position: number | null
       arrival_deadline_at: number | null
+      manual_only: number
       entry_status: string
       queue_id: string
       sequence: number
@@ -491,16 +492,16 @@ export async function dispatchNotificationSerialized(
           (row.arrival_deadline_at ?? 0) <= Date.now() ||
           row.call_cycle !== row.entry_call_cycle)) ||
       (row.kind === 'queue_joined' &&
-        (row.entry_status !== 'waiting' ||
+        (row.entry_status !== 'waiting' || row.manual_only === 1 ||
           (row.payload_version === 2 &&
             row.revision !== row.projection_revision))) ||
       (row.kind === 'approaching' &&
-        (row.entry_status !== 'waiting' ||
+        (row.entry_status !== 'waiting' || row.manual_only === 1 ||
           !approaching ||
           (row.payload_version === 2 &&
             row.revision !== row.projection_revision))) ||
       ((row.kind === 'delayed' || row.kind === 'improved') &&
-        (row.entry_status !== 'waiting' ||
+        (row.entry_status !== 'waiting' || row.manual_only === 1 ||
           effective.estimateQuality === 'unknown' ||
           effective.predictedAt === null ||
           (!extensionNotice && row.revision !== row.projection_revision) ||
@@ -561,17 +562,19 @@ export async function dispatchNotificationSerialized(
   }
   if (row.kind === 'position_update') {
     const eligible = await env.DB.prepare(
-      `SELECT 1 FROM whatsapp_contact_state w WHERE w.phone_hash=? AND w.stopped_at IS NULL AND w.last_inbound_at>?
-      AND ?='waiting' AND ?=(SELECT COUNT(*) FROM queue_entry WHERE queue_id=? AND status='waiting' AND sequence<=?)
+      `SELECT 1 FROM whatsapp_contact_state w JOIN queue_entry e ON e.id=? WHERE w.phone_hash=? AND w.stopped_at IS NULL AND w.last_inbound_at>?
+      AND e.status='waiting' AND e.manual_only=0 AND ?='waiting' AND ?=(SELECT COUNT(*) FROM queue_entry p WHERE p.queue_id=e.queue_id AND p.status='waiting' AND p.manual_only=0 AND (
+        (p.priority_rank IS NOT NULL AND (e.priority_rank IS NULL OR p.priority_rank<e.priority_rank)) OR
+        (p.priority_rank IS e.priority_rank AND (p.sequence<e.sequence OR (p.sequence=e.sequence AND p.id<=e.id)))
+      ))
       AND NOT EXISTS(SELECT 1 FROM notification_outbox WHERE entry_id=? AND kind='position_update' AND status IN ('sending','unknown'))`,
     )
       .bind(
+        row.id,
         row.phone_hash,
         Date.now() - 86400000,
         row.entry_status,
         row.position,
-        row.queue_id,
-        row.sequence,
         row.id,
       )
       .first()

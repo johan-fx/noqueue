@@ -124,8 +124,11 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
           const call = async (n: string, visible = false) => {
             await drawer.getByRole('tab', { name: 'Lista', exact: true }).click()
             if (type === 'restaurant') {
-              await row(n).getByRole('button', { name: /Acciones del turno/ }).click()
-              await row(n).getByRole('button', { name: 'Asignar turno', exact: true }).click()
+              await row(n).getByRole('button', { name: /^Gestionar turno/ }).click()
+              await staff
+                .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+                .getByRole('button', { name: 'Asignar próximo turno', exact: true })
+                .click()
               await expect(staff.getByRole('dialog', { name: 'Asignar turno', exact: true })).toBeVisible()
               if (visible) await moment('assign-dialog', 'El personal asigna el turno desde la cola · Sin gestionar inventario')
               await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true }).click()
@@ -134,8 +137,11 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
             await expect.poll(async () => (await entries()).find(e => e.displayName === n)?.status).toBe('called')
           }
           const arrive = async (n: string) => {
-            await row(n).getByRole('button', { name: /Acciones del turno/ }).click()
-            await row(n).getByRole('button', { name: 'Confirmar llegada', exact: true }).click()
+            await row(n).getByRole('button', { name: /^Gestionar turno/ }).click()
+            await staff
+              .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+              .getByRole('button', { name: 'Confirmar llegada', exact: true })
+              .click()
             await expect(row(n)).toHaveCount(0)
             await drawer.getByRole('tab', { name: 'Completados', exact: true }).click()
             await expect(row(n)).toBeVisible()

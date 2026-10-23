@@ -43,16 +43,21 @@ it('finds late local closures west of UTC on a DST transition day', () => {
   expect(serviceDeadline(sunday, 'America/New_York', new Date('2026-03-08T05:10:00Z'))?.endsAt).toBe(Date.parse('2026-03-09T03:59:00Z'))
   expect(serviceDeadline(sunday, 'America/New_York', new Date('2026-11-01T04:10:00Z'))?.endsAt).toBe(Date.parse('2026-11-02T04:59:00Z'))
 })
-it('cancels a due waiting turn once, preserves called/completed turns and notification evidence', async () => {
+it('retains a due waiting turn for manual management, stops its cycle, and preserves called/completed turns', async () => {
   const queueId = await fixture(), end = Date.parse('2026-09-21T13:00:00Z')
   const id = await ticket(queueId, 'waiting', end, 'snapshot'), called = await ticket(queueId, 'called', end, 'snapshot'), completed = await ticket(queueId, 'completed', end, 'snapshot')
+  await env.DB.prepare('UPDATE queue_entry SET priority_rank=1 WHERE id=?').bind(id).run()
+  await env.DB.prepare(`INSERT INTO queue_automation_cycle(id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,state,version,service_ends_at,created_at,updated_at)
+    VALUES (?, ?, ?, 0, ?, 0, 'reception', 'active', 1, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), queueId, id, id, end, end - 1000, end - 1000).run()
   for (const status of ['pending', 'sending', 'unknown', 'delivered'])
     await env.DB.prepare('INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind) VALUES (?,?,?,?,?,?)')
       .bind(crypto.randomUUID(), id, crypto.randomUUID(), status, end, 'approaching').run()
   await maintainServiceEntries(env, queueId, end)
   await maintainServiceEntries(env, queueId, end + 1)
-  expect(await env.DB.prepare('SELECT status,version FROM queue_entry WHERE id=?').bind(id).first()).toEqual({ status: 'cancelled', version: 1 })
-  expect((await env.DB.prepare('SELECT kind FROM queue_event WHERE entry_id=?').bind(id).all()).results).toEqual([{ kind: 'service_ended' }])
+  expect(await env.DB.prepare('SELECT status,manual_only,priority_rank,version FROM queue_entry WHERE id=?').bind(id).first()).toEqual({ status: 'waiting', manual_only: 1, priority_rank: null, version: 1 })
+  expect((await env.DB.prepare('SELECT kind FROM queue_event WHERE entry_id=?').bind(id).all()).results).toEqual([])
+  expect(await env.DB.prepare('SELECT state,reason,version FROM queue_automation_cycle WHERE queue_id=?').bind(queueId).first()).toEqual({ state: 'stopped', reason: 'service_ended', version: 2 })
   expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id IN (?,?) ORDER BY status').bind(called, completed).all()).results).toEqual([{ status: 'called' }, { status: 'completed' }])
   expect((await env.DB.prepare('SELECT status FROM notification_outbox WHERE entry_id=? ORDER BY status').bind(id).all()).results).toEqual([{ status: 'cancelled' }, { status: 'delivered' }, { status: 'sending' }, { status: 'unknown' }])
 })
@@ -63,7 +68,7 @@ it('initializes legacy waiting only according to current physical open/closed po
   expect(await env.DB.prepare('SELECT status,service_ends_at FROM queue_entry WHERE id=?').bind(id).first()).toEqual({ status: 'waiting', service_ends_at: close })
   const old = await ticket(queueId)
   await maintainServiceEntries(env, queueId, close)
-  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id IN (?,?)').bind(id, old).all()).results).toEqual([{ status: 'cancelled' }, { status: 'cancelled' }])
+  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id IN (?,?) ORDER BY id').bind(id, old).all()).results).toEqual(expect.arrayContaining([{ status: 'waiting', manual_only: 1 }, { status: 'waiting', manual_only: 1 }]))
   expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(called).first())?.status).toBe('called')
 })
 it('preserves bound snapshots across schedule edits, including continuous admission', async () => {
@@ -84,8 +89,9 @@ it('coordinator refresh repairs a missing service alarm and races cleanup withou
   expect(await runInDurableObject(stub, (_instance, state) => state.storage.getAlarm())).not.toBeNull()
   await env.DB.prepare('UPDATE queue_entry SET service_ends_at=? WHERE id=?').bind(Date.now() - 1, id).run()
   await Promise.all([runDurableObjectAlarm(stub), stub.refresh(queueId)])
-  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('cancelled')
-  expect((await env.DB.prepare("SELECT id FROM queue_event WHERE entry_id=? AND kind='service_ended'").bind(id).all()).results).toHaveLength(1)
+  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
+  expect((await env.DB.prepare('SELECT manual_only FROM queue_entry WHERE id=?').bind(id).first())?.manual_only).toBe(1)
+  expect((await env.DB.prepare("SELECT id FROM queue_event WHERE entry_id=? AND kind='service_ended'").bind(id).all()).results).toHaveLength(0)
 })
 it('admission metadata excludes overdue snapshots and closed unresolved legacy without writing', async () => {
   const { admissionState } = await import('../staff/availability')
@@ -95,7 +101,7 @@ it('admission metadata excludes overdue snapshots and closed unresolved legacy w
   expect((await admissionState(env, queueId, new Date(close)))?.waitingPeople).toBe(1)
   expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id IN (?,?)').bind(legacy, due).all()).results).toEqual([{ status: 'waiting' }, { status: 'waiting' }])
 })
-it('join replay reloads cancelled status and keeps identity while a new key creates a new turn', async () => {
+it('join replay reloads retained manual-only status and keeps identity while a new key creates a new turn', async () => {
   const { joinQueue } = await import('./entries')
   const queueId = await fixture({ ...config, twentyFourHours: true }), key = crypto.randomUUID()
   const input = { partySize: 1, locale: 'en' as const, whatsapp: { consent: false as const } }
@@ -103,10 +109,11 @@ it('join replay reloads cancelled status and keeps identity while a new key crea
   expect(first.status).toBe(201)
   await env.DB.prepare("UPDATE queue_entry SET service_window_id='old',service_ends_at=? WHERE queue_id=?").bind(Date.now() - 1, queueId).run()
   const replay = await joinQueue(env, queueId, key, input)
-  expect(replay.body).toMatchObject({ status: 'cancelled', recoveryToken: (first.body as { recoveryToken: string }).recoveryToken, customer: { cancellationReason: 'service_ended', actions: [] } })
+  expect(replay.body).toMatchObject({ status: 'waiting', position: 0, etaMinutes: 0, recoveryToken: (first.body as { recoveryToken: string }).recoveryToken, customer: { manualOnly: true, phase: 'waiting', actions: ['cancel'] } })
+  expect(replay.body).not.toHaveProperty('initialEtaMinutes')
   expect((await joinQueue(env, queueId, crypto.randomUUID(), input)).status).toBe(201)
 })
-it('initial join returns persisted cancellation when service closes during its insert', async () => {
+it('initial join returns persisted manual-only retention when service closes during its insert', async () => {
   const { joinQueue } = await import('./entries')
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date('2026-09-21T12:44:00Z'))
@@ -130,18 +137,19 @@ it('initial join returns persisted cancellation when service closes during its i
   })
   const first = await joinQueue({ ...env, DB }, queueId, key, input)
   expect(first.status).toBe(201)
-  const stored = await env.DB.prepare('SELECT id,code,status,version FROM queue_entry WHERE queue_id=?').bind(queueId).first<{ id: string; code: string; status: string; version: number }>()
-  expect(stored).toMatchObject({ status: 'cancelled', version: 1 })
-  expect(first.body).toMatchObject({ code: stored!.code, status: 'cancelled', customer: { phase: 'cancelled', version: 1, cancellationReason: 'service_ended', actions: [] } })
-  expect((await env.DB.prepare("SELECT id FROM queue_event WHERE entry_id=? AND kind='service_ended'").bind(stored!.id).all()).results).toHaveLength(1)
+  const stored = await env.DB.prepare('SELECT id,code,status,manual_only,version FROM queue_entry WHERE queue_id=?').bind(queueId).first<{ id: string; code: string; status: string; manual_only: number; version: number }>()
+  expect(stored).toMatchObject({ status: 'waiting', manual_only: 1, version: 1 })
+  expect(first.body).toMatchObject({ code: stored!.code, status: 'waiting', position: 0, customer: { manualOnly: true, phase: 'waiting', version: 1, actions: ['cancel'] } })
+  expect((await env.DB.prepare("SELECT id FROM queue_event WHERE entry_id=? AND kind='service_ended'").bind(stored!.id).all()).results).toHaveLength(0)
   const replay = await joinQueue(env, queueId, key, input)
-  expect(replay.body).toMatchObject({ code: stored!.code, status: 'cancelled', recoveryToken: (first.body as { recoveryToken: string }).recoveryToken })
+  expect(replay.body).toMatchObject({ code: stored!.code, status: 'waiting', customer: { manualOnly: true }, recoveryToken: (first.body as { recoveryToken: string }).recoveryToken })
 })
 it('coordinator scheduled sweep clears due turns without an open browser', async () => {
   const worker = (await import('../../index')).default
   const queueId = await fixture({ ...config, twentyFourHours: true }), id = await ticket(queueId, 'waiting', Date.now() - 1, 'snapshot')
   await worker.scheduled({} as ScheduledController, env)
-  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('cancelled')
+  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
+  expect((await env.DB.prepare('SELECT manual_only FROM queue_entry WHERE id=?').bind(id).first())?.manual_only).toBe(1)
 })
 it('does not cancel at cutoff or pause, and separates lunch from dinner', async () => {
   const queueId = await fixture({ ...config, schedules: [...config.schedules, { day: 1, from: '19:00', to: '22:00' }] })
@@ -156,7 +164,8 @@ it('does not cancel at cutoff or pause, and separates lunch from dinner', async 
   await maintainServiceEntries(env, queueId, cutoff)
   expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
   await maintainServiceEntries(env, queueId, Date.parse('2026-09-21T17:00:00Z'))
-  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('cancelled')
+  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
+  expect((await env.DB.prepare('SELECT manual_only FROM queue_entry WHERE id=?').bind(id).first())?.manual_only).toBe(1)
 })
 it('leaves invalid legacy configuration untouched and initializes continuous provenance', async () => {
   const queueId = await fixture({ ...config, twentyFourHours: true }), id = await ticket(queueId)
@@ -230,7 +239,7 @@ it('snapshots finite admission and preserves it after hours are edited', async (
   expect((await env.DB.prepare('SELECT status,service_ends_at FROM queue_entry WHERE queue_id=?').bind(queueId).first())).toEqual({ status: 'waiting', service_ends_at: Date.parse('2026-09-21T13:00:00Z') })
 })
 
-it('initializes grouped legacy tickets through consecutive full days and cancels only at their physical end', async () => {
+it('initializes grouped legacy tickets through consecutive full days and retains them only at their physical end', async () => {
   const { twentyFourHours: _always, schedules: _slots, ...common } = config
   const grouped: ServiceInput = { ...common, scheduleGroups: [{ days: [1,2,3], twentyFourHours: true, ranges: [] }] }
   const queueId = await fixture(grouped), id = await ticket(queueId)
@@ -240,7 +249,53 @@ it('initializes grouped legacy tickets through consecutive full days and cancels
   await maintainServiceEntries(env, queueId, Date.parse('2026-09-21T22:00:00Z'))
   expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('waiting')
   await maintainServiceEntries(env, queueId, end)
-  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(id).first())?.status).toBe('cancelled')
+  expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?').bind(id).first()).toEqual({ status: 'waiting', manual_only: 1 })
+})
+
+it('stops a cycle at service end even when no waiting entries remain', async () => {
+  const queueId = await fixture({ ...config, twentyFourHours: true })
+  const called = await ticket(queueId, 'called', Date.now() - 1, 'snapshot')
+  await env.DB.prepare(`INSERT INTO queue_automation_cycle(id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,state,version,service_ends_at,created_at,updated_at)
+    VALUES (?, ?, ?, 0, ?, 0, 'reception', 'active', 1, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), queueId, called, called, Date.now() - 1, Date.now() - 1000, Date.now() - 1000).run()
+  await maintainServiceEntries(env, queueId, Date.now())
+  expect(await env.DB.prepare('SELECT state,reason,version FROM queue_automation_cycle WHERE queue_id=?').bind(queueId).first()).toEqual({ state: 'stopped', reason: 'service_ended', version: 2 })
+  expect((await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?').bind(called).first())?.status).toBe('called')
+})
+
+it('permanently stops active cycles when the global kill flag is disabled', async () => {
+  const queueId = await fixture({ ...config, twentyFourHours: true, automaticAssignmentEnabled: true })
+  const called = await ticket(queueId, 'called', Date.now() + 60000, 'snapshot')
+  await env.DB.prepare(`INSERT INTO queue_automation_cycle(id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,state,version,service_ends_at,created_at,updated_at)
+    VALUES (?, ?, ?, 0, ?, 0, 'reception', 'active', 1, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), queueId, called, called, Date.now() + 60000, Date.now(), Date.now()).run()
+  await maintainServiceEntries({ ...env, QUEUE_AUTO_REPLACEMENT_ENABLED: 'false' }, queueId, Date.now())
+  expect(await env.DB.prepare('SELECT state,reason,version FROM queue_automation_cycle WHERE queue_id=?').bind(queueId).first()).toEqual({ state: 'stopped', reason: 'disabled', version: 2 })
+})
+
+it('records context_changed instead of disabled when an opted-in service catalogue becomes invalid', async () => {
+  const queueId = await fixture({ ...config, twentyFourHours: true, automaticAssignmentEnabled: true })
+  const called = await ticket(queueId, 'called', Date.now() + 60000, 'snapshot')
+  const invalid: ServiceInput = { ...config, type: 'restaurant', spaces: [], receptionServices: [], automaticAssignmentEnabled: true }
+  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify(invalid), queueId).run()
+  await env.DB.prepare(`INSERT INTO queue_automation_cycle(id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,state,version,service_ends_at,created_at,updated_at)
+    VALUES (?, ?, ?, 0, ?, 0, 'restaurant', 'active', 1, ?, ?, ?)`)
+    .bind(crypto.randomUUID(), queueId, called, called, Date.now() + 60000, Date.now(), Date.now()).run()
+  await maintainServiceEntries({ ...env, QUEUE_AUTO_REPLACEMENT_ENABLED: 'true' }, queueId, Date.now())
+  expect(await env.DB.prepare('SELECT state,reason,version FROM queue_automation_cycle WHERE queue_id=?').bind(queueId).first()).toEqual({ state: 'stopped', reason: 'context_changed', version: 2 })
+})
+
+it('excludes retained entries from operational projections and admission counts', async () => {
+  const { loadQueueState } = await import('./projection')
+  const { admissionState } = await import('../staff/availability')
+  const queueId = await fixture({ ...config, twentyFourHours: true })
+  const active = await ticket(queueId, 'waiting', Date.now() + 60000, 'active-window')
+  const retained = await ticket(queueId, 'waiting', Date.now() - 1, 'old-window')
+  await maintainServiceEntries(env, queueId)
+  const state = await loadQueueState(env, queueId, Date.now())
+  expect(state.parties.map((party) => party.id)).toEqual([active])
+  expect(await admissionState(env, queueId)).toMatchObject({ waitingTurns: 1, waitingPeople: 1 })
+  expect((await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?').bind(retained).first())?.status).toBe('waiting')
 })
 
 it('retains legacy restore policy for continuous full-week grouped calendars', async () => {

@@ -114,7 +114,7 @@ for (const configured of [false, true]) {
                 : { action, entryId: t.entry, version: 0 },
               now,
             ),
-          ).resolves.toEqual({ ok: true })
+          ).resolves.toMatchObject({ ok: true, outcome: { action, entry: { id: t.entry } } })
           kind = action === 'call' ? 'ready' : 'cancelled'
           status = action === 'call' ? 'called' : 'cancelled'
         } else if (action === 'expiry') {
@@ -141,8 +141,12 @@ for (const configured of [false, true]) {
             .bind('previous-service-window', now, t.entry)
             .run()
           await maintainServiceEntries(selected, t.queue, now)
-          kind = 'service_ended'
-          status = 'cancelled'
+          expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?')
+            .bind(t.entry).first()).toEqual({ status: 'waiting', manual_only: 1 })
+          expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM notification_outbox WHERE entry_id=? AND kind='service_ended'")
+            .bind(t.entry).first()).toEqual({ count: 0 })
+          expect(requests).toBe(0)
+          return
         }
         expect(
           (
@@ -235,7 +239,7 @@ it('keeps historical v1 joined and v2 ready rendering despite selecting v3 for l
 })
 
 it.each(['call', 'expiry', 'service-end'] as const)(
-  'preserves the existing revoked-consent intent gate for legacy %s',
+  'preserves consent gating for legacy %s intents',
   async (action) => {
     const t = await fixture(),
       now = Date.now()

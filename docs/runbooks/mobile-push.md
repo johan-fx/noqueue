@@ -18,7 +18,9 @@ histórico; sus referencias a APNs directo no describen la ruta activa actual.
 - `0030_mobile_push.sql` introdujo registro y outbox separados de WhatsApp.
   `0033_mobile_push_lifecycle.sql` sustituye su trigger por intents explícitos en
   la misma transacción del dominio/proyección. Incluye acercamiento, retrasos,
-  mejoras, llamadas, expiración, cancelación externa y cierre. Solo para instalación
+  mejoras, llamadas y cancelación externa. `service_ended` se conserva para leer
+  historial/outbox antiguos; el cierre físico actual retiene los turnos en espera
+  como `manual_only` y no genera un aviso de cierre. Solo para instalación
   con registro habilitado y gate ON. No crea contactos ni consentimientos WhatsApp.
 - API móvil, detrás de la misma identidad/CORS/cuotas del bloque1:
   - `GET /api/v1/mobile/push/registration`: disponibilidad por plataforma y estado,
@@ -687,6 +689,12 @@ pruebas físicas ya realizadas. Migración 0033 aplicada únicamente en bases
 efímeras de tests. Producción sigue apagada; no hay despliegue ni envío real
 como parte de esta implementación.
 
+Actualización funcional 22/10/2026: la finalización física de la ventana ahora
+retiene turnos en espera como `manual_only` sin cancelarlos ni emitir `service_ended`.
+El template y las filas históricas de outbox se conservan por compatibilidad. La
+matriz y ejecución de cierre de abajo describen la implementación y prueba física
+anteriores del 21/10; no son el comportamiento de aceptación actual.
+
 ### Matriz de equivalencia implementada
 
 | WhatsApp / situación | Push / interfaz | Evidencia automatizada |
@@ -701,7 +709,7 @@ como parte de esta implementación.
 | `cancelled_customer` | Solo pantalla, retirar pendientes | lifecycle: cancelación propia |
 | `cancelled_staff` | Cancelación atribuida al establecimiento | lifecycle: cancelación por comando staff |
 | `cancelled_unknown` | Texto neutral seguro | catálogo ES/EN; legacy conserva lector original |
-| `service_ended` | Cierre específico, sin segunda cancelación | lifecycle: mantenimiento de fin de servicio |
+| `service_ended` (histórico) | Solo compatibilidad/lectura de outbox previa; no se genera al cerrar físicamente | lifecycle: test histórico de mantenimiento de fin de servicio |
 | Pasar turno / editar | Resultado en app y nueva referencia `screen` | lifecycle: esperando/llamado, con/sin sucesor, repetición y edición |
 | Posposición staff | Sin evento push nuevo | `skip` actualmente rechazado como unsupported_action; estimación se prueba por cambios reales permitidos |
 | Llegada / atención completada | Solo pantalla; descartar llamada pendiente | lifecycle: complete sin push |
@@ -749,7 +757,7 @@ del escenario para respetar un presupuesto global de varias ejecuciones. Máximo
 | `yield` | approaching 2 + delayed 1 + called 2 |
 | `expiry` | called 1 + expired 1 |
 | `cancellation` | cancelled 1 |
-| `closure` | service_ended 1 |
+| `closure` (escenario histórico, no repetir para el flujo actual) | service_ended 1 |
 
 Comandos de referencia **para uso posterior autorizado**, desde raíz:
 
@@ -832,7 +840,9 @@ Evidencia privada ignorada por Git:
 apertura mediante tap real, resolución autenticada y estados de dominio).
 Los archivos de backup de APK/datos no deben publicarse.
 
-Resultados físicos registrados:
+Resultados físicos históricos registrados el 21/10, antes del cambio de retención
+manual-only. Se conservan como evidencia de lo que ocurrió entonces, no como
+expectativa de una nueva ejecución:
 
 - Normal: acercamiento y llamada `ready` recibidos/abiertos, llegada completada.
   Una primera ejecución quedó interrumpida por PIN: ambos avisos se observaron
@@ -870,8 +880,9 @@ rotación real de token y distribución remota no quedan acreditados por esta ac
 - Permisos Android12: interruptor real NoQueue ON→OFF, `areEnabled=false`, CTA
   «Activar» visible y abre ajustes reales; OFF→ON y registro habilitado otra vez
   antes de armar el escenario. No demuestra el diálogo runtime de Android13+.
-- Cierre: `service_ended` recibido/abierto a la hora real del servicio, pantalla
-  «El servicio ha finalizado», sin outbox `cancelled` duplicada.
+- Cierre (histórico): `service_ended` recibido/abierto a la hora real del servicio,
+  pantalla «El servicio ha finalizado», sin outbox `cancelled` duplicada. El flujo
+  actual retiene los turnos en espera y no envía este aviso.
 
 **Cierre de ejecución:**24 intentos reales en total, todos aceptados por FCM,
 por debajo del máximo27. Distribución por ejecución: normal interrumpido2,

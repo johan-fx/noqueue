@@ -82,7 +82,7 @@ export async function loadAdaptiveState(
   const legacyAnchor =
     transitioning && !state.episode_id && active && waiting > 0
       ? await env.DB.prepare(
-          `SELECT MIN(created_at) AS started_at FROM queue_entry WHERE queue_id=? AND status='waiting'`,
+          `SELECT MIN(created_at) AS started_at FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0`,
         )
           .bind(queueId)
           .first<{ started_at: number | null }>()

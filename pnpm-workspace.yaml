@@ -6,3 +6,9 @@ packages:
 catalog:
   typescript: ~6.0.2
   zod: 4.6.1
+
+onlyBuiltDependencies:
+  - esbuild
+  - msw
+  - sharp
+  - workerd

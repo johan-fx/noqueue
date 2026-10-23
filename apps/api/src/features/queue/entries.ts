@@ -51,13 +51,14 @@ interface StoredEntry {
   sequence: number
   request_hash: string
   status: string
+  manual_only: number
 }
 export async function readEntry(
   env: CloudflareBindings,
   token: string,
 ): Promise<Entry | null> {
   const entry = await env.DB.prepare(
-    'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE recovery_hash=?',
+    'SELECT id,code,queue_id,sequence,request_hash,status,manual_only FROM queue_entry WHERE recovery_hash=?',
   )
     .bind(await hash(token))
     .first<StoredEntry>()
@@ -75,7 +76,7 @@ export async function readEntrySnapshot(
   token: string,
 ): Promise<Entry | null> {
   const entry = await env.DB.prepare(
-    'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE recovery_hash=?',
+    'SELECT id,code,queue_id,sequence,request_hash,status,manual_only FROM queue_entry WHERE recovery_hash=?',
   )
     .bind(await hash(token))
     .first<StoredEntry>()
@@ -84,10 +85,13 @@ export async function readEntrySnapshot(
 
 async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   const row = await env.DB.prepare(
-    `SELECT (SELECT COUNT(*) FROM queue_entry WHERE queue_id=? AND status='waiting' AND sequence<=?) AS position,
+    `SELECT (SELECT COUNT(*) FROM queue_entry p WHERE p.queue_id=? AND p.status='waiting' AND p.manual_only=0 AND (
+      (p.priority_rank IS NOT NULL AND (e.priority_rank IS NULL OR p.priority_rank<e.priority_rank)) OR
+      (p.priority_rank IS e.priority_rank AND (p.sequence<e.sequence OR (p.sequence=e.sequence AND p.id<=e.id)))
+    )) AS position,
     e.progress_initial_eta_minutes, q.average_minutes, COALESCE(n.status,'disabled') AS notification FROM queue q JOIN queue_entry e ON e.id=? LEFT JOIN notification_outbox n ON n.id=(SELECT latest.id FROM notification_outbox latest WHERE latest.entry_id=? ORDER BY latest.rowid DESC LIMIT 1) WHERE q.id=?`,
   )
-    .bind(entry.queue_id, entry.sequence, entry.id, entry.id, entry.queue_id)
+    .bind(entry.queue_id, entry.id, entry.id, entry.queue_id)
     .first<{
       position: number
       progress_initial_eta_minutes: number | null
@@ -95,12 +99,13 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
       notification: string
     }>()
   if (!row) throw new Error('Entry queue missing')
-  const projection = await readProjection(env, entry.id, true)
+  const manualOnly = entry.status === 'waiting' && entry.manual_only === 1
+  const projection = manualOnly ? null : await readProjection(env, entry.id, true)
   const service = await publicService(env, entry.queue_id)
   let customer
   if (service) {
     const detail = await env.DB.prepare(
-      `SELECT e.display_name_cipher,e.party_size,e.preferred_space_id,e.locale,e.version,e.created_at,e.called_at,e.arrival_deadline_at,q.config,EXISTS(SELECT 1 FROM queue_event WHERE entry_id=e.id AND kind='service_ended') AS service_ended,(SELECT MAX(created_at) FROM queue_event WHERE entry_id=e.id AND kind='completed') AS arrived_at FROM queue_entry e JOIN queue q ON q.id=e.queue_id WHERE e.id=?`,
+      `SELECT e.display_name_cipher,e.party_size,e.preferred_space_id,e.locale,e.version,e.created_at,e.called_at,e.arrival_deadline_at,e.manual_only,q.config,EXISTS(SELECT 1 FROM queue_event WHERE entry_id=e.id AND kind='service_ended') AS service_ended,(SELECT MAX(created_at) FROM queue_event WHERE entry_id=e.id AND kind='completed') AS arrived_at FROM queue_entry e JOIN queue q ON q.id=e.queue_id WHERE e.id=?`,
     )
       .bind(entry.id)
       .first<{
@@ -112,18 +117,22 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         created_at: number
         called_at: number | null
         arrival_deadline_at: number | null
+        manual_only: number
         config: string
         arrived_at: number | null
         service_ended: number
       }>()
     if (detail) {
-      const phase = customerPhase(
-        entry.status,
-        projection?.position ?? row.position,
-        projection?.etaMinutes ?? 0,
-        projection?.estimateQuality,
-        JSON.parse(detail.config),
-      )
+      const retainedManualOnly = manualOnly || (entry.status === 'waiting' && detail.manual_only === 1)
+      const phase = retainedManualOnly
+        ? 'waiting'
+        : customerPhase(
+            entry.status,
+            projection?.position ?? row.position,
+            projection?.etaMinutes ?? 0,
+            projection?.estimateQuality,
+            JSON.parse(detail.config),
+          )
       customer = {
         service,
         displayName: detail.display_name_cipher
@@ -141,12 +150,14 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
         calledAt: detail.called_at,
         arrivalDeadlineAt: detail.arrival_deadline_at,
         arrivedAt: detail.arrived_at,
+        ...(retainedManualOnly ? { manualOnly: true } : {}),
         phase,
         ...(detail.service_ended
           ? { cancellationReason: 'service_ended' as const }
           : {}),
-        actions:
-          phase === 'waiting' || phase === 'approaching'
+        actions: retainedManualOnly
+          ? ['cancel']
+          : phase === 'waiting' || phase === 'approaching'
             ? service.type === 'restaurant'
               ? ['update', 'cancel', 'yield']
               : ['cancel', 'yield']
@@ -158,12 +169,16 @@ async function presentEntry(env: CloudflareBindings, entry: StoredEntry) {
   }
   return entrySchema.parse({
     customer,
-    initialEtaMinutes:
-      projection?.initialEtaMinutes ?? row.progress_initial_eta_minutes,
+    ...(!manualOnly
+      ? {
+          initialEtaMinutes:
+            projection?.initialEtaMinutes ?? row.progress_initial_eta_minutes,
+        }
+      : {}),
     code: entry.code,
-    position: entry.status === 'waiting' ? row.position : 0,
+    position: entry.status === 'waiting' && !manualOnly ? row.position : 0,
     etaMinutes: 0,
-    ...(entry.status === 'waiting'
+    ...(entry.status === 'waiting' && !manualOnly
       ? projection ?? { estimateQuality: 'unknown', predictedAt: null }
       : {}),
     status: entry.status,
@@ -285,7 +300,7 @@ export async function joinQueue(
     )}`,
   )
   const existing = await env.DB.prepare(
-    'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE queue_id=? AND idempotency_key=?',
+      'SELECT id,code,queue_id,sequence,request_hash,status,manual_only FROM queue_entry WHERE queue_id=? AND idempotency_key=?',
   )
     .bind(queueId, key)
     .first<StoredEntry>()
@@ -294,7 +309,7 @@ export async function joinQueue(
       return { status: 409, body: { error: 'idempotency_conflict' } }
     await recalculateQueue(env, queueId)
     const latest = await env.DB.prepare(
-      'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?',
+      'SELECT id,code,queue_id,sequence,request_hash,status,manual_only FROM queue_entry WHERE id=?',
     )
       .bind(existing.id)
       .first<StoredEntry>()
@@ -364,7 +379,7 @@ export async function joinQueue(
     if (uncertain)
       return { status: 409, body: { error: 'unknown_delivery_unresolved' } }
     const active = await env.DB.prepare(
-      "SELECT 1 FROM queue_entry_contact p JOIN queue_entry e ON e.id=p.entry_id WHERE e.queue_id=? AND e.status='waiting' LIMIT 1",
+      "SELECT 1 FROM queue_entry_contact p JOIN queue_entry e ON e.id=p.entry_id WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0 LIMIT 1",
     )
       .bind(queueId)
       .first()
@@ -377,8 +392,8 @@ export async function joinQueue(
   const queue = await env.DB.prepare(
     `SELECT q.capacity,q.open,q.average_minutes,q.config,v.timezone,v.organization_id,
     (SELECT status FROM tenant_account WHERE organization_id=v.organization_id) AS tenant_status,
-    (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND status='waiting') AS waiting_people,
-    (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND status='waiting') AS waiting,
+    (SELECT COALESCE(SUM(party_size),0) FROM queue_entry WHERE queue_id=q.id AND status='waiting' AND manual_only=0) AS waiting_people,
+    (SELECT COUNT(*) FROM queue_entry WHERE queue_id=q.id AND status='waiting' AND manual_only=0) AS waiting,
     (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=q.id) AS sequence
     FROM queue q JOIN venue v ON v.id=q.venue_id WHERE q.id=?`,
   )
@@ -692,7 +707,7 @@ export async function joinQueue(
   }
   // Recalculation may close this service after admission committed the ticket.
   const latest = await env.DB.prepare(
-    'SELECT id,code,queue_id,sequence,request_hash,status FROM queue_entry WHERE id=?',
+    'SELECT id,code,queue_id,sequence,request_hash,status,manual_only FROM queue_entry WHERE id=?',
   )
     .bind(id)
     .first<StoredEntry>()

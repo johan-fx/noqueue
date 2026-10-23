@@ -133,7 +133,7 @@ it('coalesces projection writes within 5 seconds but repairs missing projections
         .bind(waiting)
         .first()
     )?.status,
-  ).toBe('cancelled')
+  ).toBe('waiting')
 })
 it('skips truly empty and terminal-only cron queues but expires called entries even on inactive queues', async () => {
   const now = Date.now(),

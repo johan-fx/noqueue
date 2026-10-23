@@ -197,6 +197,7 @@ export const entrySchema = z.object({
       arrivalDeadlineAt: z.number().nullable(),
       arrivedAt: z.number().nullable(),
       cancellationReason: z.literal('service_ended').optional(),
+      manualOnly: z.boolean().optional(),
       phase: z.enum([
         'waiting',
         'approaching',

@@ -124,6 +124,33 @@ describe('adaptive cadence helpers', () => {
     expect(source).toEqual(snapshot)
   })
 
+  it('uses priority-first FIFO for adaptive position and serial ETA', () => {
+    const prioritized: Party[] = [
+      { id: 'fifo-oldest', sequence: 1, partySize: 2 },
+      { id: 'priority-later', sequence: 2, priorityRank: 2, partySize: 2 },
+      { id: 'priority-first', sequence: 3, priorityRank: 1, partySize: 2 },
+    ]
+    const projection = projectAdaptiveQueue(
+      prioritized,
+      [],
+      0,
+      config(),
+      20,
+      1,
+    )
+    expect(projection.map((row) => row.id)).toEqual([
+      'priority-first',
+      'priority-later',
+      'fifo-oldest',
+    ])
+    expect(projection.map((row) => row.position)).toEqual([1, 2, 3])
+    expect(projection.map((row) => row.predictedAt)).toEqual([
+      4 * 60_000,
+      8 * 60_000,
+      12 * 60_000,
+    ])
+  })
+
   it('does not let inventory quantity or historic occupancy change serial cadence', () => {
     const projection = projectAdaptiveQueue(
       [...parties, { id: 'p4', sequence: 4, partySize: 2 }],

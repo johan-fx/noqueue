@@ -1,7 +1,7 @@
 import { env } from 'cloudflare:workers'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { EntryCommand, ServiceInput } from '@noqueue/contracts/staff'
-import { runQueueCommand } from '../staff/commands'
+import { runQueueCommand, configureQueue } from '../staff/commands'
 import { serviceWindow } from '../staff/availability'
 import { expireArrivals, runCustomerCommand } from './customer'
 import { loadQueueState, recalculateQueue, maintainQueue } from './projection'
@@ -100,28 +100,6 @@ it('preserves mobile push when a customer yields to a replacement', async () => 
   expect(await f.policy(1)).toMatchObject({ eligible: 1 })
 })
 
-it('commits a manual replacement and mobile push together, rolls both back and deduplicates replay', async () => {
-  const f = await decisionFixture()
-  await attachMobileTurns(f.ids)
-  const d = (await readReplacementDecisions(mobileEnabled, f.queue, f.at(4)))[0]!
-  const candidate = d.candidates[0]!
-  const command = { action: 'resolve_replacement' as const, decisionId: d.id, decisionVersion: d.version,
-    entryId: candidate.id, version: candidate.version }
-  const key = crypto.randomUUID()
-  await env.DB.exec("CREATE TRIGGER fail_mobile_decision BEFORE UPDATE ON queue_replacement_decision WHEN NEW.status='assigned' BEGIN SELECT RAISE(ABORT,'test rollback'); END;")
-  try {
-    await expect(runQueueCommand(mobileEnabled, f.actor, f.queue, key, command, f.at(4))).rejects.toThrow()
-    expect(await mobileNotices(candidate.id)).toEqual([])
-    expect(await f.row(2)).toMatchObject({ status: 'waiting', call_cycle: 0 })
-  } finally {
-    await env.DB.exec('DROP TRIGGER fail_mobile_decision')
-  }
-  await runQueueCommand(mobileEnabled, f.actor, f.queue, key, command, f.at(4))
-  await runQueueCommand(mobileEnabled, f.actor, f.queue, key, command, f.at(4))
-  expect(await mobileNotices(candidate.id)).toMatchObject([{ kind: 'called', status: 'pending', call_cycle: 1 }])
-  expect(await mobileNotices(candidate.id)).toHaveLength(1)
-})
-
 async function fixture(type: ServiceInput['type'] = 'reception', count = 5) {
   const now = Date.now(),
     queue = crypto.randomUUID(),
@@ -129,6 +107,7 @@ async function fixture(type: ServiceInput['type'] = 'reception', count = 5) {
   const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
   const config: ServiceInput = {
     name: 'Replacement test',
+    automaticAssignmentEnabled: true,
     type,
     capacity: 99,
     averageMinutes: 4,
@@ -190,8 +169,8 @@ async function fixture(type: ServiceInput['type'] = 'reception', count = 5) {
     const id = crypto.randomUUID()
     ids.push(id)
     await env.DB.prepare(
-      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id)
-      VALUES (?,?,?,?,?,?,2,'es',?,?,'continuous')`,
+      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,service_window_id,reception_service)
+      VALUES (?,?,?,?,?,?,2,'es',?,?,'continuous','other')`,
     )
       .bind(id, queue, id, id, await hash(id), id, Date.now(), ids.length)
       .run()
@@ -344,6 +323,8 @@ it('selects equal-size restaurant parties, retaining the original capacity', asy
 it('does not infer restaurant capacity and stops if the confirmed catalogue context disappears', async () => {
   const f = await fixture('restaurant')
   await f.call(0, 0, { seating: undefined })
+  expect(await env.DB.prepare('SELECT state,reason FROM queue_automation_cycle WHERE queue_id=?').bind(f.queue).first()).toEqual({state:'stopped',reason:'missing_context'})
+  expect(await f.policy(0)).toMatchObject({eligible:0})
   await f.expire(3)
   expect(await f.policy(0)).toMatchObject({ result: 'missing_context' })
   expect(await f.row(1)).toMatchObject({ status: 'waiting' })
@@ -514,7 +495,7 @@ it('replays successful legacy commands before checking preconditions', async () 
 })
 
 it.each(['staff', 'customer'] as const)(
-  'does not replace an explicit %s cancellation',
+  'distinguishes explicit %s cancellation',
   async (who) => {
     const f = await fixture()
     await f.call(0)
@@ -536,8 +517,7 @@ it.each(['staff', 'customer'] as const)(
         { action: 'cancel', version: 1 },
         f.at(1),
       )
-    await f.expire(5)
-    expect(await f.row(1)).toMatchObject({ status: 'waiting' })
+    expect(await f.row(1)).toMatchObject({ status: who === 'staff' ? 'waiting' : 'called' })
     expect(await readCallReplacement(env, f.ids[0]!, 1)).toMatchObject({
       result: 'cancelled',
     })
@@ -653,7 +633,7 @@ it('expires before a late confirmation and never calls twice at the exact bounda
       },
       f.at(3),
     ),
-  ).rejects.toThrow('version_conflict')
+  ).rejects.toThrow('turn_automatically_processed')
   await f.expire(3)
   expect(await f.row(1)).toMatchObject({ status: 'called', version: 1 })
   expect(await f.row(2)).toMatchObject({ status: 'waiting' })
@@ -789,9 +769,9 @@ it('never arms a legacy call by yielding it after the switch is enabled', async 
     { action: 'yield', version: 1 },
     f.at(1),
   )
-  expect(await f.policy(1)).toMatchObject({ eligible: 0 })
+  expect(await f.policy(1)).toBeNull()
   await f.expire(4)
-  expect(await f.policy(1)).toMatchObject({ result: 'disabled' })
+  expect(await f.row(1)).toMatchObject({ status: 'waiting' })
   expect(await f.row(0)).toMatchObject({ status: 'waiting' })
 })
 
@@ -807,332 +787,49 @@ it('does not arm an already-present assignment', async () => {
   expect(await f.row(1)).toMatchObject({ status: 'waiting' })
 })
 
-async function decisionFixture() {
-  const f = await fixture('restaurant', 6)
-  await env.DB.batch([
-    env.DB.prepare('UPDATE queue_entry SET party_size=4 WHERE id=?').bind(
-      f.ids[0]!,
-    ),
-    env.DB.prepare(
-      'UPDATE queue_entry SET party_size=3 WHERE id IN (?,?)',
-    ).bind(f.ids[2]!, f.ids[3]!),
-    env.DB.prepare(
-      "UPDATE queue_entry SET preferred_space_id='outside' WHERE id=?",
-    ).bind(f.ids[4]!),
-  ])
-  await f.call(0)
-  await f.expire(3)
-  return f
-}
-it('persists one decision per cycle and proposes three before two, FIFO per size', async () => {
-  const f = await decisionFixture()
-  await f.expire(3)
-  const list = await readReplacementDecisions(enabled, f.queue, f.at(3))
-  expect(list).toHaveLength(1)
-  expect(list[0]).toMatchObject({
-    originalPartySize: 4,
-    version: 0,
-    seating: { spaceId: 'inside', seats: 4 },
-    unavailable: null,
-  })
-  expect(list[0]!.candidates.map((p) => p.id)).toEqual([
-    f.ids[2],
-    f.ids[3],
-    f.ids[1],
-    f.ids[5],
-  ])
-  expect(await f.row(1)).toMatchObject({ status: 'waiting' })
-  await f.add()
-  await f.expire(4)
-  expect(
-    (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!.id,
-  ).toBe(list[0]!.id)
-})
-it('resolves a decision atomically as handoff and switches the chain size without shrinking capacity', async () => {
-  const f = await decisionFixture()
-  const d = (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!
-  const anchor = await env.DB.prepare(
-    'SELECT last_assignment_at FROM queue_cadence_state WHERE queue_id=?',
-  )
-    .bind(f.queue)
-    .first()
-  const command = {
-    action: 'resolve_replacement' as const,
-    decisionId: d.id,
-    decisionVersion: d.version,
-    entryId: d.candidates[0]!.id,
-    version: d.candidates[0]!.version,
-  }
+
+it('retires decision commands but preserves successful idempotent replays and hides old decisions', async () => {
+  const f = await fixture('restaurant')
+  const command = { action: 'dismiss_replacement' as const, decisionId: crypto.randomUUID(), decisionVersion: 1 }
   const key = crypto.randomUUID()
-  await runQueueCommand(enabled, f.actor, f.queue, key, command, f.at(4))
-  await runQueueCommand(enabled, f.actor, f.queue, key, command, f.at(5))
-  expect(await f.row(2)).toMatchObject({
-    status: 'called',
-    call_cycle: 1,
-    arrival_deadline_at: f.now + 7 * minute,
-  })
-  expect(await readReplacementDecisions(enabled, f.queue, f.at(5))).toEqual([])
-  expect(
-    await env.DB.prepare(
-      'SELECT last_assignment_at FROM queue_cadence_state WHERE queue_id=?',
-    )
-      .bind(f.queue)
-      .first(),
-  ).toEqual(anchor)
-  expect(
-    await env.DB.prepare(
-      'SELECT source,interval_ms,ratio,seats FROM queue_assignment_observation WHERE entry_id=?',
-    )
-      .bind(f.ids[2]!)
-      .first(),
-  ).toMatchObject({
-    source: 'handoff',
-    interval_ms: null,
-    ratio: null,
-    seats: 4,
-  })
-  await f.expire(7)
-  expect(await f.row(3)).toMatchObject({
-    status: 'called',
-    arrival_deadline_at: f.now + 10 * minute,
-  })
-  expect(await f.row(1)).toMatchObject({ status: 'waiting' })
-  await expect(
-    runQueueCommand(
-      enabled,
-      f.actor,
-      f.queue,
-      crypto.randomUUID(),
-      command,
-      f.at(7),
-    ),
-  ).rejects.toMatchObject({ status: 409 })
-})
-it('rejects a consumed candidate, keeps the decision and does not silently choose another', async () => {
-  const f = await decisionFixture()
-  const d = (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!
-  await f.call(2, 4)
-  await expect(
-    runQueueCommand(
-      enabled,
-      f.actor,
-      f.queue,
-      crypto.randomUUID(),
-      {
-        action: 'resolve_replacement',
-        decisionId: d.id,
-        decisionVersion: d.version,
-        entryId: f.ids[2]!,
-        version: 0,
-      },
-      f.at(4),
-    ),
-  ).rejects.toMatchObject({ status: 409 })
-  expect(await f.row(3)).toMatchObject({ status: 'waiting' })
-  expect(
-    await readReplacementDecisions(enabled, f.queue, f.at(4)),
-  ).toHaveLength(1)
-})
-it('allows dismissing while disabled, with no call, and never recreates the decision', async () => {
-  const f = await decisionFixture()
-  const off = { ...enabled, QUEUE_AUTO_REPLACEMENT_ENABLED: 'false' }
-  const d = (await readReplacementDecisions(off, f.queue, f.at(4)))[0]!
-  expect(d).toMatchObject({ unavailable: 'disabled', candidates: [] })
-  await expect(
-    runQueueCommand(
-      off,
-      f.actor,
-      f.queue,
-      crypto.randomUUID(),
-      {
-        action: 'resolve_replacement',
-        decisionId: d.id,
-        decisionVersion: 0,
-        entryId: f.ids[2]!,
-        version: 0,
-      },
-      f.at(4),
-    ),
-  ).rejects.toMatchObject({ status: 409 })
-  await runQueueCommand(
-    off,
-    f.actor,
-    f.queue,
-    crypto.randomUUID(),
-    { action: 'dismiss_replacement', decisionId: d.id, decisionVersion: 0 },
-    f.at(4),
-  )
-  await f.expire(5)
-  expect(await readReplacementDecisions(enabled, f.queue, f.at(5))).toEqual([])
-  expect(await f.row(2)).toMatchObject({ status: 'waiting' })
-})
-it('blocks decisions with removed context and retires them at service end', async () => {
-  const f = await decisionFixture()
-  const d = (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!
-  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?')
-    .bind(JSON.stringify({ ...f.config, spaces: [] }), f.queue)
-    .run()
-  expect(
-    (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0],
-  ).toMatchObject({ unavailable: 'context', candidates: [] })
-  await expect(
-    runQueueCommand(
-      enabled,
-      f.actor,
-      f.queue,
-      crypto.randomUUID(),
-      {
-        action: 'resolve_replacement',
-        decisionId: d.id,
-        decisionVersion: 0,
-        entryId: f.ids[2]!,
-        version: 0,
-      },
-      f.at(4),
-    ),
-  ).rejects.toMatchObject({ status: 409 })
-  await env.DB.prepare(
-    'UPDATE queue_replacement_decision SET service_ends_at=? WHERE id=?',
-  )
-    .bind(f.now + 5 * minute, d.id)
-    .run()
-  await f.expire(5)
-  expect(await readReplacementDecisions(enabled, f.queue, f.at(5))).toEqual([])
-  expect(
-    await env.DB.prepare(
-      'SELECT status FROM queue_replacement_decision WHERE id=?',
-    )
-      .bind(d.id)
-      .first(),
-  ).toEqual({ status: 'ended' })
+  await expect(runQueueCommand(enabled, f.actor, f.queue, key, command, f.now)).rejects.toThrow('operation_retired')
+  await env.DB.prepare('INSERT INTO staff_command VALUES (?,?,?,?)').bind(f.actor,key,await hash(JSON.stringify({ queueId:f.queue,input:command })), '{"ok":true}').run()
+  expect(await runQueueCommand(enabled, f.actor, f.queue, key, command, f.now)).toEqual({ok:true})
+  expect(await readReplacementDecisions(enabled, f.queue, f.now)).toEqual([])
 })
 
-it('two decisions cannot consume the same candidate, even with different command keys', async () => {
-  const f = await fixture('restaurant', 5)
-  await env.DB.batch([
-    env.DB.prepare(
-      'UPDATE queue_entry SET party_size=4 WHERE id IN (?,?)',
-    ).bind(f.ids[0]!, f.ids[1]!),
-    env.DB.prepare(
-      'UPDATE queue_entry SET party_size=3 WHERE id IN (?,?)',
-    ).bind(f.ids[2]!, f.ids[3]!),
-  ])
+it('rolls back configuration disabling and cycle termination together on an audit failure', async () => {
+  const f = await fixture('restaurant', 2)
   await f.call(0)
-  await f.call(1)
-  await f.expire(3)
-  const ds = await readReplacementDecisions(enabled, f.queue, f.at(4))
-  expect(ds).toHaveLength(2)
-  const command = {
-    action: 'resolve_replacement' as const,
-    decisionId: ds[0]!.id,
-    decisionVersion: 0,
-    entryId: f.ids[2]!,
-    version: 0,
-  }
-  await runQueueCommand(
-    enabled,
-    f.actor,
-    f.queue,
-    crypto.randomUUID(),
-    command,
-    f.at(4),
-  )
-  await expect(
-    runQueueCommand(
-      enabled,
-      f.actor,
-      f.queue,
-      crypto.randomUUID(),
-      { ...command, decisionId: ds[1]!.id },
-      f.at(4),
-    ),
-  ).rejects.toMatchObject({ status: 409 })
-  expect(await f.row(2)).toMatchObject({ status: 'called', call_cycle: 1 })
-  expect(await f.row(3)).toMatchObject({ status: 'waiting' })
-  expect(
-    await readReplacementDecisions(enabled, f.queue, f.at(4)),
-  ).toHaveLength(1)
-})
-it('rolls back call, outbox, audit and decision on a failed resolution commit', async () => {
-  const f = await decisionFixture()
-  const d = (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!
-  await env.DB.exec(
-    "CREATE TRIGGER fail_decision BEFORE UPDATE ON queue_replacement_decision WHEN NEW.status='assigned' BEGIN SELECT RAISE(ABORT,'test rollback'); END;",
-  )
-  const key = crypto.randomUUID()
-  const command = {
-    action: 'resolve_replacement' as const,
-    decisionId: d.id,
-    decisionVersion: 0,
-    entryId: f.ids[2]!,
-    version: 0,
-  }
+  const original = await env.DB.prepare('SELECT * FROM queue_automation_cycle WHERE queue_id=?').bind(f.queue).first()
+  const queue = (await env.DB.prepare('SELECT version,open,config FROM queue WHERE id=?').bind(f.queue).first<{version:number;open:number;config:string}>())!
+  const update = { ...JSON.parse(queue.config), version:queue.version, open:!!queue.open, automaticAssignmentEnabled:false }
+  await env.DB.exec("CREATE TRIGGER fail_cycle_config BEFORE UPDATE OF config ON queue BEGIN SELECT RAISE(ABORT,'test config rollback'); END;")
   try {
-    await expect(
-      runQueueCommand(enabled, f.actor, f.queue, key, command, f.at(4)),
-    ).rejects.toThrow()
-    expect(await f.row(2)).toMatchObject({ status: 'waiting', call_cycle: 0 })
-    expect(
-      await env.DB.prepare(
-        "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='ready'",
-      )
-        .bind(f.ids[2]!)
-        .first(),
-    ).toBeNull()
-    expect(
-      await env.DB.prepare('SELECT * FROM staff_command WHERE request_key=?')
-        .bind(key)
-        .first(),
-    ).toBeNull()
-    expect(
-      (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!.version,
-    ).toBe(0)
-  } finally {
-    await env.DB.exec('DROP TRIGGER fail_decision;')
-  }
-  await runQueueCommand(enabled, f.actor, f.queue, key, command, f.at(4))
-  expect(await f.row(2)).toMatchObject({ status: 'called', call_cycle: 1 })
+    await expect(configureQueue(enabled,f.actor,f.queue,update)).rejects.toThrow()
+    expect(await env.DB.prepare('SELECT * FROM queue_automation_cycle WHERE queue_id=?').bind(f.queue).first()).toEqual(original)
+    expect(await f.row(0)).toMatchObject({status:'called',arrival_deadline_at:f.now+3*minute})
+  } finally { await env.DB.exec('DROP TRIGGER fail_cycle_config') }
+  await configureQueue(enabled,f.actor,f.queue,update)
+  expect(await env.DB.prepare('SELECT state,reason FROM queue_automation_cycle WHERE queue_id=?').bind(f.queue).first()).toEqual({state:'stopped',reason:'disabled'})
+  expect(await f.row(0)).toMatchObject({status:'called',arrival_deadline_at:f.now+3*minute})
 })
-it('does not train a shorter human interval after manually choosing an alternative', async () => {
-  const f = await decisionFixture()
-  const d = (await readReplacementDecisions(enabled, f.queue, f.at(4)))[0]!
-  await runQueueCommand(
-    enabled,
-    f.actor,
-    f.queue,
-    crypto.randomUUID(),
-    {
-      action: 'resolve_replacement',
-      decisionId: d.id,
-      decisionVersion: 0,
-      entryId: f.ids[2]!,
-      version: 0,
-    },
-    f.at(4),
-  )
-  await f.call(1, 10)
-  expect(
-    await env.DB.prepare(
-      'SELECT source,interval_ms FROM queue_assignment_observation WHERE entry_id=?',
-    )
-      .bind(f.ids[1]!)
-      .first(),
-  ).toMatchObject({ source: 'staff', interval_ms: 10 * minute })
-})
-it('an equal-size group joining later is offered manually without reactivating the chain', async () => {
-  const f = await fixture('restaurant', 1)
-  await env.DB.prepare('UPDATE queue_entry SET party_size=4 WHERE id=?')
-    .bind(f.ids[0]!)
-    .run()
+
+it('rolls back customer cancellation, successor, cycle and notices as one transition', async () => {
+  const f = await fixture('restaurant', 2)
   await f.call(0)
-  await f.expire(3)
-  const id = await f.add()
-  await env.DB.prepare('UPDATE queue_entry SET party_size=4 WHERE id=?')
-    .bind(id)
-    .run()
-  await f.expire(4)
-  expect(await f.row(1)).toMatchObject({ status: 'waiting' })
-  const ds = await readReplacementDecisions(enabled, f.queue, f.at(4))
-  expect(ds).toHaveLength(1)
-  expect(ds[0]!.candidates[0]!.id).toBe(id)
+  const original = await env.DB.prepare('SELECT * FROM queue_automation_cycle WHERE queue_id=?').bind(f.queue).first()
+  await env.DB.exec("CREATE TRIGGER fail_customer_successor BEFORE UPDATE OF status ON queue_entry WHEN NEW.status='called' BEGIN SELECT RAISE(ABORT,'test customer rollback'); END;")
+  const key = crypto.randomUUID()
+  try {
+    await expect(runCustomerCommand(enabled,f.queue,f.ids[0]!,key,{action:'cancel',version:1},f.at(1))).rejects.toThrow()
+    expect(await f.row(0)).toMatchObject({status:'called',call_cycle:1,version:1})
+    expect(await f.row(1)).toMatchObject({status:'waiting',call_cycle:0,version:0})
+    expect(await env.DB.prepare('SELECT * FROM queue_automation_cycle WHERE queue_id=?').bind(f.queue).first()).toEqual(original)
+    expect(await env.DB.prepare("SELECT id FROM notification_outbox WHERE entry_id=? AND kind='ready'").bind(f.ids[1]!).first()).toBeNull()
+  } finally { await env.DB.exec('DROP TRIGGER fail_customer_successor') }
+  await runCustomerCommand(enabled,f.queue,f.ids[0]!,key,{action:'cancel',version:1},f.at(1))
+  await runCustomerCommand(enabled,f.queue,f.ids[0]!,key,{action:'cancel',version:1},f.at(1))
+  expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM notification_outbox WHERE entry_id=? AND kind='ready'").bind(f.ids[1]!).first()).toEqual({n:1})
+  expect(await env.DB.prepare('SELECT cause FROM queue_call_replacement WHERE entry_id=?').bind(f.ids[1]!).first()).toEqual({cause:'customer_cancel'})
 })

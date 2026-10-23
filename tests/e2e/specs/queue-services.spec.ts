@@ -267,7 +267,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     .getByRole('button', { name: 'Cancelar turno', exact: true })
     .click()
   const cancel = page.getByRole('dialog', {
-    name: '¿Estás seguro de que quieres cancelar el turno?',
+    name: '¿Confirmas que quieres cancelar el turno?',
   })
   await expect(cancel).toHaveAttribute('data-side', 'bottom')
   await expect(cancel).toHaveCSS('opacity', '1')
@@ -276,13 +276,19 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     fullPage: false,
     animations: 'disabled',
   })
-  await cancel.getByRole('button', { name: 'No cancelar' }).click()
+  await cancel.getByRole('button', { name: '← Volver', exact: true }).click()
   await expect(
-    maria.getByRole('button', { name: /Acciones del turno/ }),
+    page.getByRole('dialog', { name: 'Gestionar turno', exact: true }),
+  ).toBeVisible()
+  await page
+    .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+    .getByRole('button', { name: 'Volver', exact: true })
+    .click()
+  await expect(
+    maria.getByRole('button', { name: /^Gestionar turno/ }),
   ).toBeFocused()
   // Calling uses the binding preferred space; confirmation is only available once called.
   await swipe(page, maria, 'right')
-  await maria.getByRole('button', { name: /Acciones del turno/ }).click()
   await maria
     .getByRole('button', { name: 'Asignar turno', exact: true })
     .click()
@@ -293,7 +299,6 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await expect(
     maria.getByText('Pendiente de llegada', { exact: true }),
   ).toBeVisible()
-  await maria.getByRole('button', { name: /Acciones del turno/ }).click()
   await swipe(page, maria, 'right')
   await expect(drawer).toBeVisible()
   await maria

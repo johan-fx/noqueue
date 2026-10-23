@@ -40,9 +40,15 @@ grace changes affect future assignments, not already-snapshotted deadlines.
 | `ready` | Actual call/assignment | Venue/service/code, actual allocated zone/resource when known, arrival deadline and recovery link; never the preferred zone as though it were assigned |
 | `expired` | The snapshotted arrival deadline expires | Rejoin instruction and recovery link |
 | `cancelled` | Customer or staff cancels | Copy distinguishes who cancelled; entry recovery link |
-| `service_ended` | Service closes with waiting entries | Service-ended copy and rejoin link |
+| `service_ended` | Legacy/historical only; not emitted for new physical service closures | Existing template and accepted outbox records remain readable; current closure retains waiting entries for manual handling and emits no service-ended notice |
 
-Yield remains an on-screen action after the server confirms the updated state.
+`service_ended` remains in the message catalog for compatibility with historical
+outbox records and old installations; it is not the current physical-close
+behavior. At service-window end, waiting entries are retained as `manual_only` for
+manual staff handling, without a cancellation or service-ended notice. This
+retention is independent of the automatic-assignment opt-in. Closing admissions
+or reaching the public cutoff is not physical service closure. Yield remains an
+on-screen action after the server confirms the updated state.
 Arrival, normal service completion and restaurant-table release do not create
 additional WhatsApp notices. `ready` represents the actual assignment/call
 notice; it is not sent merely because the customer is near the front.

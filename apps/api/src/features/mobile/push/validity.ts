@@ -10,7 +10,7 @@ export async function currentPushSnapshot(env: CloudflareBindings, row: Lifecycl
     : row.kind === 'improved' ? ['improved_wait_recommended', 'improved_wait_neutral']
     : row.kind === 'cancelled' ? ['cancelled_staff', 'cancelled_unknown'] : [row.kind]
   if (!expected.includes(s.copyVariant)) return null
-  const c = await env.DB.prepare(`SELECT e.status,e.call_cycle,e.arrival_deadline_at,e.queue_id,q.config,
+  const c = await env.DB.prepare(`SELECT e.status,e.call_cycle,e.arrival_deadline_at,e.manual_only,e.queue_id,q.config,
     p.revision,p.estimator_version,p.predicted_at,p.customer_operational_at,p.quality,p.position,p.updated_at,
     p.customer_minimum_at,p.operational_forecast_delta_ms,
     a.predicted_at AS adaptive_at,a.quality AS adaptive_quality,a.approach_episode,a.correction_reason,a.safety_revision,a.notice_baseline_at,
@@ -18,7 +18,7 @@ export async function currentPushSnapshot(env: CloudflareBindings, row: Lifecycl
     FROM queue_entry e JOIN queue q ON q.id=e.queue_id LEFT JOIN queue_projection p ON p.entry_id=e.id
     LEFT JOIN queue_adaptive_projection a ON a.entry_id=e.id LEFT JOIN mobile_push_state n ON n.entry_id=e.id WHERE e.id=?`)
     .bind(row.entry_id).first<{
-      status: string; call_cycle: number; arrival_deadline_at: number | null; queue_id: string; config: string;
+      status: string; call_cycle: number; arrival_deadline_at: number | null; manual_only: number; queue_id: string; config: string;
       revision: number | null; estimator_version: number | null; predicted_at: number | null; customer_operational_at: number | null;
       quality: 'estimated' | 'provisional' | 'unknown' | null; position: number | null; updated_at: number | null;
       customer_minimum_at: number | null; operational_forecast_delta_ms: number | null;
@@ -35,7 +35,7 @@ export async function currentPushSnapshot(env: CloudflareBindings, row: Lifecycl
     const ended = !!await env.DB.prepare("SELECT 1 FROM queue_event WHERE entry_id=? AND kind='service_ended' LIMIT 1").bind(row.entry_id).first()
     return (row.kind === 'service_ended') === ended ? s : null
   }
-  if (c.status !== 'waiting' || c.updated_at === null || c.updated_at < now - 120000 || c.updated_at > now) return null
+  if (c.status !== 'waiting' || c.manual_only === 1 || c.updated_at === null || c.updated_at < now - 120000 || c.updated_at > now) return null
   const adaptive = c.estimator_version === 2
   if (adaptive !== (s.estimatorVersion === 2)) return null
   let config: { approachMinutes?: number; etaChangeThresholdMinutes?: number; notificationCooldownMinutes?: number }

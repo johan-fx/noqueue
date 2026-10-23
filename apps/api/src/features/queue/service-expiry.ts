@@ -1,11 +1,6 @@
 import { loadQueueState, commitQueueTransition } from './projection'
 import { storedServiceSchema } from '@noqueue/contracts/staff'
 import { serviceDeadline, serviceWindow } from '../staff/availability'
-import {
-  lifecycleNoticeStatements,
-  publishNotice,
-  type QueueNoticeSnapshot,
-} from './notices'
 
 /** All callers hold the queue coordinator. No projections or recursive RPCs here. */
 export async function maintainServiceEntries(
@@ -14,7 +9,7 @@ export async function maintainServiceEntries(
   now = Date.now(),
 ) {
   const legacy = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_window_id IS NULL",
+    "SELECT COUNT(*) AS count FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_window_id IS NULL",
   )
     .bind(queueId)
     .first<{ count: number }>()
@@ -48,7 +43,7 @@ export async function maintainServiceEntries(
       }
       if (window && (snapshot || !window.serviceOpen)) {
         await env.DB.prepare(
-          "UPDATE queue_entry SET service_window_id=?,service_ends_at=? WHERE queue_id=? AND status='waiting' AND service_window_id IS NULL",
+          "UPDATE queue_entry SET service_window_id=?,service_ends_at=? WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_window_id IS NULL",
         )
           .bind(
             snapshot?.windowId ?? 'legacy:closed',
@@ -72,45 +67,54 @@ export async function maintainServiceEntries(
       })
   }
   const due = await env.DB.prepare(
-    "SELECT COUNT(*) AS count FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
+    "SELECT COUNT(*) AS count FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_ends_at<=?",
   )
     .bind(queueId, now)
     .first<{ count: number }>()
-  if (!due?.count) return
-  const dueEntries = await env.DB.prepare(
-    "SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
-  )
-    .bind(queueId, now)
-    .all<{ id: string }>()
   const configured = await env.DB.prepare('SELECT config FROM queue WHERE id=?')
     .bind(queueId)
     .first<{ config: string | null }>()
-  let serviceName = 'Service'
-  if (configured?.config) {
+  let serviceAssignmentEnabled = false
+  let cycleStopReason: 'disabled' | 'context_changed' = 'disabled'
+  if (configured?.config && env.QUEUE_AUTO_REPLACEMENT_ENABLED === 'true') {
     try {
-      const parsed = storedServiceSchema.safeParse(
-        JSON.parse(configured.config),
-      )
-      if (parsed.success) serviceName = parsed.data.name
+      const raw = JSON.parse(configured.config) as unknown
+      const rawEnabled =
+        typeof raw === 'object' && raw !== null &&
+        'automaticAssignmentEnabled' in raw &&
+        (raw as { automaticAssignmentEnabled?: unknown }).automaticAssignmentEnabled === true
+      const parsed = storedServiceSchema.safeParse(raw)
+      serviceAssignmentEnabled = parsed.success && rawEnabled
+      if (rawEnabled && !parsed.success) cycleStopReason = 'context_changed'
     } catch {
-      // A malformed legacy config is not authority to expose a partial payload.
+      // Invalid configuration fails closed for automatic cycles.
     }
   }
-  const snapshot: QueueNoticeSnapshot = {
-    schemaVersion: 2,
-    serviceName,
-    ahead: null,
-    etaMinutes: null,
-    predictedAt: null,
-    estimateQuality: 'unknown',
-    resourceName: null,
-    arrivalDeadlineAt: null,
-    reason: 'service_ended',
+  // A cycle is bounded by the physical service window, independently of whether
+  // any waiting entry remains to be retained at this sweep. A disabled global
+  // kill flag or per-service opt-in also stops the cycle permanently; turning
+  // either flag back on must not resurrect an old cycle.
+  const stopCycles = env.DB.prepare(
+    `UPDATE queue_automation_cycle SET state='stopped',
+       reason=CASE WHEN service_ends_at IS NOT NULL AND service_ends_at<=? THEN 'service_ended' ELSE ? END,
+       version=version+1,updated_at=?
+     WHERE queue_id=? AND state='active'
+       AND ((service_ends_at IS NOT NULL AND service_ends_at<=?) OR ?=0)`,
+  ).bind(now, cycleStopReason, now, queueId, now, Number(serviceAssignmentEnabled))
+  if (!due?.count) {
+    await stopCycles.run()
+    return
   }
+  const dueEntries = await env.DB.prepare(
+    "SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_ends_at<=?",
+  )
+    .bind(queueId, now)
+    .all<{ id: string }>()
   const before = await loadQueueState(env, queueId, now)
   const expired = new Set(dueEntries.results.map((entry) => entry.id))
-  // Four set-based statements keep the commit bounded even for a large queue.
-  // Deterministic internal event identities prevent duplicate closure evidence.
+  // Retain expired pending turns for staff operations only. Do not emit a
+  // cancellation event/notice: the turn is still waiting, but is no longer in
+  // the public/forecastable queue. Pending forecasts must not dispatch later.
   await commitQueueTransition(
     env,
     queueId,
@@ -127,31 +131,15 @@ export async function maintainServiceEntries(
     },
     [
       env.DB.prepare(
-        "INSERT OR IGNORE INTO queue_event(id,entry_id,kind,created_at) SELECT 'service-ended:'||id,id,'service_ended',? FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE status='pending' AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_ends_at<=?)",
       ).bind(now, queueId, now),
       env.DB.prepare(
-        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE status='pending' AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND service_ends_at<=?)",
-      ).bind(now, queueId, now),
-      ...dueEntries.results.flatMap(({ id }) =>
-        lifecycleNoticeStatements(
-          env,
-          id,
-          'service_ended',
-          now,
-          snapshot,
-          0,
-          0,
-          !!configured?.config,
-        ),
-      ),
-      env.DB.prepare(
-        "UPDATE queue_entry SET status='cancelled',version=version+1 WHERE queue_id=? AND status='waiting' AND service_ends_at<=?",
+        "UPDATE queue_entry SET manual_only=1,priority_rank=NULL,version=version+1 WHERE queue_id=? AND status='waiting' AND manual_only=0 AND service_ends_at<=?",
       ).bind(queueId, now),
+      stopCycles,
     ],
     now,
     'service.ended',
   )
-  for (const { id } of dueEntries.results)
-    await publishNotice(env, id, 'service_ended')
-  console.info({ event: 'service_expiry_cancelled', count: due.count })
+  console.info({ event: 'service_expiry_retained', count: due.count })
 }

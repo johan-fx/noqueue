@@ -705,9 +705,15 @@ test('owner can assign from the queue without releasing inventory and arrival fi
       queueDrawer.getByText('Cliente Staff E2E', { exact: true }),
     ).toBeVisible()
 
-    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-    await queueDrawer
-      .getByRole('button', { name: 'Asignar turno', exact: true })
+    const staffEntryRow = queueDrawer
+      .locator('li')
+      .filter({ hasText: 'Cliente Staff E2E' })
+    await staffEntryRow
+      .getByRole('button', { name: /^Gestionar turno/ })
+      .click()
+    await page
+      .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+      .getByRole('button', { name: 'Asignar próximo turno', exact: true })
       .click()
     const assignment = page.getByRole('dialog', {
       name: 'Asignar turno',
@@ -737,8 +743,11 @@ test('owner can assign from the queue without releasing inventory and arrival fi
     expect(reloadedSnapshot.customer?.arrivalDeadlineAt).toBe(
       originalArrivalDeadline,
     )
-    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-    await queueDrawer
+    await staffEntryRow
+      .getByRole('button', { name: /^Gestionar turno/ })
+      .click()
+    await page
+      .getByRole('dialog', { name: 'Gestionar turno', exact: true })
       .getByRole('button', { name: 'Confirmar llegada', exact: true })
       .click()
     await queueDrawer

@@ -1,5 +1,5 @@
 import type { ServiceInput } from '@noqueue/contracts/staff'
-import type { Party, Resource } from './engine'
+import { compareEffectiveQueueOrder, type Party, type Resource } from './engine'
 
 const MIN_CADENCE_MS = 15_000
 const MIN_SAFETY_MS = 1_000
@@ -287,7 +287,7 @@ export function projectAdaptiveQueue(
       : factor
   let cursor = now
   return [...parties]
-    .sort((a, b) => a.sequence - b.sequence)
+    .sort(compareEffectiveQueueOrder)
     .map((party, index) => {
       const interval = forecastInterval(party, config, baseline, factors)
       cursor += interval.cadenceMs

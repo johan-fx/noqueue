@@ -34,10 +34,10 @@ function literal(column) {
   const c = id(column)
   // quote(TEXT) truncates at embedded NUL; hex also avoids newlines/SQL injection.
   // Numeric values stay in SQLite, not JS Number (int64 precision).
-  // Three-argument iif emits the same SQLite bytecode as CASE, but avoids
-  // repeating its verbose syntax for every column in the single snapshot SQL.
-  // Keep both branches unchanged: text needs hex; numbers must stay in SQLite.
-  return `iif(typeof(${c})='text','CAST(X'''||hex(${c})||''' AS TEXT)',quote(${c}))`
+  // X'...'||'' evaluates to TEXT (including embedded NUL), avoiding the longer
+  // CAST(X'...' AS TEXT) form in every column of the bounded snapshot query.
+  // Keep the type branch: numbers/blobs must remain SQLite literals, not text.
+  return `iif(typeof(${c})='text','X'''||hex(${c})||'''||''''',quote(${c}))`
 }
 export function snapshotSQL(schema, columns) {
   const tables = baseTables(schema)

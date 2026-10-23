@@ -12,7 +12,17 @@ import { CustomerCommandError } from './customer-command-error'
 import { TurnView } from './TurnView'
 import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => entrySchema.parse(value)
-const acceptEstimate = (next: ReturnType<typeof parse>, previous: ReturnType<typeof parse> | null) => !(next.status === 'waiting' && next.estimateQuality === 'unknown' && previous?.status === 'waiting' && previous.estimateQuality !== 'unknown')
+const acceptEstimate = (
+  next: ReturnType<typeof parse>,
+  previous: ReturnType<typeof parse> | null,
+) =>
+  next.customer?.manualOnly === true ||
+  !(
+    next.status === 'waiting' &&
+    next.estimateQuality === 'unknown' &&
+    previous?.status === 'waiting' &&
+    previous.estimateQuality !== 'unknown'
+  )
 export function CustomerTurn() {
   const { recoveryToken } = useParams()
   return (

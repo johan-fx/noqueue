@@ -1,13 +1,12 @@
-import { ReplacementDecisions } from './ReplacementDecisions'
-import { AssignmentOptions } from './AssignmentOptions'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { ServiceCard } from './ServiceCard'
 import { VenueLocationEditor } from './VenueLocationEditor'
 import { VenueLogoEditor } from './VenueLogoEditor'
 import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
-import { entryActions, receptionLabels } from './queue-labels'
+import { entryActions } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { Toast } from '@base-ui/react/toast'
 import type {
   Capability,
   QueueSummary,
@@ -17,7 +16,10 @@ import type {
   QueueCommand,
   EntryCommand,
   ServiceInput,
+  QueueAutomation,
+  QueueAutomationEvent,
   AssignmentSeating,
+  QueueCommandResult,
   VenueLogoState,
 } from '@noqueue/contracts/staff'
 import {
@@ -41,14 +43,6 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
 import {
-  Sheet,
-  SheetContent,
-  SheetHeader,
-  SheetTitle,
-  SheetDescription,
-  SheetFooter,
-} from '@/components/ui/sheet'
-import {
   Drawer,
   DrawerContent,
   DrawerHeader,
@@ -57,12 +51,15 @@ import {
   DrawerFooter,
   DrawerClose,
 } from '@/components/ui/drawer'
-import { Plus, MoveRight, UsersIcon, ChevronLeft, Ellipsis } from 'lucide-react'
+import { Plus, UsersIcon, ChevronLeft, Ellipsis } from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, ApiError, errorMessage } from './api'
 import { MembersDrawer } from './MembersDrawer'
 import { QueueView } from './QueueView'
-import { queueActionLabels as actionLabels } from './queue-labels'
+import { QueueAutomationFooter } from './QueueAutomationFooter'
+import { QueueToastViewport } from './QueueToasts'
+import type { QueueToastData } from './QueueToasts'
+import { QueueTurnSheets } from './QueueTurnSheets'
 
 type DashboardVenue = Omit<VenueSummary, 'logo' | 'logoVersion' | 'canEditLogo'> &
   Partial<VenueLogoState>
@@ -95,7 +92,73 @@ function waitingCountsFor(
     }),
   ) as Record<string, number>
 }
-export function Dashboard(props: DashboardProps) {
+
+function olderCompatibleRestaurantEntries(
+  queue: QueueSummary,
+  rows: StaffEntry[],
+  selected: StaffEntry,
+  seating: AssignmentSeating | null,
+) {
+  const selectedSpaceId =
+    (seating?.mode === 'confirmed' ? seating.spaceId : null) ??
+    selected.assignedSeating?.spaceId ??
+    (selected.preferredSpaceId && selected.preferredSpaceId !== 'fastest'
+      ? selected.preferredSpaceId
+      : null) ??
+    selected.space?.id ??
+    null
+  const selectedSeats =
+    seating?.mode === 'confirmed'
+      ? seating.seats
+      : selected.assignedSeating?.seats ?? null
+  const availableSeats = selectedSpaceId
+    ? assignmentTableOptions(queue.config, selected.partySize)
+        .filter((option) => option.spaceId === selectedSpaceId)
+        .flatMap((option) => option.seats)
+    : []
+  return rows
+    .filter((candidate) => {
+      const predatesSelected =
+        candidate.waitingSince != null && selected.waitingSince != null
+          ? candidate.waitingSince < selected.waitingSince
+          : candidate.sequence < selected.sequence
+      if (
+        candidate.id === selected.id ||
+        candidate.status !== 'waiting' ||
+        candidate.manualOnly ||
+        candidate.callable === false ||
+        !predatesSelected ||
+        candidate.partySize > selected.partySize ||
+        candidate.assignment?.available === false
+      )
+        return false
+      const candidatePreference =
+        candidate.preferredSpaceId && candidate.preferredSpaceId !== 'fastest'
+          ? candidate.preferredSpaceId
+          : candidate.space?.source === 'preferred'
+            ? candidate.space.id
+            : null
+      if (selectedSpaceId && candidatePreference && candidatePreference !== selectedSpaceId)
+        return false
+      if (selectedSeats != null && candidate.partySize > selectedSeats)
+        return false
+      if (
+        availableSeats.length &&
+        !availableSeats.some((seats) => seats >= candidate.partySize)
+      )
+        return false
+      return true
+    })
+    .sort((a, b) => {
+      if (a.waitingSince != null && b.waitingSince != null)
+        return a.waitingSince - b.waitingSince || a.sequence - b.sequence
+      return a.sequence - b.sequence
+    })
+}
+
+function DashboardContent(props: DashboardProps) {
+  const { add: addToast, close: closeToasts } =
+    Toast.useToastManager<QueueToastData>()
   const { venue } = props
   const logoState: VenueLogoState = {
     logo: venue.logo ?? null,
@@ -106,6 +169,15 @@ export function Dashboard(props: DashboardProps) {
   const [drawer, setDrawer] = useState<
     'create' | 'edit' | 'members' | 'queue' | null
   >(null)
+  const [queueToastSessionId, setQueueToastSessionId] = useState<string | null>(
+    null,
+  )
+  const queueToastSession = useRef<{
+    queueId: string
+    id: string
+  } | null>(null)
+  const queueToastSessionSequence = useRef(0)
+  const queueDrawerVisible = useRef(false)
   const [drawerError, setDrawerError] = useState('')
   const [editBaseline, setEditBaseline] =
     useState<QueueConfigurationContext | null>(null)
@@ -136,7 +208,20 @@ export function Dashboard(props: DashboardProps) {
     drawerTrigger.current = trigger
     creationRequest.current = null
     setDrawerError('')
-    if (mode === 'queue') setTab('active')
+    if (mode === 'queue') {
+      const queueId = selectedRef.current
+      const sessionId = `${queueId}:${++queueToastSessionSequence.current}`
+      closeToasts()
+      automationCursor.current = null
+      seenAutomationEventIds.current.clear()
+      automationCursorGeneration.current++
+      queueToastSession.current = queueId ? { queueId, id: sessionId } : null
+      queueDrawerVisible.current = !!queueId
+      setQueueToastSessionId(queueId ? sessionId : null)
+      setTab('active')
+    } else {
+      endQueueToastSession()
+    }
     setDrawer(mode)
   }
   function closeDrawer() {
@@ -147,10 +232,29 @@ export function Dashboard(props: DashboardProps) {
       !pending &&
       !adding &&
       !advanced
-    )
+    ) {
+      endQueueToastSession()
       setDrawer(null)
+    }
   }
   const [waitingCounts, setWaitingCounts] = useState<Record<string, number>>({})
+  const [automationSnapshot, setAutomationSnapshot] = useState<
+    (QueueAutomation & { observedAt: number }) | null
+  >(null)
+  const [queueToastContainer, setQueueToastContainer] =
+    useState<HTMLDivElement | null>(null)
+  const automationCursor = useRef<{ queueId: string; cursor: number } | null>(null)
+  const seenAutomationEventIds = useRef(new Set<number>())
+  const automationCursorGeneration = useRef(0)
+  const endQueueToastSession = useCallback(() => {
+    queueDrawerVisible.current = false
+    queueToastSession.current = null
+    setQueueToastSessionId(null)
+    automationCursor.current = null
+    seenAutomationEventIds.current.clear()
+    automationCursorGeneration.current++
+    closeToasts()
+  }, [closeToasts])
   const [queues, setQueues] = useState<QueueSummary[]>([]),
     [selected, setSelected] = useState(''),
     [entries, setEntries] = useState<StaffEntry[]>([]),
@@ -199,6 +303,13 @@ export function Dashboard(props: DashboardProps) {
     props.onVenueLogoStateChange?.(next)
   }
   const [arrivalMode, setArrivalMode] = useState<'notify' | 'present'>('notify')
+  const [managedEntryId, setManagedEntryId] = useState<string | null>(null)
+  const [returnManageEntryId, setReturnManageEntryId] = useState<string | null>(null)
+  const [olderAssignmentWarning, setOlderAssignmentWarning] = useState(false)
+  const [automaticConflict, setAutomaticConflict] = useState<
+    'processed' | 'assigned' | null
+  >(null)
+  const announcedOperationIds = useRef(new Set<string>())
   const [pending, setPending] = useState<{
     queueId: string
     entryId: string
@@ -208,6 +319,9 @@ export function Dashboard(props: DashboardProps) {
   const queuesRef = useRef<QueueSummary[]>([])
   const entriesRef = useRef<StaffEntry[]>([])
   const selectedRef = useRef('')
+  // A stale catalogue must not immediately reselect a queue whose entries
+  // denied access. Retry on the next polling interval or explicit refresh.
+  const deniedSelections = useRef(new Set<string>())
   const permissions: readonly Capability[] =
     props.mode === 'commercial'
       ? ['queue.read', 'queue.configure', 'members.manage']
@@ -215,6 +329,7 @@ export function Dashboard(props: DashboardProps) {
   const queueLabel =
     props.mode === 'commercial' ? 'Ver lista' : 'Gestionar lista'
   const queue = queues.find((q) => q.id === selected)
+
   const pendingQueue = pending
     ? queues.find((item) => item.id === pending.queueId)
     : undefined
@@ -222,11 +337,30 @@ export function Dashboard(props: DashboardProps) {
     pending?.queueId === selected
       ? entries.find((entry) => entry.id === pending.entryId)
       : undefined
+  const managedEntry = managedEntryId
+    ? entries.find((entry) => entry.id === managedEntryId)
+    : undefined
+  const managedActions = managedEntry
+    ? managedEntry.allowedActions ?? entryActions(managedEntry.status, queue?.config.type)
+    : []
+  const managedIsNext =
+    !!managedEntry && automationSnapshot?.nextEntry?.id === managedEntry.id
   const restaurantAssignment =
     pending?.action === 'call' && pendingQueue?.config.type === 'restaurant'
   const seatingOptions =
     restaurantAssignment && pendingEntry && pendingQueue
       ? assignmentTableOptions(pendingQueue.config, pendingEntry.partySize)
+      : []
+  const olderCompatibleCandidates =
+    pending?.action === 'call' &&
+    pendingQueue?.config.type === 'restaurant' &&
+    pendingEntry
+      ? olderCompatibleRestaurantEntries(
+          pendingQueue,
+          entries,
+          pendingEntry,
+          seating,
+        )
       : []
   const validSeating =
     !restaurantAssignment ||
@@ -254,9 +388,11 @@ export function Dashboard(props: DashboardProps) {
       const changed = selectedRef.current !== queueId
       selectedRef.current = queueId
       if (changed) {
+        endQueueToastSession()
         refreshSequence.current++
         queueRefreshSequence.current++
         commitEntries([])
+        setAutomationSnapshot(null)
         setLastSync('')
       }
       setPending(null)
@@ -266,11 +402,54 @@ export function Dashboard(props: DashboardProps) {
       setSeating(null)
       setCommandError('')
       setCommandStale(false)
+      setAutomaticConflict(null)
+      setManagedEntryId(null)
+      setOlderAssignmentWarning(false)
       commandRequest.current = null
       setSelected(queueId)
     },
-    [commitEntries, setPending, setArrivalMode, setSeating],
+    [
+      commitEntries,
+      endQueueToastSession,
+      setPending,
+      setOverrideReason,
+      setArrivalMode,
+      setCommandUncertain,
+      setSeating,
+      setCommandError,
+      setCommandStale,
+      setAutomaticConflict,
+      setManagedEntryId,
+      setOlderAssignmentWarning,
+      setAutomationSnapshot,
+      setLastSync,
+      setSelected,
+    ],
   )
+  const announceAutomationEvent = useCallback((
+    event: QueueAutomationEvent,
+    queueId: string,
+    sessionId: string,
+  ) => {
+    const session = queueToastSession.current
+    if (
+      !session ||
+      !queueDrawerVisible.current ||
+      selectedRef.current !== queueId ||
+      session.queueId !== queueId ||
+      session.id !== sessionId
+    )
+      return
+    if (event.cause !== 'arrival_expiry') return
+    const title = `El turno de ${event.entry.displayName || event.entry.code} ha expirado. Se ha avisado a ${event.successor.displayName || event.successor.code}.`
+    addToast({
+      id: `queue-event:${event.id}`,
+      title,
+      type: 'expiry',
+      priority: 'low',
+      data: { queueSessionId: sessionId },
+    })
+  }, [addToast])
   const commitQueues = useCallback(
     (rows: QueueSummary[]) => {
       queuesRef.current = rows
@@ -295,7 +474,7 @@ export function Dashboard(props: DashboardProps) {
           setDrawer((current) =>
             current === 'queue' || current === 'edit' ? null : current,
           )
-        selectQueue(rows[0]?.id ?? '')
+        selectQueue(rows.find((row) => !deniedSelections.current.has(row.id))?.id ?? '')
       }
     },
     [selectQueue, setAdding],
@@ -315,7 +494,7 @@ export function Dashboard(props: DashboardProps) {
     let live = true
     let timer: ReturnType<typeof setTimeout> | undefined
     let controller: AbortController | undefined
-    async function poll(forced = false) {
+    async function poll(forced = false, rebaseline = false) {
       clearTimeout(timer)
       controller?.abort()
       const request = new AbortController()
@@ -323,6 +502,11 @@ export function Dashboard(props: DashboardProps) {
       const sequence = ++refreshSequence.current
       const catalogSequence = ++queueRefreshSequence.current
       const queueId = selectedRef.current
+      const sessionAtStart = queueToastSession.current
+      const automationSessionId =
+        queueDrawerVisible.current && sessionAtStart?.queueId === queueId
+          ? sessionAtStart.id
+          : null
       let deadline: ReturnType<typeof setTimeout> | undefined
       const timeout = new Promise<never>((_, reject) => {
         deadline = setTimeout(() => {
@@ -376,13 +560,133 @@ export function Dashboard(props: DashboardProps) {
           ),
           timeout,
         ])
+        // Cycle count is authoritative server state, distinct from the legacy
+        // runtime kill switch on the queue summary. Failure here must not hide
+        // an otherwise readable queue; fail closed for the footer instead.
+        let automation: QueueAutomation | null = null
+        const sessionIsVisible = () => {
+          const current = queueToastSession.current
+          return !!(
+            automationSessionId &&
+            queueDrawerVisible.current &&
+            current?.queueId === queueId &&
+            current.id === automationSessionId
+          )
+        }
+        const cursorState =
+          automationSessionId &&
+          !rebaseline &&
+          automationCursor.current?.queueId === queueId
+            ? automationCursor.current.cursor
+            : null
+        const cursorGenerationAtRead = automationCursorGeneration.current
+        let after = cursorState
+        let committedCursor = cursorState
+        const pendingSeenEventIds = new Set(
+          cursorState == null || automationCursor.current?.queueId !== queueId
+            ? []
+            : seenAutomationEventIds.current,
+        )
+        const automationEvents: QueueAutomationEvent[] = []
+        let automationFeedSucceeded = false
+        try {
+          // Cursor-less reads are baselines: keep cycle status current even while
+          // the drawer is closed, but never replay that history as a toast.
+          for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
+            const query = after == null ? '' : `?after=${after}`
+            const page = await api<QueueAutomation>(
+              `/queues/${queueId}/automation${query}`,
+              'GET',
+              undefined,
+              undefined,
+              request.signal,
+            )
+            automation = page
+            automationFeedSucceeded = true
+            if (cursorState == null) {
+              for (const event of page.events ?? [])
+                pendingSeenEventIds.add(event.id)
+              committedCursor = page.cursor ?? 0
+              break
+            }
+            const freshEvents = (page.events ?? []).filter((event) => {
+              if (pendingSeenEventIds.has(event.id)) return false
+              pendingSeenEventIds.add(event.id)
+              return true
+            })
+            automationEvents.push(...freshEvents)
+            const nextCursor = page.cursor ?? after
+            committedCursor = nextCursor
+            if (!page.hasMore || nextCursor === after) break
+            after = nextCursor
+          }
+        } catch {
+          automation = null
+          automationFeedSucceeded = false
+        }
         if (
           live &&
           sequence === refreshSequence.current &&
           selectedRef.current === queueId
         ) {
+          const validAutomation =
+            automation &&
+            typeof automation.configured === 'boolean' &&
+            typeof automation.effective === 'boolean' &&
+            Number.isFinite(automation.activeCycles) &&
+            Number.isFinite(automation.serverNow)
           setWaitingCounts(waitingCountsFor(summaries, queueId, rows))
           commitEntries(rows)
+          const currentSession = queueToastSession.current
+          const anotherVisibleSession =
+            queueDrawerVisible.current &&
+            currentSession?.queueId === queueId &&
+            currentSession.id !== automationSessionId
+          const canCommitAutomation =
+            !anotherVisibleSession &&
+            cursorGenerationAtRead === automationCursorGeneration.current
+          if (canCommitAutomation) {
+            const currentSessionVisible = sessionIsVisible()
+            setAutomationSnapshot(
+              validAutomation && automation
+                ? { ...automation, observedAt: Date.now() }
+                : null,
+            )
+            // Cursor and dedupe state are committed only with the matching live
+            // queue snapshot; stale/aborted requests must not consume events.
+            if (
+              automationFeedSucceeded &&
+              validAutomation &&
+              automation
+            ) {
+              automationCursor.current = {
+                queueId,
+                cursor: committedCursor ?? automation.cursor ?? 0,
+              }
+              seenAutomationEventIds.current = pendingSeenEventIds
+              automationCursorGeneration.current++
+            } else if (!currentSessionVisible) {
+              automationCursor.current = null
+              seenAutomationEventIds.current.clear()
+              automationCursorGeneration.current++
+            } else {
+              automationCursor.current = null
+              seenAutomationEventIds.current.clear()
+              automationCursorGeneration.current++
+            }
+          }
+          // Forced refreshes after a staff command still consume and announce
+          // automatic events from other cycles. Only a cursor-less baseline
+          // (initial open/reconnect/focus) suppresses historical feedback.
+          if (
+            sessionIsVisible() &&
+            cursorState != null &&
+            automationFeedSucceeded &&
+            automationSessionId
+          )
+            automationEvents.forEach((event) =>
+              announceAutomationEvent(event, queueId, automationSessionId),
+            )
           setLastSync(new Date().toLocaleTimeString())
           setError('')
         }
@@ -392,10 +696,14 @@ export function Dashboard(props: DashboardProps) {
           controller === request &&
           sequence === refreshSequence.current
         ) {
+          automationCursor.current = null
+          seenAutomationEventIds.current.clear()
+          if (selectedRef.current === queueId) setAutomationSnapshot(null)
           if (
             error instanceof ApiError &&
             [401, 403, 404].includes(error.status)
           ) {
+            if (readingEntries && queueId) deniedSelections.current.add(queueId)
             commitQueues(
               error.status === 401 || !readingEntries
                 ? []
@@ -410,16 +718,28 @@ export function Dashboard(props: DashboardProps) {
         clearTimeout(deadline)
         if (live && controller === request) {
           setLoading(false)
-          timer = setTimeout(() => void poll().catch(() => undefined), 5000)
+          timer = setTimeout(() => {
+            deniedSelections.current.clear()
+            void poll().catch(() => undefined)
+          }, 5000)
         }
       }
     }
-    immediateRefresh.current = () => poll(true)
+    immediateRefresh.current = () => {
+      deniedSelections.current.clear()
+      return poll(true)
+    }
     const onFocus = () => {
+      deniedSelections.current.clear()
       if (document.visibilityState !== 'hidden')
-        void poll(true).catch(() => undefined)
+        void poll(true, true).catch(() => undefined)
+    }
+    const onOnline = () => {
+      deniedSelections.current.clear()
+      void poll(true, true).catch(() => undefined)
     }
     window.addEventListener('focus', onFocus)
+    window.addEventListener('online', onOnline)
     document.addEventListener('visibilitychange', onFocus)
     void poll().catch(() => undefined)
     return () => {
@@ -427,10 +747,17 @@ export function Dashboard(props: DashboardProps) {
       controller?.abort()
       clearTimeout(timer)
       window.removeEventListener('focus', onFocus)
+      window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onFocus)
       immediateRefresh.current = null
     }
-  }, [selected, venue.id, commitQueues, commitEntries])
+  }, [
+    selected,
+    venue.id,
+    commitQueues,
+    commitEntries,
+    announceAutomationEvent,
+  ])
   async function refresh() {
     await immediateRefresh.current?.()
   }
@@ -506,6 +833,7 @@ export function Dashboard(props: DashboardProps) {
       setDrawer(null)
       creationRequest.current = null
       await refreshQueues()
+      await refresh().catch(() => undefined)
     } catch (e) {
       setDrawerError(
         e instanceof ApiError && e.code === 'version_conflict'
@@ -548,15 +876,21 @@ export function Dashboard(props: DashboardProps) {
     if (!queue || commandLock.current || selectedRef.current !== queue.id)
       return
     const trigger = document.activeElement as HTMLElement
-    // Entry actions collapse their tray before opening confirmation. Return to
-    // the persistent disclosure, not an inert or unmounted action button.
-    commandTrigger.current =
-      trigger
-        .closest('li[data-entry-code]')
-        ?.querySelector<HTMLElement>('[aria-controls^="actions-"]') ?? trigger
+    // Commands launched from the management sheet should return to the card
+    // button that opened it, not to a sheet button that is about to unmount.
+    // Swipe/reveal actions use the same persistent card trigger.
+    const launchedFromManagedSheet = managedEntryId === entry.id
+    if (!launchedFromManagedSheet) {
+      const card = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-entry-id]'),
+      ).find((row) => row.dataset.entryId === entry.id)
+      commandTrigger.current =
+        card?.querySelector<HTMLElement>('[data-manage-entry]') ?? trigger
+    }
     if (action !== 'complete') commandRequest.current = null
     setCommandError('')
     setCommandStale(false)
+    setAutomaticConflict(null)
     setOverrideReason('')
     setArrivalMode('notify')
     setCommandUncertain(false)
@@ -565,14 +899,22 @@ export function Dashboard(props: DashboardProps) {
         ? defaultAssignmentSeating(queue.config, entry)
         : null,
     )
-    if (action === 'complete') {
-      void directCommand({
-        action,
-        entryId: entry.id,
-        version: entry.version,
-      })
-      return
-    }
+    const selectedSeating: AssignmentSeating | null =
+      action === 'call' && queue.config.type === 'restaurant'
+        ? defaultAssignmentSeating(queue.config, entry)
+        : null
+    const olderCompatible =
+      action === 'call' && queue.config.type === 'restaurant'
+        ? olderCompatibleRestaurantEntries(
+            queue,
+            entries,
+            entry,
+            selectedSeating,
+          )
+        : []
+    setOlderAssignmentWarning(olderCompatible.length > 0)
+    setReturnManageEntryId(entry.id)
+    setManagedEntryId(null)
     setPending({
       queueId: queue.id,
       entryId: entry.id,
@@ -580,34 +922,151 @@ export function Dashboard(props: DashboardProps) {
       key: crypto.randomUUID(),
     })
   }
+  function handleEntryAction(entry: StaffEntry, action: EntryCommand['action']) {
+    if (action !== 'complete') {
+      selectCommand(entry, action)
+      return
+    }
+    if (!queue || commandLock.current || selectedRef.current !== queue.id) return
+    const currentEntry = entriesRef.current.find((row) => row.id === entry.id)
+    if (
+      !currentEntry ||
+      !allowsEntryAction(currentEntry, queue.id, 'complete')
+    ) {
+      setError('El turno ya no permite esta acción. Actualiza la lista.')
+      return
+    }
+    if (managedEntryId !== entry.id) {
+      const card = Array.from(
+        document.querySelectorAll<HTMLElement>('[data-entry-id]'),
+      ).find((row) => row.dataset.entryId === entry.id)
+      commandTrigger.current =
+        card?.querySelector<HTMLElement>('[data-manage-entry]') ??
+        (document.activeElement as HTMLElement)
+    }
+    setManagedEntryId(null)
+    void directCommand({
+      action: 'complete',
+      entryId: currentEntry.id,
+      version: currentEntry.version,
+    })
+  }
+  function restoreCommandFocus() {
+    const target = commandTrigger.current
+    // The queue drawer is a still-open parent dialog. Let the child sheet
+    // finish restoring its focus first, then put focus back on the originating
+    // card rather than the parent's close button.
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        if (target?.isConnected) target.focus()
+      }),
+    )
+  }
+  function announceCommandResult(result: QueueCommandResult) {
+    const session = queueToastSession.current
+    if (
+      !session ||
+      !queueDrawerVisible.current ||
+      selectedRef.current !== session.queueId
+    )
+      return
+    const outcome = result.outcome
+    // Replayed operations retain their operationId; keep feedback idempotent.
+    if (!outcome) return
+    const customer = outcome.entry.displayName || outcome.entry.code
+    const successor = outcome.successor?.displayName || outcome.successor?.code
+    let title: string | null = null
+    if (outcome.action === 'call')
+      title =
+        outcome.mode === 'called' && outcome.automatic && arrivalMode === 'notify'
+          ? 'Turno asignado. Seguimiento automático activo.'
+          : 'Turno asignado.'
+    else if (outcome.action === 'pass')
+      title = outcome.mode === 'called_handoff' && successor
+        ? `Turno pasado. Hemos avisado a ${successor}.`
+        : 'Turno pasado. La lista se ha actualizado.'
+    else if (outcome.action === 'prioritize')
+      title = `${customer} tendrá prioridad en la siguiente asignación disponible.`
+    else if (outcome.action === 'cancel')
+      title = outcome.cycleEnded
+        ? 'Turno cancelado. El ciclo ha finalizado.'
+        : 'Turno cancelado.'
+    else if (outcome.action === 'complete')
+      title = outcome.cycleEnded
+        ? 'Llegada confirmada. El ciclo ha finalizado.'
+        : 'Llegada confirmada.'
+    if (title && !announcedOperationIds.current.has(outcome.operationId)) {
+      announcedOperationIds.current.add(outcome.operationId)
+      addToast({
+        id: `queue-command:${outcome.operationId}`,
+        title,
+        type:
+          outcome.action === 'call'
+            ? 'call'
+            : outcome.action === 'pass'
+            ? 'pass'
+            : outcome.action === 'prioritize'
+            ? 'priority'
+            : outcome.action === 'cancel'
+            ? 'cancel'
+            : 'arrived',
+        priority: 'low',
+        data: { queueSessionId: session.id },
+      })
+    }
+  }
+  function backToManagedEntry() {
+    setPending(null)
+    setOlderAssignmentWarning(false)
+    setAutomaticConflict(null)
+    setCommandError('')
+    setManagedEntryId(returnManageEntryId)
+  }
   async function directCommand(input: QueueCommand) {
     if (!queue || commandLock.current) return
+    const queueId = queue.id
     commandLock.current = true
     setBusy(true)
     setError('')
+    let showingAutomaticConflict = false
     const body = JSON.stringify({ queueId: queue.id, input })
     if (commandRequest.current?.body !== body)
       commandRequest.current = { body, key: crypto.randomUUID() }
     try {
-      await api(
+      const result = await api<QueueCommandResult>(
         `/queues/${queue.id}/commands`,
         'POST',
         input,
         commandRequest.current.key,
       )
+      if (selectedRef.current === queueId) announceCommandResult(result)
       commandRequest.current = null
       await refresh()
     } catch (e) {
       if (e instanceof ApiError && e.status === 409)
         commandRequest.current = null
       await refresh().catch(() => undefined)
-      // refresh clears read errors. Keep the command conflict visible after the
-      // new head is rendered, rather than briefly flashing it before refresh.
-      setError(errorMessage(e))
+      // Direct arrival actions (including swipe) use the same authoritative
+      // automatic-conflict sheet as confirmed commands, never undo a successor.
+      if (
+        selectedRef.current === queueId &&
+        e instanceof ApiError && e.status === 409 &&
+        (e.code === 'turn_automatically_processed' || e.code === 'turn_automatically_assigned') &&
+        input.action === 'complete'
+      ) {
+        showingAutomaticConflict = true
+        setPending({ queueId, entryId: input.entryId, action: input.action, key: crypto.randomUUID() })
+        setAutomaticConflict(e.code === 'turn_automatically_processed' ? 'processed' : 'assigned')
+        setCommandError('')
+        setCommandStale(true)
+      } else {
+        // refresh clears read errors: retain other command failures afterwards.
+        setError(errorMessage(e))
+      }
     } finally {
       commandLock.current = false
       setBusy(false)
-      requestAnimationFrame(() =>
+      if (!showingAutomaticConflict) requestAnimationFrame(() =>
         (commandTrigger.current?.isConnected
           ? commandTrigger.current
           : menuTrigger.current
@@ -717,19 +1176,24 @@ export function Dashboard(props: DashboardProps) {
     const request = commandRequest.current!
     const requestInput = JSON.parse(request.body) as typeof input
     try {
-      await api(
+      const result = await api<QueueCommandResult>(
         `/queues/${snapshot.queueId}/commands`,
         'POST',
         requestInput,
         request.key,
       )
+      if (selectedRef.current === snapshot.queueId)
+        announceCommandResult(result)
       setPending(null)
       setCommandUncertain(false)
+      setOlderAssignmentWarning(false)
+      setAutomaticConflict(null)
       commandRequest.current = null
       setOverrideReason('')
       await refresh().catch((error) =>
         setError(`Acción guardada. ${errorMessage(error)}`),
       )
+      restoreCommandFocus()
     } catch (e) {
       const uncertain = !(e instanceof ApiError) || e.status >= 500
       setCommandUncertain(uncertain)
@@ -745,13 +1209,23 @@ export function Dashboard(props: DashboardProps) {
       if (e instanceof ApiError && e.status === 409) {
         setCommandStale(true)
         commandRequest.current = null
+        const automaticResult =
+          e.code === 'turn_automatically_processed' ||
+          e.code === 'turn_automatically_assigned'
+        if (e.code === 'turn_automatically_processed') {
+          setAutomaticConflict('processed')
+          setCommandError('')
+        } else if (e.code === 'turn_automatically_assigned') {
+          setAutomaticConflict('assigned')
+          setCommandError('')
+        }
         try {
           await refresh()
           if (selectedRef.current !== snapshot.queueId) return
           const entry = entriesRef.current.find(
             (row) => row.id === snapshot.entryId,
           )
-          if (
+          if (!automaticResult &&
             entry &&
             allowsEntryAction(entry, snapshot.queueId, snapshot.action)
           ) {
@@ -761,12 +1235,12 @@ export function Dashboard(props: DashboardProps) {
                 e,
               )} Datos actualizados; revisa el turno y confirma de nuevo.`,
             )
-          } else
+          } else if (!automaticResult)
             setCommandError(
               'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.',
             )
         } catch {
-          if (selectedRef.current === snapshot.queueId)
+          if (selectedRef.current === snapshot.queueId && !automaticResult)
             setCommandError(
               'No se pudo actualizar el turno. Cierra esta ventana y actualiza la lista antes de continuar.',
             )
@@ -777,7 +1251,11 @@ export function Dashboard(props: DashboardProps) {
       setBusy(false)
     }
   }
-  const nextEntry = entries.find((entry) => entry.status === 'waiting')
+  // The quick-assignment command intentionally excludes retained manual-only
+  // entries; those can still be called explicitly from their customer card.
+  // The endpoint resolves this across the complete queue, not just the loaded
+  // staff page. Do not re-derive it from filtered/paginated entries.
+  const nextEntry = automationSnapshot?.nextEntry ?? null
   const lifecycleQueue = queues.find((item) => item.id === lifecycle?.queueId)
   const lifecycleSheet =
     lifecycle && lifecycleQueue ? (
@@ -1037,11 +1515,6 @@ export function Dashboard(props: DashboardProps) {
                 {drawerError}
               </p>
             )}
-            {drawer === 'queue' && queue?.config.type === 'restaurant' && permissions.includes('queue.operate') && (
-              <ReplacementDecisions key={`replacement-${queue.id}`} queueId={queue.id}
-                blocked={busy || saving || !!pending || !!adding || !!advanced || !!lifecycle}
-                onBusy={setBusy} onResolved={refresh} returnFocus={() => menuTrigger.current} />
-            )}
             {drawer === 'queue' && queue && (
               <QueueView
                 key={queue.id}
@@ -1052,41 +1525,78 @@ export function Dashboard(props: DashboardProps) {
                 canOperate={permissions.includes('queue.operate')}
                 busy={busy}
                 lastSync={lastSync}
+                clockOffsetMs={
+                  automationSnapshot
+                    ? automationSnapshot.serverNow - automationSnapshot.observedAt
+                    : 0
+                }
+                nextEntryId={
+                  automationSnapshot
+                    ? automationSnapshot.nextEntry?.id ?? null
+                    : null
+                }
                 error={error}
                 onRefresh={() =>
                   void refresh().catch((e) => setError(errorMessage(e)))
                 }
                 onAdd={(trigger) => setAdding({ queue, trigger })}
-                onAction={selectCommand}
+                onAction={handleEntryAction}
+                onManage={(entry) => {
+                  if (busy || commandLock.current) return
+                  const card = Array.from(
+                    document.querySelectorAll<HTMLElement>('[data-entry-id]'),
+                  ).find((row) => row.dataset.entryId === entry.id)
+                  commandTrigger.current =
+                    card?.querySelector<HTMLElement>('[data-manage-entry]') ??
+                    (document.activeElement as HTMLElement)
+                  setManagedEntryId(entry.id)
+                  setCommandError('')
+                  setCommandStale(false)
+                  setAutomaticConflict(null)
+                }}
               />
             )}
           </div>
+          {drawer === 'queue' && (
+            <div
+              ref={setQueueToastContainer}
+              data-queue-toast-anchor=""
+              className="pointer-events-none w-full shrink-0"
+            />
+          )}
+          {drawer === 'queue' && (
+            <QueueToastViewport
+              container={queueToastContainer}
+              sessionId={queueToastSessionId}
+            />
+          )}
           {drawer === 'queue' &&
-            queue?.config.type !== 'restaurant' &&
             tab === 'active' &&
-            permissions.includes('queue.operate') && (
-              <DrawerFooter className="border-t bg-background p-6">
-                {queue?.autoReplacementEnabled && (
-                  <p className="text-sm text-muted-foreground">
-                    Si no llega, llamaremos al siguiente. Confirma su llegada.
-                  </p>
-                )}
-                {drawer === 'queue' &&
-                  tab === 'active' &&
-                  permissions.includes('queue.operate') && (
-                    <Button
-                      className="h-12 w-full sm:order-last sm:w-auto sm:flex-1"
-                      disabled={busy || !nextEntry}
-                      onClick={() => {
-                        commandTrigger.current =
-                          document.activeElement as HTMLElement
-                        if (nextEntry)
-                          void directCommand({ action: 'assign_next', expectedEntryId: nextEntry.id, expectedVersion: nextEntry.version })
-                      }}
-                    >
-                      Asignar próximo turno <MoveRight aria-hidden="true" />
-                    </Button>
-                  )}
+            queue &&
+            (permissions.includes('queue.operate') ||
+              automationSnapshot?.configured ||
+              queue.config.automaticAssignmentEnabled) && (
+              <DrawerFooter className="border-t bg-background p-4">
+                <QueueAutomationFooter
+                  type={queue.config.type}
+                  configured={
+                    automationSnapshot?.configured ??
+                    queue.config.automaticAssignmentEnabled === true
+                  }
+                  automation={automationSnapshot}
+                  canOperate={permissions.includes('queue.operate')}
+                  busy={busy}
+                  canAssignNext={!!nextEntry}
+                  onAssignNext={() => {
+                    commandTrigger.current = document.activeElement as HTMLElement
+                    if (nextEntry)
+                      void directCommand({
+                        action: 'assign_next',
+                        expectedEntryId: nextEntry.id,
+                        expectedVersion: nextEntry.version,
+                      })
+                  }}
+                />
               </DrawerFooter>
             )}
           {lifecycle?.insideDrawer && lifecycleSheet}
@@ -1098,162 +1608,105 @@ export function Dashboard(props: DashboardProps) {
               onSaved={refresh}
             />
           )}
-          <Sheet
-            open={!!pending}
-            onOpenChange={(open) => {
-              if (!open && !busy) setPending(null)
-            }}
-          >
-            <SheetContent
-              side="bottom"
-              finalFocus={() =>
-                commandTrigger.current?.isConnected
-                  ? commandTrigger.current
-                  : menuTrigger.current
+          <QueueTurnSheets
+            queue={queue}
+            automationSnapshot={automationSnapshot}
+            managedOpen={!!managedEntry}
+            managedEntry={managedEntry}
+            managedActions={managedActions}
+            managedIsNext={managedIsNext}
+            pending={pending}
+            pendingQueue={pendingQueue}
+            pendingEntry={pendingEntry}
+            busy={busy}
+            commandUncertain={commandUncertain}
+            commandStale={commandStale}
+            pendingActionUnavailable={pendingActionUnavailable}
+            validSeating={validSeating}
+            olderAssignmentWarning={olderAssignmentWarning}
+            olderCompatibleCandidates={olderCompatibleCandidates}
+            automaticConflict={automaticConflict}
+            commandError={commandError}
+            restaurantAssignment={!!restaurantAssignment}
+            seatingOptions={seatingOptions}
+            seating={seating}
+            arrivalMode={arrivalMode}
+            returnFocus={() =>
+              commandTrigger.current?.isConnected
+                ? commandTrigger.current
+                : menuTrigger.current
+            }
+            onManagedOpenChange={(open) => {
+              if (!open && !busy) {
+                setManagedEntryId(null)
+                restoreCommandFocus()
               }
-              showCloseButton={!busy}
-              className="mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
-            >
-              <SheetHeader className="px-0 pr-8">
-                <SheetTitle className="text-2xl">
-                  {pending?.action === 'cancel'
-                    ? '¿Estás seguro de que quieres cancelar el turno?'
-                    : pending
-                    ? actionLabels[pending.action]
-                    : ''}
-                </SheetTitle>
-                <SheetDescription>
-                  Se registrará esta acción con tu identidad.{' '}
-                  {pending?.action === 'skip'
-                    ? 'El turno se moverá al final de la lista.'
-                    : ''}
-                </SheetDescription>
-              </SheetHeader>
-              <div className="space-y-2 pb-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-xl">
-                    {pendingEntry?.displayName ||
-                      (pendingEntry ? `Turno ${pendingEntry.code}` : 'Turno')}
-                  </p>
-                  <p className="text-sm">
-                    <span className="text-muted-foreground">Turno: </span>
-                    {pendingEntry?.code}
-                  </p>
-                </div>
-                {pendingQueue?.config.type === 'restaurant' && pendingEntry && (
-                  <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <UsersIcon className="size-4" aria-hidden="true" />
-                    Grupo de {pendingEntry.partySize}{' '}
-                    {pendingEntry.partySize === 1 ? 'persona' : 'personas'}
-                    {pendingEntry.space ? ` · ${pendingEntry.space.name}` : ''}
-                  </p>
-                )}
-                {pendingQueue?.config.type === 'reception' &&
-                  pendingEntry?.receptionService && (
-                    <p className="text-xs text-muted-foreground">
-                      {receptionLabels[pendingEntry.receptionService]}
-                    </p>
-                  )}
-              </div>
-              {(commandError || pendingActionUnavailable) && (
-                <p role="alert" className="text-destructive">
-                  {commandError ||
-                    'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.'}
-                </p>
-              )}
-              {pending?.action === 'call' && (
-                <div className="space-y-4">
-                  {pendingQueue?.autoReplacementEnabled && arrivalMode === 'notify' ? (
-                    <p className="text-sm text-muted-foreground">
-                      {restaurantAssignment
-                        ? seating?.mode === 'confirmed'
-                          ? 'Si no llega, llamaremos a otro grupo del mismo tamaño compatible con esta mesa. Si no hay, te avisaremos aquí para que elijas. Confirma su llegada.'
-                          : 'Sin espacio y capacidad confirmados, tendrás que asignar el siguiente turno manualmente.'
-                        : 'Si no llega, llamaremos al siguiente. Confirma su llegada.'}
-                    </p>
-                  ) : (
-                    <p>Al asignar confirmas que puedes atender este turno.{arrivalMode === 'notify' && ' El cliente tendrá el plazo configurado para presentarse.'}</p>
-                  )}
-                  {restaurantAssignment && pendingQueue && pendingEntry && (
-                    <AssignmentOptions
-                      config={pendingQueue.config}
-                      party={pendingEntry}
-                      seating={seating}
-                      onChange={setSeating}
-                      disabled={busy || commandUncertain}
-                    />
-                  )}
-                  <div role="group" aria-label="Cliente" className="space-y-1">
-                    <p className="text-sm font-medium">Cliente</p>
-                    <div className="flex flex-wrap gap-1">
-                      {(['notify', 'present'] as const).map((mode) => (
-                        <Button
-                          key={mode}
-                          type="button"
-                          className="min-h-11 min-w-11 rounded-full"
-                          variant={arrivalMode === mode ? 'default' : 'ghost'}
-                          aria-pressed={arrivalMode === mode}
-                          disabled={busy || commandUncertain}
-                          onClick={() => setArrivalMode(mode)}
-                        >
-                          {mode === 'notify'
-                            ? 'Avisar al cliente'
-                            : 'Ya está presente'}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-              <SheetFooter className="gap-3 px-0">
-                <Button
-                  className={`h-12 w-full ${
-                    pending?.action === 'cancel'
-                      ? 'border-destructive text-destructive hover:text-destructive'
-                      : ''
-                  }`}
-                  variant={pending?.action === 'cancel' ? 'outline' : 'default'}
-                  disabled={
-                    busy ||
-                    (!commandUncertain &&
-                      (commandStale ||
-                        pendingActionUnavailable ||
-                        !validSeating ||
-                        (pending?.action === 'call' &&
-                          pendingEntry?.assignment?.available === false)))
-                  }
-                  onClick={() => void command()}
-                >
-                  {busy
-                    ? 'Guardando…'
-                    : pending?.action === 'cancel'
-                    ? 'Cancelar turno'
-                    : pending?.action === 'call'
-                    ? restaurantAssignment &&
-                      !seatingOptions.length &&
-                      !commandUncertain
-                      ? 'Asignar sin especificar mesa'
-                      : 'Asignar turno'
-                    : 'Confirmar'}
-                </Button>
-                <Button
-                  className="h-12 w-full"
-                  variant="outline"
-                  disabled={busy}
-                  onClick={() => setPending(null)}
-                >
-                  {pending?.action === 'cancel'
-                    ? 'No cancelar'
-                    : pending?.action === 'complete'
-                    ? 'No confirmar'
-                    : 'Volver'}
-                </Button>
-              </SheetFooter>
-            </SheetContent>
-          </Sheet>
+            }}
+            onPendingOpenChange={(open) => {
+              if (!open && !busy) {
+                setPending(null)
+                setOlderAssignmentWarning(false)
+                setAutomaticConflict(null)
+                restoreCommandFocus()
+              }
+            }}
+            onAction={handleEntryAction}
+            onConfirm={() => void command()}
+            onBack={backToManagedEntry}
+            onDismissAutomaticConflict={() => {
+              setPending(null)
+              setAutomaticConflict(null)
+              setOlderAssignmentWarning(false)
+            }}
+            onSelectCandidate={(candidate) => {
+              if (!pending || !pendingQueue) return
+              commandRequest.current = null
+              const candidateCard = Array.from(
+                document.querySelectorAll<HTMLElement>('[data-entry-id]'),
+              ).find((row) => row.dataset.entryId === candidate.id)
+              const candidateTrigger = candidateCard?.querySelector<HTMLElement>(
+                '[data-manage-entry]',
+              )
+              if (candidateTrigger) commandTrigger.current = candidateTrigger
+              setReturnManageEntryId(candidate.id)
+              const candidateSeating = defaultAssignmentSeating(
+                pendingQueue.config,
+                candidate,
+              )
+              setOlderAssignmentWarning(
+                pendingQueue.config.type === 'restaurant' &&
+                  olderCompatibleRestaurantEntries(
+                    pendingQueue,
+                    entries,
+                    candidate,
+                    candidateSeating,
+                  ).length > 0,
+              )
+              setPending({
+                ...pending,
+                entryId: candidate.id,
+                key: crypto.randomUUID(),
+              })
+              setSeating(candidateSeating)
+              setCommandError('')
+              setCommandStale(false)
+              setCommandUncertain(false)
+              setArrivalMode('notify')
+            }}
+            onSeatingChange={setSeating}
+            onArrivalModeChange={setArrivalMode}
+          />
         </DrawerContent>
       </Drawer>
       {!lifecycle?.insideDrawer && lifecycleSheet}
     </div>
+  )
+}
+
+export function Dashboard(props: DashboardProps) {
+  return (
+    <Toast.Provider timeout={5000} limit={3}>
+      <DashboardContent {...props} />
+    </Toast.Provider>
   )
 }

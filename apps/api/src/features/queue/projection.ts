@@ -20,7 +20,7 @@ import {
   pruneScheduleReminders,
   type ServiceInput,
 } from '@noqueue/contracts/staff'
-import { type Party, type Projection } from './engine'
+import { compareEffectiveQueueOrder, type Party, type Projection } from './engine'
 
 export function normalizeConfig(
   config: ServiceInput,
@@ -61,6 +61,10 @@ export function normalizeConfig(
   return pruneScheduleReminders({
     ...config,
     estimatorVersion: 2, // old configurations cannot re-enable the inventory model
+    automaticAssignmentEnabled:
+      config.automaticAssignmentEnabled ??
+      previous?.automaticAssignmentEnabled ??
+      false,
     spaces,
     assignmentPreference:
       spaces.find((s) => s.name === config.assignmentPreference)?.id ??
@@ -116,20 +120,16 @@ export async function loadQueueState(
   const allocations: Allocation[] = []
   const holds: Array<{ resource_id: string; space_id: string; seats: number }> =
     []
-  const parties =
+  const parties = [...(
     model.parties ??
     (
       await env.DB.prepare(
-        "SELECT id,sequence,version,party_size AS partySize,preferred_space_id AS preferredSpaceId FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence",
+        "SELECT id,sequence,version,priority_rank AS priorityRank,party_size AS partySize,preferred_space_id AS preferredSpaceId,reception_service AS receptionService FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0",
       )
         .bind(queueId)
-        .all<{
-          id: string
-          sequence: number
-          partySize: number
-          preferredSpaceId: string | null
-        }>()
+        .all<Party>()
     ).results
+  )].sort(compareEffectiveQueueOrder)
   const resources: AdaptiveResource[] = []
   const calls = model.calls ?? []
   const adaptive = config
@@ -179,7 +179,7 @@ export async function expireAdjustments(
 ) {
   const checkpoint = await env.DB.prepare(
     `SELECT q.config,MIN(p.updated_at) AS updated_at FROM queue q
-     JOIN queue_entry e ON e.queue_id=q.id AND e.status='waiting'
+     JOIN queue_entry e ON e.queue_id=q.id AND e.status='waiting' AND e.manual_only=0
      JOIN queue_projection p ON p.entry_id=e.id WHERE q.id=?`,
   )
     .bind(queueId)
@@ -217,7 +217,7 @@ export async function refreshQueue(
     `SELECT COUNT(*) AS waiting,COUNT(p.entry_id) AS projected,MIN(p.updated_at) AS oldest,SUM(CASE WHEN p.estimator_version=2 OR p.customer_minimum_at IS NOT NULL THEN 1 ELSE 0 END) AS initialized,
      MIN(a.safety_review_at) AS safety_due,
      MAX(p.updated_at) AS newest FROM queue_entry e LEFT JOIN queue_projection p ON p.entry_id=e.id LEFT JOIN queue_adaptive_projection a ON a.entry_id=e.id AND p.estimator_version=2
-     WHERE e.queue_id=? AND e.status='waiting'`,
+     WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0`,
   )
     .bind(queueId)
     .first<{
@@ -279,7 +279,7 @@ export async function commitQueueTransition(
     env.DB.prepare(`UPDATE mobile_push_outbox SET status='discarded',last_error='transition_obsolete'
       WHERE status IN ('pending','sending') AND payload_version=2 AND entry_id IN (SELECT id FROM queue_entry WHERE queue_id=?)
       AND NOT EXISTS(SELECT 1 FROM queue_entry e WHERE e.id=entry_id AND e.call_cycle=mobile_push_outbox.call_cycle AND (
-        (kind IN ('approaching','delayed','improved') AND e.status='waiting') OR
+        (kind IN ('approaching','delayed','improved') AND e.status='waiting' AND e.manual_only=0) OR
         (kind='called' AND e.status='called') OR (kind='expired' AND e.status='expired') OR
         (kind IN ('cancelled','service_ended') AND e.status='cancelled')))` ).bind(queueId),
   )

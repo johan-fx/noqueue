@@ -240,6 +240,8 @@ const serviceBaseSchema = z.object({
     })
     .optional(),
   spaces: z.array(spaceSchema).max(30),
+  // Optional on the wire so older update clients preserve the stored setting.
+  automaticAssignmentEnabled: z.boolean().optional(),
   intelligencePolicy: z.enum(['automatic', 'disabled']).optional(),
   estimationMode: z.enum(['shadow', 'active']).optional(),
   resourceStateKnown: z.boolean().optional(),
@@ -578,6 +580,8 @@ export const entryCommandSchema = z
       'cancel',
       'no_show',
       'skip',
+      'pass',
+      'prioritize',
       'restore',
     ]),
     overrideReason: z.string().trim().min(3).max(300).optional(),
@@ -629,14 +633,14 @@ export function defaultGraceMinutes(type: ServiceInput['type']) {
   return type === 'restaurant' ? 5 : 2
 }
 export function allowedEntryActions(
-  type: ServiceInput['type'],
+  _type: ServiceInput['type'],
   status: string,
   canOperate = true,
 ): EntryCommand['action'][] {
   if (!canOperate) return []
   if (status === 'waiting')
-    return type === 'restaurant' ? ['call', 'cancel'] : ['cancel']
-  if (status === 'called') return ['complete', 'cancel']
+    return ['call', 'pass', 'prioritize', 'cancel']
+  if (status === 'called') return ['complete', 'pass', 'cancel']
   return []
 }
 export const queueSettingsSchema = z.intersection(
@@ -705,9 +709,46 @@ export type QueueSummary = Partial<AdmissionStatus> & {
   outsideSchedule?: boolean
   readiness?: QueueReadiness
 }
+export type QueueFeedbackEntry = { id: string; code: string; displayName: string | null }
+export type QueueAutomationEvent = {
+  id: number
+  cause: 'arrival_expiry' | 'customer_cancel' | 'customer_yield' | 'staff_pass'
+  entry: QueueFeedbackEntry
+  successor: QueueFeedbackEntry
+  cycleId: string
+  createdAt: number
+}
+export type QueueCommandResult = {
+  ok: true
+  /** Absent only on legacy results. New replays retain the same outcome/operationId. */
+  outcome?: {
+    operationId: string
+    action: EntryCommand['action']
+    entry: QueueFeedbackEntry
+    successor?: QueueFeedbackEntry | null
+    automatic: boolean
+    cycleEnded: boolean
+    mode: 'called' | 'present' | 'waiting_swap' | 'called_handoff' | 'returned_to_waiting' | 'prioritized' | 'already_prioritized' | 'cancelled' | 'completed'
+  }
+}
+export type QueueAutomation = {
+  configured: boolean
+  effective: boolean
+  activeCycles: number
+  serverNow: number
+  cursor?: number
+  events?: QueueAutomationEvent[]
+  hasMore?: boolean
+  nextEntry?: { id: string; version: number } | null
+}
 export type StaffEntry = {
+  manualOnly?: boolean
+  priorityRank?: number | null
+  /** Original queue admission timestamp; not a forecast. */
+  waitingSince?: number
+  automationCycle?: { id: string; capacity: number | null; receptionService: string | null; state: 'active' | 'stopped'; reason: string | null; attempt?: number } | null
   automaticReplacement?: {
-    origin: 'staff' | 'yield' | 'arrival_expiry' | 'legacy'
+    origin: 'staff' | 'yield' | 'arrival_expiry' | 'customer_cancel' | 'staff_pass' | 'legacy'
     eligible: boolean
     result: CallReplacementResult
     successor: { id: string; code: string } | null

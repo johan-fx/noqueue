@@ -52,7 +52,7 @@ const entries: StaffEntry[] = [
   calledAt: status === 'called' ? Date.now() - 120000 : null,
   arrivalDeadlineAt: status === 'called' ? Date.now() + 120000 : null,
 }))
-function Harness({ canOperate = true, action = vi.fn() }) {
+function Harness({ canOperate = true, action = vi.fn(), manage = vi.fn() }) {
   const [tab, setTab] = useState('active')
   return (
     <QueueView
@@ -66,6 +66,7 @@ function Harness({ canOperate = true, action = vi.fn() }) {
       error=""
       onRefresh={() => {}}
       onAction={action}
+      onManage={manage}
     />
   )
 }
@@ -157,18 +158,18 @@ it('separates active, completed and cancelled histories using accessible tabs', 
   expect(screen.getByText('No presentado')).toBeVisible()
   expect(screen.getByText('Caducado')).toBeVisible()
 })
-it('expands permitted turn actions without making historical cards actionable', () => {
-  const action = vi.fn()
-  render(<Harness action={action} />)
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
-  fireEvent.click(screen.getByRole('button', { name: 'Cancelar turno' }))
-  expect(action).toHaveBeenCalledWith(entries[0], 'cancel')
+it('opens turn management from the active card rather than exposing inline actions', () => {
+  const manage = vi.fn()
+  render(<Harness manage={manage} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Gestionar turno T0' }))
+  expect(manage).toHaveBeenCalledWith(entries[0])
+  expect(screen.queryByRole('button', { name: 'Acciones del turno T0' })).not.toBeInTheDocument()
 })
 it('keeps the viewer read-only', () => {
   render(<Harness canOperate={false} />)
-  expect(
-    screen.queryByRole('button', { name: /Acciones del turno/ }),
-  ).not.toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: /Gestionar turno/ }).every(
+    (button) => (button as HTMLButtonElement).disabled,
+  )).toBe(true)
 })
 it('keeps completed turns final with no resource-release action', () => {
   render(
@@ -190,7 +191,7 @@ it('keeps completed turns final with no resource-release action', () => {
   expect(screen.queryByRole('button', { name: 'Liberar recurso' })).not.toBeInTheDocument()
 })
 it('does not gate assignment on a legacy inventory-readiness flag', () => {
-  const action = vi.fn()
+  const manage = vi.fn()
   render(
     <QueueView
       queue={{
@@ -209,14 +210,14 @@ it('does not gate assignment on a legacy inventory-readiness flag', () => {
       lastSync=""
       error=""
       onRefresh={vi.fn()}
-      onAction={action}
+      onAction={vi.fn()}
+      onManage={manage}
     />,
   )
-  fireEvent.click(screen.getByRole('button', { name: /Acciones/ }))
-  const assign = screen.getByRole('button', { name: 'Asignar turno' })
-  expect(assign).toBeEnabled()
-  fireEvent.click(assign)
-  expect(action).toHaveBeenCalledWith(entries[0], 'call')
+  const manageButton = screen.getByRole('button', { name: 'Gestionar turno T0' })
+  expect(manageButton).toBeEnabled()
+  fireEvent.click(manageButton)
+  expect(manage).toHaveBeenCalledWith(entries[0])
 })
 
 it('numbers the whole active list including called turns, preserves ordinals when filtered and resets for another service', () => {
@@ -314,7 +315,8 @@ it('shows restaurant size filters and distinguishes predicted and preferred spac
   ).not.toBeInTheDocument()
 })
 
-it('closes row actions when externally changing views or queues', () => {
+it('keeps the card-to-manage action scoped to the selected view and queue', () => {
+  const manage = vi.fn()
   const props = {
     entries,
     onTabChange: vi.fn(),
@@ -324,25 +326,22 @@ it('closes row actions when externally changing views or queues', () => {
     error: '',
     onRefresh: vi.fn(),
     onAction: vi.fn(),
+    onManage: manage,
   }
   const { rerender } = render(
     <QueueView {...props} queue={queue} tab="active" />,
   )
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
-  expect(screen.getByRole('button', { name: 'Cancelar turno' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Gestionar turno T0' }))
+  expect(manage).toHaveBeenCalledWith(entries[0])
   rerender(<QueueView {...props} queue={queue} tab="completed" />)
   rerender(<QueueView {...props} queue={queue} tab="active" />)
-  expect(
-    screen.queryByRole('button', { name: 'Cancelar turno' }),
-  ).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('button', { name: 'Acciones del turno T0' }))
+  expect(screen.getByRole('button', { name: 'Gestionar turno T0' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Gestionar turno T0' }))
   rerender(
     <QueueView {...props} queue={{ ...queue, id: 'another' }} tab="active" />,
   )
   rerender(<QueueView {...props} queue={queue} tab="active" />)
-  expect(
-    screen.queryByRole('button', { name: 'Cancelar turno' }),
-  ).not.toBeInTheDocument()
+  expect(manage).toHaveBeenCalledTimes(2)
 })
 it('keeps automatic service closure in cancelled history with a truthful reason', () => {
   const closed: StaffEntry = { ...entries[4]!, cancellationReason: 'service_ended' }

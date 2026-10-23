@@ -317,3 +317,12 @@ ciclos simultáneos, conflictos y motivos de parada. Distingue las capturas E2E
 integradas del 22/10 de las capturas de UI con respuestas API controladas del
 23/10; todas usan datos ficticios. No acredita activación en producción ni
 sustituye la validación nativa WebView/Capacitor pendiente.
+
+### Perfil completo de CI
+
+`node scripts/queue-verification/run.mjs --all` habilita automáticamente los ciclos
+solo en el Worker E2E aislado y ejecuta las suites de capturas, además del resto de
+regresiones. Guarda las capturas en `cycle-screenshots/<navegador>/` dentro del
+informe para no sobrescribir evidencia entre Chromium, Firefox y WebKit. El
+veredicto sigue rechazando pruebas omitidas, flaky o sin evidencia; no se filtran
+los escenarios opt-in. Este perfil no modifica el flag de producción ni despliega.

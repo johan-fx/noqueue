@@ -11,6 +11,12 @@ test.skip(
 const root = process.env.REPLACEMENT_SCREENSHOTS ?? '/tmp/arrival-cycles'
 const capturedFigmaNodes = new Set<string>()
 
+function screenshotDirectory() {
+  // Full reports run every browser; do not overwrite another engine's evidence.
+  // Explicit single-browser local captures keep their existing output paths.
+  return process.env.QUEUE_REPORT_DIR ? `${root}/${test.info().project.name}` : root
+}
+
 type VisualQueue = {
   id: string
   version: number
@@ -19,7 +25,8 @@ type VisualQueue = {
 }
 
 async function capture(page: Page, scenario: string, state: string) {
-  await mkdir(root, { recursive: true })
+  const directory = screenshotDirectory()
+  await mkdir(directory, { recursive: true })
   for (const viewport of [
     { name: 'mobile', width: 390, height: 844 },
     { name: 'desktop', width: 1440, height: 1000 },
@@ -27,7 +34,7 @@ async function capture(page: Page, scenario: string, state: string) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height })
     await page.waitForTimeout(400)
     await page.screenshot({
-      path: `${root}/${scenario}-${state}-${viewport.name}.png`,
+      path: `${directory}/${scenario}-${state}-${viewport.name}.png`,
       animations: 'disabled',
       fullPage: true,
     })
@@ -39,7 +46,8 @@ async function captureFigmaNode(page: Page, node: string, fast = false) {
   if (capturedFigmaNodes.has(node))
     throw new Error(`Figma screenshot node ${node} was already captured`)
   capturedFigmaNodes.add(node)
-  await mkdir(root, { recursive: true })
+  const directory = screenshotDirectory()
+  await mkdir(directory, { recursive: true })
   for (const viewport of [
     { name: 'mobile', width: 390, height: 844 },
     { name: 'desktop', width: 1440, height: 1000 },
@@ -47,7 +55,7 @@ async function captureFigmaNode(page: Page, node: string, fast = false) {
     await page.setViewportSize({ width: viewport.width, height: viewport.height })
     if (!fast) await page.waitForTimeout(100)
     await page.screenshot({
-      path: `${root}/figma-${node}-${viewport.name}.png`,
+      path: `${directory}/figma-${node}-${viewport.name}.png`,
       animations: 'disabled',
       fullPage: true,
     })

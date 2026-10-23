@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, appendFile } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { render, verdict } from './report.mjs'
+import { verificationEnvironment } from './environment.mjs'
 const root = fileURLToPath(new URL('../../', import.meta.url))
 const extended = process.argv.includes('--extended'),
   all = process.argv.includes('--all')
@@ -13,14 +14,7 @@ const directory = path.resolve(
 )
 await mkdir(directory, { recursive: true })
 console.log(`Queue report: ${directory}/index.html`)
-const environment = {
-  ...process.env,
-  CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV: 'false',
-  QUEUE_REPORT_DIR: directory,
-  QUEUE_PROPERTY_RUNS: extended ? '2000' : '200',
-  QUEUE_SEQUENCE_RUNS: extended ? '100' : '20',
-  QUEUE_SEQUENCE_LENGTH: extended ? '100' : '25',
-}
+const environment = verificationEnvironment(process.env, directory, { all, extended })
 // Local verification can use bounded parallelism; CI retains its single-worker default.
 const browserWorkers = process.env.QUEUE_BROWSER_WORKERS ?? '1'
 if (!/^[1-8]$/.test(browserWorkers)) throw new Error('QUEUE_BROWSER_WORKERS must be 1–8')

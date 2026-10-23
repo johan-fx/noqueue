@@ -168,6 +168,7 @@ async function openControlFixture(
     {
       method: 'GET',
       path: '/api/v1/staff/queues/controls/automation',
+      expectedHits: { min: 1 },
       respond: () => ({
         json: {
           configured: false,

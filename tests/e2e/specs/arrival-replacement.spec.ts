@@ -1,5 +1,10 @@
 import { newClientContext, test, expect } from '../fixtures.js'
 import { setup } from '../helpers/queue-actions.js'
+
+// These scenarios intercept/count API requests, including conflicts and reconnects.
+// A service worker can bypass Playwright routing (notably in WebKit). PWA lifecycle
+// coverage remains in the separate pwa.config.ts suite with service workers enabled.
+test.use({ serviceWorkers: 'block' })
 type QueueSummary = {
   id?: string
   autoReplacementEnabled: boolean
@@ -785,7 +790,7 @@ test('reconciles cycle state and entries after a second authenticated operator a
     browser,
     info,
     'arrival-offline-secondary-operator',
-    { storageState: await page.context().storageState() },
+    { storageState: await page.context().storageState(), serviceWorkers: 'block' },
   )
   try {
     const secondaryPage = await secondaryContext.newPage()

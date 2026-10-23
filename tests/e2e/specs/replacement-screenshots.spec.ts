@@ -4,6 +4,10 @@ import { test, expect } from '../fixtures.js'
 import { setup } from '../helpers/queue-actions.js'
 import type { Page } from '@playwright/test'
 
+// Keep API interception and visual fixtures observable; the dedicated PWA suite
+// exercises the service worker separately against production bundles.
+test.use({ serviceWorkers: 'block' })
+
 test.skip(
   !process.env.REPLACEMENT_SCREENSHOTS,
   'Explicit local visual capture only',

@@ -10,9 +10,7 @@ export function verificationEnvironment(parent, directory, { all, extended }) {
     QUEUE_SEQUENCE_LENGTH: extended ? '100' : '25',
     // The full profile must execute opt-in cycle and visual tests, not skip them.
     // These variables only configure the isolated E2E Worker and its artifacts.
-    ...(all ? {
-      NOQUEUE_E2E_AUTO_REPLACEMENT: 'true',
-      REPLACEMENT_SCREENSHOTS: path.join(directory, 'cycle-screenshots'),
-    } : {}),
+    NOQUEUE_E2E_AUTO_REPLACEMENT: all ? 'true' : 'false',
+    REPLACEMENT_SCREENSHOTS: all ? path.join(directory, 'cycle-screenshots') : '',
   }
 }

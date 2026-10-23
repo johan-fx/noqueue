@@ -194,6 +194,21 @@ QUEUE_DEMO_DIR=/tmp/noqueue-ui-countdowns-final-20261022 NOQUEUE_E2E_AUTO_REPLAC
 pnpm test:queue
 ```
 
+`pnpm test:queue` utiliza el perfil estándar, sin las suites opt-in de ciclos y
+capturas. Los perfiles estándar y extendido mantienen el flag E2E apagado, con
+independencia de las variables exportadas por la shell. Para las suites opt-in,
+utilizar el perfil completo o los comandos Playwright explícitos anteriores.
+
+### Perfil completo de CI
+
+`node scripts/queue-verification/run.mjs --all` habilita automáticamente los ciclos
+solo en el Worker E2E aislado y ejecuta las suites de capturas, además del resto de
+regresiones. Guarda las capturas en `cycle-screenshots/<navegador>/` dentro del
+informe para no sobrescribir evidencia entre Chromium, Firefox y WebKit. El
+veredicto sigue rechazando pruebas omitidas, flaky o sin evidencia; no se filtran
+los escenarios opt-in. Este perfil no modifica el flag de producción ni despliega.
+
+
 La suite de producción verifica que la consulta de snapshot de backup conserva
 headroom bajo 90.000 bytes y sigue fallando de forma segura si supera 95.000; no
 se debe ampliar ni relajar esa guarda para acomodar una migración. También prueba
@@ -317,12 +332,3 @@ ciclos simultáneos, conflictos y motivos de parada. Distingue las capturas E2E
 integradas del 22/10 de las capturas de UI con respuestas API controladas del
 23/10; todas usan datos ficticios. No acredita activación en producción ni
 sustituye la validación nativa WebView/Capacitor pendiente.
-
-### Perfil completo de CI
-
-`node scripts/queue-verification/run.mjs --all` habilita automáticamente los ciclos
-solo en el Worker E2E aislado y ejecuta las suites de capturas, además del resto de
-regresiones. Guarda las capturas en `cycle-screenshots/<navegador>/` dentro del
-informe para no sobrescribir evidencia entre Chromium, Firefox y WebKit. El
-veredicto sigue rechazando pruebas omitidas, flaky o sin evidencia; no se filtran
-los escenarios opt-in. Este perfil no modifica el flag de producción ni despliega.

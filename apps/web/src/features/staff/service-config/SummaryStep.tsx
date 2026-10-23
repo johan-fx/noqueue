@@ -1,6 +1,7 @@
 import { readScheduleGroups, type ServiceInput } from '@noqueue/contracts/staff'
 import { formatDays, formatRanges } from './hours'
 import { seatLabel } from './model'
+import { AutomaticAssignmentBadge } from '../AutomaticAssignmentBadge'
 
 export function SummaryStep({ values }: { values: ServiceInput }) {
   const groups = readScheduleGroups(values)
@@ -13,6 +14,9 @@ export function SummaryStep({ values }: { values: ServiceInput }) {
   return (
     <section className="space-y-3 rounded-lg bg-muted p-4">
       <h3 className="font-semibold">{values.name || 'Sin nombre'}</h3>
+      {values.automaticAssignmentEnabled && (
+        <AutomaticAssignmentBadge variant="summary" />
+      )}
       {groups.map((group, index) => (
         <div key={index}>
           <p>{formatDays(group.days)}</p>

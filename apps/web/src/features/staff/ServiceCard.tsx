@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { api, ApiError, errorMessage } from './api'
 import { QueueReminder } from './QueueReminder'
+import { AutomaticAssignmentBadge } from './AutomaticAssignmentBadge'
 
 type AdmissionAction = 'declare_full' | 'resume' | 'pause'
 export function ServiceCard({
@@ -201,6 +202,9 @@ export function ServiceCard({
               ? 'Lista pausada'
               : 'Lista inactiva'}
           </Badge>
+          {service.config.automaticAssignmentEnabled && (
+            <AutomaticAssignmentBadge variant="card" />
+          )}
         </CardTitle>
         <CardDescription>
           {

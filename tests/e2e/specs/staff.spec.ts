@@ -250,9 +250,14 @@ test.describe('commercial provisioning save retry', () => {
     })
     await expect(creationService).toBeVisible()
     await page.getByLabel('Nombre del servicio').fill('Restaurante E2E')
-    await creationService
-      .getByRole('button', { name: 'Volver', exact: true })
-      .click()
+    const serviceBack = creationService.getByRole('button', {
+      name: 'Volver', exact: true,
+    })
+    // WebKit can briefly report a stable but partially clipped button while the
+    // drawer enters. Wait for the full hit target, not just DOM visibility.
+    await expect(serviceBack).toBeInViewport({ ratio: 1 })
+    await serviceBack.click()
+    await expect(creationService).toBeHidden()
     await expect(page.getByLabel('Usuario del administrador')).toHaveValue(owner)
     await page.getByRole('button', { name: 'Continuar', exact: true }).click()
     await creationService
@@ -705,9 +710,15 @@ test('owner can assign from the queue without releasing inventory and arrival fi
       queueDrawer.getByText('Cliente Staff E2E', { exact: true }),
     ).toBeVisible()
 
-    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-    await queueDrawer
-      .getByRole('button', { name: 'Asignar turno', exact: true })
+    const staffEntryRow = queueDrawer
+      .locator('li')
+      .filter({ hasText: 'Cliente Staff E2E' })
+    await staffEntryRow
+      .getByRole('button', { name: /^Gestionar turno/ })
+      .click()
+    await page
+      .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+      .getByRole('button', { name: 'Asignar próximo turno', exact: true })
       .click()
     const assignment = page.getByRole('dialog', {
       name: 'Asignar turno',
@@ -737,8 +748,11 @@ test('owner can assign from the queue without releasing inventory and arrival fi
     expect(reloadedSnapshot.customer?.arrivalDeadlineAt).toBe(
       originalArrivalDeadline,
     )
-    await queueDrawer.getByRole('button', { name: /^Acciones del turno/ }).click()
-    await queueDrawer
+    await staffEntryRow
+      .getByRole('button', { name: /^Gestionar turno/ })
+      .click()
+    await page
+      .getByRole('dialog', { name: 'Gestionar turno', exact: true })
       .getByRole('button', { name: 'Confirmar llegada', exact: true })
       .click()
     await queueDrawer

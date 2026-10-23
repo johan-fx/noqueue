@@ -28,12 +28,15 @@ export function queueCoordinator(env: CloudflareBindings, queueId: string) {
 export async function experimentSnapshot(env: CloudflareBindings) {
   const entries = await env.DB.prepare(
     `SELECT e.code,e.party_size AS partySize,e.status,
-    (SELECT COUNT(*) FROM queue_entry p WHERE p.queue_id=e.queue_id AND p.status='waiting' AND p.sequence<=e.sequence) AS position,
+    (SELECT COUNT(*) FROM queue_entry p WHERE p.queue_id=e.queue_id AND p.status='waiting' AND p.manual_only=0 AND (
+      (p.priority_rank IS NOT NULL AND (e.priority_rank IS NULL OR p.priority_rank<e.priority_rank)) OR
+      (p.priority_rank IS e.priority_rank AND (p.sequence<e.sequence OR (p.sequence=e.sequence AND p.id<=e.id)))
+    )) AS position,
     CASE WHEN f.entry_id IS NULL THEN 'placeholder' WHEN f.revoked_at IS NOT NULL THEN 'revoked'
       WHEN f.confirmed_at IS NOT NULL THEN 'confirmed' WHEN f.expires_at<=? THEN 'expired' ELSE 'pending' END AS confirmation,
     (SELECT status FROM notification_outbox n WHERE n.entry_id=e.id ORDER BY rowid DESC LIMIT 1) AS notification
     FROM queue_entry e LEFT JOIN queue_confirmation f ON f.entry_id=e.id
-    WHERE e.queue_id=? AND e.status='waiting' ORDER BY e.sequence`,
+    WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0 ORDER BY e.priority_rank IS NULL,e.priority_rank,e.sequence,e.id`,
   )
     .bind(Date.now(), experimentQueueId)
     .all()
@@ -105,14 +108,14 @@ export async function changeExperiment(
     }
   } else {
     const front = await env.DB.prepare(
-      "SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence LIMIT 1",
+      "SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0 ORDER BY priority_rank IS NULL,priority_rank,sequence,id LIMIT 1",
     )
       .bind(experimentQueueId)
       .first<{ id: string }>()
     if (!front) return { status: 409, body: { error: 'queue_empty' } }
     statements.push(
       env.DB.prepare(
-        "UPDATE queue_entry SET status='served' WHERE id=? AND status='waiting'",
+        "UPDATE queue_entry SET status='served',priority_rank=NULL WHERE id=? AND status='waiting'",
       ).bind(front.id),
     )
     statements.push(
@@ -133,12 +136,15 @@ export async function changeExperiment(
       env.DB.prepare(
         `INSERT INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,position)
       SELECT ?,e.id,?,'pending',?,'position_update',
-        (SELECT COUNT(*) FROM queue_entry p WHERE p.queue_id=e.queue_id AND p.status='waiting' AND p.sequence<=e.sequence)
+        (SELECT COUNT(*) FROM queue_entry p WHERE p.queue_id=e.queue_id AND p.status='waiting' AND p.manual_only=0 AND (
+      (p.priority_rank IS NOT NULL AND (e.priority_rank IS NULL OR p.priority_rank<e.priority_rank)) OR
+      (p.priority_rank IS e.priority_rank AND (p.sequence<e.sequence OR (p.sequence=e.sequence AND p.id<=e.id)))
+    ))
       FROM queue_entry e JOIN queue_confirmation f ON f.entry_id=e.id JOIN consent c ON c.entry_id=e.id
       JOIN queue_entry_contact p ON p.entry_id=e.id JOIN whatsapp_contact_state w ON w.phone_hash=p.phone_hash
-      WHERE e.queue_id=? AND e.status='waiting' AND f.confirmed_at IS NOT NULL AND f.revoked_at IS NULL
+      WHERE e.queue_id=? AND e.status='waiting' AND e.manual_only=0 AND f.confirmed_at IS NOT NULL AND f.revoked_at IS NULL
         AND c.purpose='queue_updates' AND c.revoked_at IS NULL AND w.stopped_at IS NULL AND w.last_inbound_at>?
-      ORDER BY e.sequence LIMIT 1`,
+      ORDER BY e.priority_rank IS NULL,e.priority_rank,e.sequence,e.id LIMIT 1`,
       ).bind(
         crypto.randomUUID(),
         `advance:${key}`,

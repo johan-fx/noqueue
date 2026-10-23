@@ -75,6 +75,7 @@ export function assertProductionIdentity(config, { provisioned = false } = {}) {
 export function assertProductionConfig(config, { provisioned = false, whatsapp = 'off' } = {}) {
   releaseProfile({ whatsapp })
   const p = assertProductionIdentity(config, { provisioned })
+  assert.equal(p.vars.QUEUE_AUTO_REPLACEMENT_ENABLED, 'false', 'Automatic assignment must remain OFF until a separately authorized release profile exists')
   for (const flag of ['WHATSAPP_ENABLED', 'PRODUCTION_WHATSAPP_APPROVED', 'WHATSAPP_V4_TEMPLATES_APPROVED'])
     assert.equal(p.vars[flag], String(whatsapp === 'on'), `${flag} differs from the explicit release profile`)
   return p

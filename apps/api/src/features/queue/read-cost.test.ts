@@ -128,12 +128,10 @@ it('coalesces projection writes within 5 seconds but repairs missing projections
     .run()
   await refreshQueue(measured.env, id, start + 4500)
   expect(
-    (
-      await env.DB.prepare('SELECT status FROM queue_entry WHERE id=?')
-        .bind(waiting)
-        .first()
-    )?.status,
-  ).toBe('cancelled')
+    await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?')
+      .bind(waiting)
+      .first(),
+  ).toEqual({ status: 'waiting', manual_only: 1 })
 })
 it('skips truly empty and terminal-only cron queues but expires called entries even on inactive queues', async () => {
   const now = Date.now(),
@@ -218,4 +216,12 @@ it('does not treat prior calls or holds as resource slots when projecting a new 
   expect(after.adaptiveProjections[0]?.cadenceMs).toBe(30 * 60000)
   expect(after.resources).toEqual([])
   expect(after.allocations).toEqual([])
+})
+
+it('avoids automation and retired-decision writes when no cycle or legacy decision exists', async () => {
+  const { id } = await fixture(1)
+  const measured = profileD1(env)
+  await refreshQueue(measured.env, id)
+  expect(measured.costs.some(cost => /UPDATE queue_automation_cycle/.test(cost.sql))).toBe(false)
+  expect(measured.costs.some(cost => /UPDATE queue_replacement_decision/.test(cost.sql))).toBe(false)
 })

@@ -1,0 +1,19 @@
+name: Setup CI dependencies
+description: Install the pinned Node/pnpm toolchain and frozen workspace dependencies
+runs:
+  using: composite
+  steps:
+    # Container steps use /root, whereas checkout prepares Git under its own HOME.
+    # Trust only this run's checkout, never all repositories via safe.directory=*.
+    - name: Trust the current checkout across container UID/HOME boundaries
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      shell: bash
+    - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      with:
+        version: 10.23.0
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22.19.0
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash

@@ -9,6 +9,8 @@ export const queueActionLabels = {
   complete: 'Confirmar llegada',
   release: 'Liberar recurso',
   cancel: 'Cancelar turno',
+  pass: 'Pasar turno',
+  prioritize: 'Priorizar para siguiente turno',
   no_show: 'No presentado',
   skip: 'Pasar al final',
   restore: 'Restaurar turno',

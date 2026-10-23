@@ -1,7 +1,12 @@
 import { forecastInterval } from './adaptive-model'
 import { roundWaitMinutes } from '@noqueue/contracts/queue'
 import type { ServiceInput } from '@noqueue/contracts/staff'
-import { type Party, type Projection, type Resource } from './engine'
+import {
+  compareEffectiveQueueOrder,
+  type Party,
+  type Projection,
+  type Resource,
+} from './engine'
 
 /** Configured service work, never learned durations or fictitious occupancy. */
 export function configuredCustomerWork(
@@ -13,7 +18,7 @@ export function configuredCustomerWork(
   let total = 0
   return new Map(
     [...parties]
-      .sort((a, b) => a.sequence - b.sequence)
+      .sort(compareEffectiveQueueOrder)
       .map((party) => {
         total += forecastInterval(party, config, baseline, {
           service: 1,

@@ -3112,7 +3112,8 @@ it('keeps staff summary refreshes read-only at 10x queue count and counts 501 wa
     ).toBe(true)
     expect(
       plan.results.some((row) =>
-        row.detail.includes('queue_entry_status_sequence'),
+        // Both indexes start with (queue_id,status); accept either plan.
+        row.detail.includes('queue_entry_status_sequence') || row.detail.includes('queue_priority'),
       ),
     ).toBe(true)
     costs.push({

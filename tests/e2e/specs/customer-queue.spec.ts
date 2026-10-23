@@ -790,7 +790,8 @@ for (const type of ['reception', 'pool'] as const) {
               phone: '+34600000000',
               version: 'whatsapp-public-service-updates-v1',
             },
-            ...(type === 'reception' ? { receptionService: 'check_out' } : {}),
+            // Reception can only yield to a guest waiting for the same procedure.
+            ...(type === 'reception' ? { receptionService: 'check_in' } : {}),
           },
         },
       )

@@ -65,8 +65,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command:
-      'pnpm --dir ../.. --filter @noqueue/web build && pnpm --dir ../.. --filter @noqueue/api dev:e2e',
+    command: process.env.NOQUEUE_E2E_PREBUILT === 'true'
+      ? 'cd ../.. && node scripts/ci/assets.mjs verify general && pnpm --filter @noqueue/api dev:e2e'
+      : 'pnpm --dir ../.. --filter @noqueue/web build && pnpm --dir ../.. --filter @noqueue/api dev:e2e',
     url: `${origin}/api/v1/health`,
     reuseExistingServer: false,
     timeout: 120_000,

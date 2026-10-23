@@ -14,8 +14,24 @@ export type Party = {
   version?: number
   id: string
   sequence: number
+  /** Lower global rank is served earlier; null preserves FIFO sequence order. */
+  priorityRank?: number | null
   partySize: number
   preferredSpaceId?: string | null
+  /** Queue subtype used only to keep reception handoffs within their service. */
+  receptionService?: 'check_in' | 'check_out' | 'other' | null
+}
+/** Effective waiting order shared by projections and estimates: explicit priority, then FIFO. */
+export function compareEffectiveQueueOrder(
+  a: Pick<Party, 'priorityRank' | 'sequence' | 'id'>,
+  b: Pick<Party, 'priorityRank' | 'sequence' | 'id'>,
+) {
+  if (a.priorityRank != null || b.priorityRank != null) {
+    if (a.priorityRank == null) return 1
+    if (b.priorityRank == null) return -1
+    if (a.priorityRank !== b.priorityRank) return a.priorityRank - b.priorityRank
+  }
+  return a.sequence - b.sequence || a.id.localeCompare(b.id)
 }
 export type Projection = {
   id: string
@@ -79,7 +95,7 @@ export function projectQueue(
     callable: r.callable ?? (r.availableAt !== null && r.availableAt <= now),
   }))
   return [...parties]
-    .sort((a, b) => a.sequence - b.sequence)
+    .sort(compareEffectiveQueueOrder)
     .map((party, index) => {
       const eligible = eligibleResources(party, slots, preference)
       const slot = eligible

@@ -45,9 +45,11 @@ export function TurnView({
     serviceEnded = cancelled && c.cancellationReason === 'service_ended',
     approaching = phase === 'approaching',
     called = phase === 'called'
+  const manualOnly =
+    c.manualOnly === true && ['waiting', 'approaching'].includes(phase)
   const active = !arrived && !expired && !cancelled
   const adaptive = entry.estimatorVersion === 2
-  const step = arrived || called ? 3 : approaching ? 2 : 1
+  const step = arrived || called ? 3 : approaching && !manualOnly ? 2 : 1
   const primaryAction = approaching || called || !restaurant ? 'yield' : 'update'
   const titles = {
     waiting: es
@@ -87,8 +89,9 @@ export function TurnView({
       ? es ? 'El servicio ha cerrado y tu turno pendiente se ha cancelado. Puedes apuntarte de nuevo en la próxima apertura.' : 'The service has closed and your pending turn was cancelled. You can join again when service reopens.'
       : es ? 'Tu turno ya no está activo. Puedes volver a apuntarte cuando quieras.' : 'Your turn is no longer active. You can join again whenever you like.',
   }
-  const waitMs = remainingWaitMs(entry, now)
+  const waitMs = manualOnly ? null : remainingWaitMs(entry, now)
   const forecastExhausted =
+    !manualOnly &&
     adaptive &&
     active &&
     !called &&
@@ -111,7 +114,7 @@ export function TurnView({
       : Math.max(0, c.arrivalDeadlineAt - now)
     : waitMs
   const countdown = formatCountdown(remaining)
-  const known = knownEstimate(entry)
+  const known = !manualOnly && knownEstimate(entry)
   const units = es ? 'minutos:segundos' : 'minutes:seconds'
   const waitLabel = refreshStatus ?? (waitMs == null
     ? `${entry.etaMinutes} min`
@@ -119,7 +122,9 @@ export function TurnView({
   const estimatedWaitLabel = es
     ? `Espera aproximada: ${waitLabel}`
     : `Estimated wait: ${waitLabel}`
-  const value = expired
+  const value = manualOnly
+    ? '—'
+    : expired
     ? '0'
     : called
     ? countdown
@@ -131,14 +136,16 @@ export function TurnView({
     : value.length > 6
     ? 'text-2xl'
     : value.length > 5 ? 'text-3xl' : 'text-4xl'
-  const color = arrived
+  const color = manualOnly
+    ? 'text-gray-700'
+    : arrived
     ? 'text-green-600'
     : expired || called
     ? 'text-red-700'
     : approaching
     ? 'text-orange-500'
     : 'text-black'
-  const progress = turnProgress(entry, now)
+  const progress = manualOnly ? null : turnProgress(entry, now)
   const percentage = progress == null ? undefined : Math.round(progress * 100)
   const circumference = 2 * Math.PI * 80
   const labels = es
@@ -192,10 +199,18 @@ export function TurnView({
       <div className="flex flex-1 flex-col gap-6 px-4 pt-2 pb-6">
         <div className="space-y-2">
           <h1 className="text-2xl leading-8 font-medium text-gray-950">
-            {titles[phase]}
+            {manualOnly
+              ? es
+                ? 'Turno pendiente de asignación'
+                : 'Turn waiting for manual assignment'
+              : titles[phase]}
           </h1>
           <p className="text-base leading-6 text-gray-500">
-            {active && !called && waitMs === 0
+            {manualOnly
+              ? es
+                ? 'El servicio anterior ha finalizado. Consulta al personal para que te asigne un nuevo turno manualmente.'
+                : 'The previous service has ended. Please ask staff to assign your turn manually.'
+              : active && !called && waitMs === 0
               ? adaptive
                 ? es
                   ? 'Seguimos buscando tu turno; aún no te lo hemos asignado.'
@@ -256,7 +271,11 @@ export function TurnView({
           <div
             role="progressbar"
             aria-label={
-              called
+              manualOnly
+                ? es
+                  ? 'Turno pendiente de asignación manual'
+                  : 'Turn waiting for manual assignment'
+                : called
                 ? es ? 'Progreso del plazo de llegada' : 'Arrival window progress'
                 : active && known
                 ? estimatedWaitLabel
@@ -268,7 +287,11 @@ export function TurnView({
             aria-valuemax={100}
             aria-valuenow={percentage}
             aria-valuetext={
-              called
+              manualOnly
+                ? es
+                  ? 'El servicio anterior ha finalizado. Consulta al personal para que te asigne un nuevo turno manualmente.'
+                  : 'The previous service has ended. Please ask staff to assign your turn manually.'
+                : called
                 ? percentage == null
                   ? es ? 'Plazo de llegada no disponible' : 'Arrival window unavailable'
                   : es
@@ -348,6 +371,8 @@ export function TurnView({
                     ) : (
                       'minutes to arrive'
                     )
+                  ) : manualOnly ? (
+                    es ? 'Asignación manual' : 'Manual assignment'
                   ) : forecastExhausted ? (
                     es ? 'esperando actualización' : 'waiting for update'
                   ) : known ? (
@@ -392,7 +417,7 @@ export function TurnView({
                 {es ? 'Tu turno:' : 'Your turn:'}{' '}
                 <span className="ml-1 text-2xl">{entry.code}</span>
               </p>
-              {active && !called && (
+              {active && !called && !manualOnly && (
                 <p>
                   {es ? 'Hay ' : ''}
                   <strong>
@@ -415,7 +440,7 @@ export function TurnView({
             </p>
           </div>
         )}
-        {approaching && c.actions.includes('yield') && (
+        {approaching && !manualOnly && c.actions.includes('yield') && (
           <div className="flex items-start gap-3 rounded-lg bg-gray-50 p-4">
             <Timer className="mt-1 size-6 shrink-0" />
             <div>

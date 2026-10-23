@@ -6,6 +6,7 @@ import { assertProductionConfig, readConfig, repository, productionBuildEnv } fr
 const config = await readConfig()
 test('initial production config is isolated, GA/WhatsApp off and includes receipt cleanup cron', () => {
   assertProductionConfig(config)
+  assert.equal(config.env.production.vars.QUEUE_AUTO_REPLACEMENT_ENABLED, 'false')
   assert.equal(productionBuildEnv.VITE_ANALYTICS_ENABLED, 'false')
   assert.equal(productionBuildEnv.LANDING_ANALYTICS_ENABLED, 'false')
   assert.equal(productionBuildEnv.VITE_API_URL, '')
@@ -17,6 +18,7 @@ for (const [label, change] of [
   ['missing privacy cron', (p) => p.triggers.crons.pop()],
   ['staging database', (p) => p.d1_databases[0].database_id = config.env.staging.d1_databases[0].database_id],
   ['staging origin', (p) => p.vars.PUBLIC_APP_ORIGIN = 'https://staging.noqueue-app.com'],
+  ['enabled automatic assignment', (p) => p.vars.QUEUE_AUTO_REPLACEMENT_ENABLED = 'true'],
   ['enabled WhatsApp', (p) => p.vars.WHATSAPP_ENABLED = 'true'],
   ['staging approval', (p) => p.vars.STAGING_CONSENT_APPROVED = 'true'],
   ['E2E entrypoint override', (p) => p.main = 'test/e2e-worker.ts'],

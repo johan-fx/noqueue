@@ -167,6 +167,23 @@ async function openControlFixture(
     },
     {
       method: 'GET',
+      path: '/api/v1/staff/queues/controls/automation',
+      expectedHits: { min: 1 },
+      respond: () => ({
+        json: {
+          configured: false,
+          effective: false,
+          activeCycles: 0,
+          serverNow: Date.now(),
+          cursor: 0,
+          events: [],
+          hasMore: false,
+          nextEntry: null,
+        },
+      }),
+    },
+    {
+      method: 'GET',
       path: '/api/v1/staff/queues/controls/opening-context',
       expectedHits:
         expected.openingContext === 0

@@ -96,8 +96,11 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
     const row = (name: string) => drawer.locator('li').filter({ hasText: name })
     const call = async (name: string) => {
       await drawer.getByRole('tab', { name: 'Lista', exact: true }).click()
-      await row(name).getByRole('button', { name: /Acciones del turno/ }).click()
-      await row(name).getByRole('button', { name: 'Asignar turno', exact: true }).click()
+      await row(name).getByRole('button', { name: /^Gestionar turno/ }).click()
+      await staff
+        .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+        .getByRole('button', { name: 'Asignar próximo turno', exact: true })
+        .click()
       await staff.getByRole('dialog', { name: 'Asignar turno', exact: true }).getByRole('button', { name: /^Asignar (turno|sin especificar mesa)$/, exact: true }).click()
       // A concurrent join can invalidate the version shown in the staff drawer.
       // Follow the actual UI's review/reconfirm instruction, never bypass it.
@@ -111,8 +114,11 @@ for (const id of chapters) test(`adaptive real clock: ${id}`, async ({ browser, 
       await expect(row(name).getByText('Pendiente de llegada', { exact: true })).toBeVisible()
     }
     const arrive = async (name: string) => {
-      await row(name).getByRole('button', { name: /Acciones del turno/ }).click()
-      await row(name).getByRole('button', { name: 'Confirmar llegada', exact: true }).click()
+      await row(name).getByRole('button', { name: /^Gestionar turno/ }).click()
+      await staff
+        .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+        .getByRole('button', { name: 'Confirmar llegada', exact: true })
+        .click()
       await expect(row(name)).toHaveCount(0)
       await drawer.getByRole('tab', { name: 'Completados', exact: true }).click()
       await expect(row(name)).toBeVisible()

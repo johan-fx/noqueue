@@ -6,3 +6,11 @@ packages:
 catalog:
   typescript: ~6.0.2
   zod: 4.6.1
+
+# esbuild/workerd prepare native binaries for Wrangler and isolated Worker tests.
+# Sharp 0.32 (via @capacitor/assets) prepares libvips for native asset generation.
+# MSW needs no install script: this repository does not configure workerDirectory.
+onlyBuiltDependencies:
+  - esbuild
+  - sharp
+  - workerd

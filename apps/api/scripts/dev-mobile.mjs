@@ -119,7 +119,7 @@ try {
             await stub.refresh(queue)
           } else {
             for (const entry of action === 'call' ? rows : rows.slice(0, 1)) {
-              const result = await stub.staffCommand(actor, queue, crypto.randomUUID(), action === 'call' && type === 'pool' ? { action: 'assign_next' } : {
+              const result = await stub.staffCommand(actor, queue, crypto.randomUUID(), action === 'call' && type === 'pool' ? { action: 'assign_next', expectedEntryId: entry.id, expectedVersion: entry.version } : {
                 action, entryId: entry.id, version: entry.version,
                 ...(action === 'call' ? { arrivalMode: 'notify' } : {}),
               })

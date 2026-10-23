@@ -72,9 +72,10 @@ test('staff confirms a larger table with buttons; the actual context survives re
     name: 'Gestionar lista',
     exact: true,
   })
-  await drawer.getByRole('button', { name: /Acciones del turno/ }).click()
-  await drawer
-    .getByRole('button', { name: 'Asignar turno', exact: true })
+  await drawer.getByRole('button', { name: /^Gestionar turno/ }).click()
+  await page
+    .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+    .getByRole('button', { name: 'Asignar próximo turno', exact: true })
     .click()
   const sheet = page.getByRole('dialog', { name: 'Asignar turno', exact: true })
   await expect(
@@ -219,8 +220,11 @@ test('a single compatible combination is informative and still saves confirmed s
   await page.reload()
   await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: 'Gestionar lista', exact: true })
-  await drawer.getByRole('button', { name: /Acciones del turno/ }).click()
-  await drawer.getByRole('button', { name: 'Asignar turno', exact: true }).click()
+  await drawer.getByRole('button', { name: /^Gestionar turno/ }).click()
+  await page
+    .getByRole('dialog', { name: 'Gestionar turno', exact: true })
+    .getByRole('button', { name: 'Asignar próximo turno', exact: true })
+    .click()
   const sheet = page.getByRole('dialog', { name: 'Asignar turno', exact: true })
   await expect(sheet.getByText('Terraza · Mesa para 4', { exact: true })).toBeVisible()
   await expect(sheet.getByRole('group', { name: 'Espacio', exact: true })).toHaveCount(0)

@@ -1,5 +1,11 @@
 import {
+  selectAutomationSuccessor,
+  stopAutomation,
+  stopQueueAutomation,
+} from '../queue/automation'
+import {
   configuredIntervalMinutes,
+  resolveEstimateContext,
   type EstimateContext,
 } from '../queue/adaptive-model'
 import { sameConfiguration, touchVenueConfiguration } from './configuration'
@@ -28,8 +34,60 @@ import {
 import { HTTPException } from 'hono/http-exception'
 import { queueAccess, audit } from '../../auth/access'
 import { hash } from '../queue/crypto'
-import { copyVersion } from '../../integrations/whatsapp-copy-v3'
-import { actualCallCopyVariant } from '../../integrations/whatsapp-copy-v4'
+import {
+  prepareCall,
+  finishCallReplacement,
+  readCallReplacement,
+} from '../queue/call'
+import { feedbackEntry } from '../queue/feedback'
+import {
+  hydrateStaffCommandResult,
+  serializeStaffCommandResult,
+} from '../queue/command-result'
+import {
+  exchangePassSequences,
+  nextPassSuccessor,
+  prepareCalledPassParties,
+  prepareReturnedPassParties,
+  prepareWaitingPassParties,
+} from '../queue/pass'
+import type { Party } from '../queue/engine'
+import type { QueueCommandResult } from '@noqueue/contracts/staff'
+
+async function entryVersionConflict(
+  env: CloudflareBindings,
+  queueId: string,
+  entry: {
+    id: string
+    status: string
+    call_cycle: number
+  },
+): Promise<never> {
+  if (entry.status === 'expired') {
+    const expired = await env.DB.prepare(
+      "SELECT 1 FROM queue_staff_event WHERE queue_id=? AND entry_id=? AND call_cycle=? AND cause='arrival_expiry' LIMIT 1",
+    )
+      .bind(queueId, entry.id, entry.call_cycle)
+      .first()
+    if (expired)
+      throw new HTTPException(409, {
+        message: 'turn_automatically_processed',
+      })
+  }
+  if (entry.status === 'called') {
+    const assigned = await env.DB.prepare(
+      'SELECT 1 FROM queue_staff_event WHERE queue_id=? AND successor_entry_id=? AND successor_call_cycle=? LIMIT 1',
+    )
+      .bind(queueId, entry.id, entry.call_cycle)
+      .first()
+    if (assigned)
+      throw new HTTPException(409, {
+        message: 'turn_automatically_assigned',
+      })
+  }
+  throw new HTTPException(409, { message: 'version_conflict' })
+}
+
 export async function runQueueCommand(
   env: CloudflareBindings,
   actor: string,
@@ -37,7 +95,7 @@ export async function runQueueCommand(
   key: string,
   command: QueueCommand,
   now = Date.now(),
-) {
+): Promise<QueueCommandResult> {
   const access = await queueAccess(env, actor, queueId, 'queue.operate')
   if ((command.action as string) === 'release')
     throw new HTTPException(410, { message: 'operation_retired' })
@@ -52,24 +110,29 @@ export async function runQueueCommand(
     if (previous.request_hash !== fingerprint)
       throw new HTTPException(409, { message: 'idempotency_conflict' })
     await recalculateQueue(env, queueId, now)
-    return JSON.parse(previous.result) as { ok: true }
+    return hydrateStaffCommandResult(env, queueId, previous.result)
   }
   await maintainQueue(env, queueId, now)
   const state = await loadQueueState(env, queueId, now)
+  if (command.action === 'resolve_replacement' || command.action === 'dismiss_replacement')
+    throw new HTTPException(410, { message: 'operation_retired' })
   const quick = state.config?.type !== 'restaurant'
   let input: EntryCommand
   if (command.action === 'assign_next') {
     if (!quick) throw new HTTPException(409, { message: 'unsupported_action' })
+    if (!command.expectedEntryId || command.expectedVersion === undefined)
+      throw new HTTPException(409, { message: 'assignment_precondition_required' })
     const first = await env.DB.prepare(
-      "SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence,id LIMIT 1",
+      "SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' AND manual_only=0 ORDER BY CASE WHEN priority_rank IS NULL THEN 1 ELSE 0 END,priority_rank,sequence,id LIMIT 1",
     )
       .bind(queueId)
       .first<{ id: string; version: number }>()
-    if (!first) throw new HTTPException(409, { message: 'queue_empty' })
+    if (!first || first.id !== command.expectedEntryId || first.version !== command.expectedVersion)
+      throw new HTTPException(409, { message: 'assignment_next_changed' })
     input = { action: 'call', entryId: first.id, version: first.version }
   } else input = command
   const entry = await env.DB.prepare(
-    'SELECT status,version,called_at,arrival_deadline_at,service_window_id,service_ends_at,call_cycle FROM queue_entry WHERE id=? AND queue_id=?',
+    'SELECT status,version,called_at,arrival_deadline_at,service_window_id,service_ends_at,call_cycle,manual_only,priority_rank,sequence,party_size,preferred_space_id FROM queue_entry WHERE id=? AND queue_id=?',
   )
     .bind(input.entryId, queueId)
     .first<{
@@ -80,10 +143,22 @@ export async function runQueueCommand(
       service_window_id: string | null
       service_ends_at: number | null
       call_cycle: number
+      manual_only: number
+      priority_rank: number | null
+      sequence: number
+      party_size: number
+      preferred_space_id: string | null
     }>()
   if (!entry) throw new HTTPException(404, { message: 'not_found' })
+  const callParty = input.action === 'call' ? await env.DB.prepare('SELECT id,sequence,version,party_size AS partySize,preferred_space_id AS preferredSpaceId FROM queue_entry WHERE id=?').bind(input.entryId).first<import('../queue/engine').Party>() : null
+  const callState = callParty && !state.parties.some(p => p.id === callParty.id) ? { ...state, parties: [...state.parties, callParty] } : state
+
   if (entry.version !== input.version)
-    throw new HTTPException(409, { message: 'version_conflict' })
+    await entryVersionConflict(env, queueId, {
+      id: input.entryId,
+      status: entry.status,
+      call_cycle: entry.call_cycle,
+    })
   if (
     command.action !== 'assign_next' &&
     !allowedEntryActions(
@@ -94,6 +169,363 @@ export async function runQueueCommand(
     !(input.action === 'restore' && entry.status === 'expired')
   )
     throw new HTTPException(409, { message: 'unsupported_action' })
+  if (
+    (input.action === 'prioritize' ||
+      (input.action === 'pass' && entry.status === 'waiting')) &&
+    entry.manual_only
+  )
+    throw new HTTPException(409, { message: 'manual_attention_required' })
+
+  if (input.action === 'prioritize') {
+    if (entry.status !== 'waiting')
+      throw new HTTPException(409, { message: 'invalid_transition' })
+    const party = state.parties.find((item) => item.id === input.entryId)
+    if (!party)
+      throw new HTTPException(409, { message: 'manual_attention_required' })
+    const operationId = crypto.randomUUID()
+    const currentEntry = await feedbackEntry(env, input.entryId)
+    if (entry.priority_rank !== null) {
+      const result: QueueCommandResult = {
+        ok: true,
+        outcome: {
+          operationId,
+          action: input.action,
+          entry: currentEntry,
+          automatic: false,
+          cycleEnded: false,
+          mode: 'already_prioritized',
+        },
+      }
+      await env.DB.batch([
+        audit(
+          env,
+          actor,
+          access.organizationId,
+          access.venueId,
+          'queue.prioritize',
+          input.entryId,
+        ),
+        env.DB.prepare(
+          'INSERT INTO staff_command VALUES (?,?,?,?)',
+        ).bind(actor, key, fingerprint, serializeStaffCommandResult(result)),
+      ])
+      return result
+    }
+    const queuePriority = await env.DB.prepare(
+      'SELECT priority_counter FROM queue WHERE id=?',
+    )
+      .bind(queueId)
+      .first<{ priority_counter: number }>()
+    if (!queuePriority) throw new HTTPException(404, { message: 'not_found' })
+    const priorityRank = queuePriority.priority_counter + 1
+    const result: QueueCommandResult = {
+      ok: true,
+      outcome: {
+        operationId,
+        action: input.action,
+        entry: currentEntry,
+        automatic: false,
+        cycleEnded: false,
+        mode: 'prioritized',
+      },
+    }
+    const after: QueueModelInput = {
+      config: state.config,
+      allocations: state.allocations.map((allocation) => ({ ...allocation })),
+      holds: state.holds,
+      parties: state.parties.map((item) =>
+        item.id === input.entryId
+          ? { ...item, priorityRank }
+          : { ...item },
+      ),
+    }
+    await commitQueueTransition(
+      env,
+      queueId,
+      state,
+      after,
+      [
+        env.DB.prepare(
+          'UPDATE queue SET priority_counter=? WHERE id=? AND priority_counter=?',
+        ).bind(priorityRank, queueId, queuePriority.priority_counter),
+        env.DB.prepare(
+          "UPDATE queue_entry SET priority_rank=?,version=version+1 WHERE id=? AND queue_id=? AND status='waiting' AND manual_only=0 AND version=? AND priority_rank IS NULL",
+        ).bind(priorityRank, input.entryId, queueId, input.version),
+        audit(
+          env,
+          actor,
+          access.organizationId,
+          access.venueId,
+          'queue.prioritize',
+          input.entryId,
+        ),
+        env.DB.prepare(
+          'INSERT INTO staff_command VALUES (?,?,?,?)',
+        ).bind(actor, key, fingerprint, serializeStaffCommandResult(result)),
+      ],
+      now,
+      'staff.prioritize',
+    )
+    return result
+  }
+
+  if (input.action === 'pass') {
+    const operationId = crypto.randomUUID()
+    const currentEntry = await feedbackEntry(env, input.entryId)
+    const currentParty: Party = {
+      id: input.entryId,
+      sequence: entry.sequence,
+      partySize: entry.party_size,
+      preferredSpaceId: entry.preferred_space_id,
+      priorityRank: null,
+    }
+    if (entry.status === 'waiting') {
+      const party = state.parties.find((item) => item.id === input.entryId)
+      if (!party)
+        throw new HTTPException(409, { message: 'manual_attention_required' })
+      const context = resolveEstimateContext(party, state.config, state.baseline)
+      const successor = nextPassSuccessor(
+        party,
+        state.parties,
+        context,
+        state.config?.type ?? null,
+      )
+      if (!successor)
+        throw new HTTPException(409, { message: 'no_compatible_successor' })
+      const sequence = exchangePassSequences(party, successor)
+      const successorEntry = await feedbackEntry(env, successor.id)
+      const result: QueueCommandResult = {
+        ok: true,
+        outcome: {
+          operationId,
+          action: input.action,
+          entry: currentEntry,
+          successor: successorEntry,
+          automatic: false,
+          cycleEnded: false,
+          mode: 'waiting_swap',
+        },
+      }
+      const after: QueueModelInput = {
+        config: state.config,
+        allocations: state.allocations.map((allocation) => ({ ...allocation })),
+        holds: state.holds,
+        parties: prepareWaitingPassParties(state.parties, party, successor),
+      }
+      await commitQueueTransition(
+        env,
+        queueId,
+        state,
+        after,
+        [
+          env.DB.prepare(
+            "UPDATE queue_entry SET sequence=(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) WHERE id=? AND queue_id=? AND status='waiting' AND version=?",
+          ).bind(queueId, input.entryId, queueId, input.version),
+          env.DB.prepare(
+            "UPDATE queue_entry SET sequence=?,version=version+1 WHERE id=? AND queue_id=? AND status='waiting' AND version=?",
+          ).bind(sequence.successorSequence, successor.id, queueId, successor.version),
+          env.DB.prepare(
+            "UPDATE queue_entry SET sequence=?,priority_rank=NULL,version=version+1,call_cycle=call_cycle+1 WHERE id=? AND queue_id=? AND status='waiting' AND version=?",
+          ).bind(sequence.currentSequence, input.entryId, queueId, input.version),
+          env.DB.prepare(
+            "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'staff_pass',?)",
+          ).bind(crypto.randomUUID(), input.entryId, now),
+          env.DB.prepare(
+            "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'pass_received',?)",
+          ).bind(crypto.randomUUID(), successor.id, now),
+          audit(
+            env,
+            actor,
+            access.organizationId,
+            access.venueId,
+            'queue.pass',
+            input.entryId,
+          ),
+          env.DB.prepare(
+            'INSERT INTO staff_command VALUES (?,?,?,?)',
+          ).bind(actor, key, fingerprint, serializeStaffCommandResult(result)),
+        ],
+        now,
+        'staff.pass',
+      )
+      await activateIfReady(env, queueId, now)
+      return result
+    }
+    if (entry.status !== 'called')
+      throw new HTTPException(409, { message: 'invalid_transition' })
+
+    const selection = await selectAutomationSuccessor(
+      env,
+      queueId,
+      state,
+      input.entryId,
+      entry.call_cycle,
+      now,
+    )
+    const inherited = await readCallReplacement(env, input.entryId, entry.call_cycle)
+    const notices = [
+      env.DB.prepare(
+        "INSERT OR IGNORE INTO notification_trace(id,notification_id,event,recorded_at) SELECT id||':obsolete',id,'obsolete',? FROM notification_outbox WHERE entry_id=? AND kind='ready' AND status='pending'",
+      ).bind(now, input.entryId),
+      env.DB.prepare(
+        "UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE entry_id=? AND kind='ready' AND status='pending'",
+      ).bind(now, input.entryId),
+    ]
+    if (selection.successor) {
+      const successor = selection.successor
+      const sequence = exchangePassSequences(currentParty, successor)
+      const nextCycle = successor.call_cycle + 1
+      const call = await prepareCall(env, queueId, state, successor, {
+        now,
+        callCycle: nextCycle,
+        origin: 'staff_pass',
+        context: selection.context,
+        inherited,
+      })
+      const successorEntry = await feedbackEntry(env, successor.id)
+      const result: QueueCommandResult = {
+        ok: true,
+        outcome: {
+          operationId,
+          action: input.action,
+          entry: currentEntry,
+          successor: successorEntry,
+          automatic: call.automatic,
+          cycleEnded: false,
+          mode: 'called_handoff',
+        },
+      }
+      const after: QueueModelInput = {
+        config: state.config,
+        allocations: state.allocations.map((allocation) => ({ ...allocation })),
+        holds: state.holds,
+        parties: prepareCalledPassParties(state.parties, currentParty, successor),
+        appendedCallAt: now,
+        assignment: call.assignment,
+      }
+      await commitQueueTransition(
+        env,
+        queueId,
+        state,
+        after,
+        [
+          ...notices,
+          ...call.statements,
+          finishCallReplacement(env, input.entryId, entry.call_cycle, 'yielded', now, {
+            id: successor.id,
+            cycle: nextCycle,
+          }),
+          env.DB.prepare(
+            "UPDATE queue_entry SET sequence=(SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) WHERE id=? AND queue_id=? AND status='called' AND version=? AND call_cycle=?",
+          ).bind(queueId, input.entryId, queueId, input.version, entry.call_cycle),
+          env.DB.prepare(
+            "UPDATE queue_entry SET sequence=?,status='called',version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=call_cycle+1,called_at=?,arrival_deadline_at=? WHERE id=? AND queue_id=? AND status='waiting' AND version=?",
+          ).bind(
+            sequence.successorSequence,
+            call.graceMinutes,
+            now,
+            call.deadline,
+            successor.id,
+            queueId,
+            successor.version,
+          ),
+          env.DB.prepare(
+            "UPDATE queue_entry SET sequence=?,priority_rank=NULL,status='waiting',version=version+1,call_cycle=call_cycle+1,called_at=NULL,arrival_deadline_at=NULL WHERE id=? AND queue_id=? AND status='called' AND version=? AND call_cycle=?",
+          ).bind(
+            sequence.currentSequence,
+            input.entryId,
+            queueId,
+            input.version,
+            entry.call_cycle,
+          ),
+          env.DB.prepare(
+            "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'staff_pass',?)",
+          ).bind(crypto.randomUUID(), input.entryId, now),
+          env.DB.prepare(
+            "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'yield_received',?)",
+          ).bind(crypto.randomUUID(), successor.id, now),
+          env.DB.prepare(
+            "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'called',?)",
+          ).bind(crypto.randomUUID(), successor.id, now),
+          audit(
+            env,
+            actor,
+            access.organizationId,
+            access.venueId,
+            'queue.pass',
+            input.entryId,
+          ),
+          env.DB.prepare(
+            'INSERT INTO staff_command VALUES (?,?,?,?)',
+          ).bind(actor, key, fingerprint, serializeStaffCommandResult(result)),
+        ],
+        now,
+        'staff.pass',
+      )
+      await publishNotice(env, successor.id, 'ready')
+      await activateIfReady(env, queueId, now)
+      return result
+    }
+
+    const retained =
+      !!entry.manual_only || (entry.service_ends_at !== null && entry.service_ends_at <= now)
+    const currentAfter = { ...currentParty, sequence: entry.sequence }
+    const result: QueueCommandResult = {
+      ok: true,
+      outcome: {
+        operationId,
+        action: input.action,
+        entry: currentEntry,
+        successor: null,
+        automatic: false,
+        cycleEnded: selection.cycle?.state === 'active',
+        mode: 'returned_to_waiting',
+      },
+    }
+    const after: QueueModelInput = {
+      config: state.config,
+      allocations: state.allocations.map((allocation) => ({ ...allocation })),
+      holds: state.holds,
+      parties: retained
+        ? state.parties.filter((party) => party.id !== input.entryId)
+        : prepareReturnedPassParties(state.parties, currentAfter),
+    }
+    await commitQueueTransition(
+      env,
+      queueId,
+      state,
+      after,
+      [
+        ...notices,
+        finishCallReplacement(env, input.entryId, entry.call_cycle, 'returned_to_waiting', now),
+        stopAutomation(env, input.entryId, entry.call_cycle, selection.result, now),
+        env.DB.prepare(
+          "UPDATE queue_entry SET priority_rank=NULL,status='waiting',version=version+1,call_cycle=call_cycle+1,called_at=NULL,arrival_deadline_at=NULL WHERE id=? AND queue_id=? AND status='called' AND version=? AND call_cycle=?",
+        ).bind(input.entryId, queueId, input.version, entry.call_cycle),
+        ...(retained
+          ? [env.DB.prepare('UPDATE queue_entry SET manual_only=1 WHERE id=?').bind(input.entryId)]
+          : []),
+        env.DB.prepare(
+          "INSERT INTO queue_event(id,entry_id,kind,created_at) VALUES (?,?,'staff_pass',?)",
+        ).bind(crypto.randomUUID(), input.entryId, now),
+        audit(
+          env,
+          actor,
+          access.organizationId,
+          access.venueId,
+          'queue.pass',
+          input.entryId,
+        ),
+        env.DB.prepare(
+          'INSERT INTO staff_command VALUES (?,?,?,?)',
+        ).bind(actor, key, fingerprint, serializeStaffCommandResult(result)),
+      ],
+      now,
+      'staff.pass',
+    )
+    await activateIfReady(env, queueId, now)
+    return result
+  }
   const transitions: Record<string, readonly string[]> = {
     call: ['waiting'],
     complete: ['called'],
@@ -128,6 +560,14 @@ export async function runQueueCommand(
     if (deadline === null || now < deadline)
       throw new HTTPException(409, { message: 'arrival_grace_active' })
   }
+  const activeCycleBeforeEnd =
+    input.action === 'complete' || input.action === 'cancel'
+      ? await env.DB.prepare(
+          "SELECT id FROM queue_automation_cycle WHERE queue_id=? AND current_entry_id=? AND current_call_cycle=? AND state='active' LIMIT 1",
+        )
+          .bind(queueId, input.entryId, entry.call_cycle)
+          .first<{ id: string }>()
+      : null
   const status = {
     call: input.arrivalMode === 'present' ? 'completed' : 'called',
     complete: 'completed',
@@ -170,12 +610,11 @@ export async function runQueueCommand(
   }
   if (input.action === 'call') after.appendedCallAt = now
   const extra: D1PreparedStatement[] = []
-  const assignedResourceName: string | null = null
   let seatingContext: EstimateContext | undefined
   if (input.seating) {
     if (input.action !== 'call' || state.config?.type !== 'restaurant')
       throw new HTTPException(400, { message: 'invalid_assignment_seating' })
-    const party = state.parties.find((p) => p.id === input.entryId)!
+    const party = callParty!
     const options = assignmentTableOptions(state.config, party.partySize)
     if (input.seating.mode === 'unspecified') {
       if (options.length)
@@ -211,7 +650,7 @@ export async function runQueueCommand(
     }
   }
   if (input.action === 'call') {
-    const context = await assignmentContext(state, input.entryId, now)
+    const context = await assignmentContext(callState, input.entryId, now)
     if (input.assignmentToken && input.assignmentToken !== context.token)
       throw new HTTPException(409, { message: 'assignment_context_changed' })
   }
@@ -228,33 +667,6 @@ export async function runQueueCommand(
         now,
       ),
     )
-  if (input.action === 'call') {
-    const predicted = await env.DB.prepare(
-      'SELECT predicted_at,created_at,legacy_eta_minutes FROM queue_forecast_anchor WHERE entry_id=?',
-    )
-      .bind(input.entryId)
-      .first<{
-        predicted_at: number
-        created_at: number
-        legacy_eta_minutes: number
-      }>()
-    const position = state.parties.findIndex((p) => p.id === input.entryId)
-    extra.push(
-      env.DB.prepare(
-        'INSERT OR IGNORE INTO queue_wait_evidence(entry_id,predicted_at,actual_at,error_minutes,legacy_eta_minutes,forecast_created_at,mode) VALUES (?,?,?,?,?,?,?)',
-      ).bind(
-        input.entryId,
-        predicted?.predicted_at ?? null,
-        now,
-        predicted?.predicted_at == null
-          ? null
-          : (now - predicted.predicted_at) / 60000,
-        predicted?.legacy_eta_minutes ?? Math.max(0, position) * state.baseline,
-        predicted?.created_at ?? null,
-        state.config?.estimationMode ?? 'shadow',
-      ),
-    )
-  }
   let notifyCancellation = false
   if (input.action === 'cancel') {
     const consent = await env.DB.prepare(
@@ -289,46 +701,6 @@ export async function runQueueCommand(
       notifyCancellation = true
     }
   }
-  if (input.action === 'call' && input.arrivalMode !== 'present') {
-    let copyVariant: 'ready' | 'improved_ready' = 'ready'
-    if (copyVersion(env) === 4) {
-      const accepted = await env.DB.prepare(
-        'SELECT last_accepted_predicted_at FROM queue_notification_state WHERE entry_id=?',
-      )
-        .bind(input.entryId)
-        .first<{ last_accepted_predicted_at: number | null }>()
-      copyVariant = actualCallCopyVariant(
-        accepted?.last_accepted_predicted_at ?? null,
-        now,
-        state.config?.etaChangeThresholdMinutes ?? 5,
-      )
-    }
-    const serviceName = state.config?.name ?? 'Servicio'
-    const snapshot = {
-      schemaVersion: 2 as const,
-      ...(copyVersion(env) === 4 ? { copyVariant } : {}),
-      serviceName,
-      ahead: null,
-      etaMinutes: null,
-      predictedAt: null,
-      estimateQuality: 'unknown' as const,
-      resourceName: assignedResourceName,
-      arrivalDeadlineAt:
-        now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
-    }
-    extra.push(
-      ...lifecycleNoticeStatements(
-        env,
-        input.entryId,
-        'ready',
-        now,
-        snapshot,
-        0,
-        entry.call_cycle + 1,
-        !!state.config,
-      ),
-    )
-  }
   if (status !== 'waiting') {
     extra.push(
       env.DB.prepare(
@@ -339,17 +711,62 @@ export async function runQueueCommand(
       ).bind(now, input.entryId),
     )
   }
+  let call: Awaited<ReturnType<typeof prepareCall>> | undefined
   if (input.action === 'call') {
-    const party = state.parties.find((p) => p.id === input.entryId)!
-    after.assignment = {
-      entryId: input.entryId,
-      callCycle: entry.call_cycle + 1,
-      partySize: party.partySize,
-      preferredSpaceId: party.preferredSpaceId,
-      source: 'staff',
-      ...(seatingContext ? { context: seatingContext } : {}),
-    }
+    call = await prepareCall(
+      env,
+      queueId,
+      callState,
+      callParty!,
+      {
+        now,
+        callCycle: entry.call_cycle + 1,
+        origin: 'staff',
+        context: seatingContext,
+        present: input.arrivalMode === 'present',
+      },
+    )
+    after.assignment = call.assignment
+    extra.push(...call.statements)
+  } else if (['complete', 'cancel', 'no_show'].includes(input.action)) {
+    extra.push(stopAutomation(env, input.entryId, entry.call_cycle, input.action === 'complete' ? 'arrived' : input.action === 'cancel' ? 'cancelled' : 'no_show', now))
+    extra.push(
+      finishCallReplacement(
+        env,
+        input.entryId,
+        entry.call_cycle,
+        input.action === 'complete'
+          ? 'arrived'
+          : input.action === 'cancel'
+          ? 'cancelled'
+          : 'no_show',
+        now,
+      ),
+    )
   }
+  const commandResult: QueueCommandResult =
+    input.action === 'call' ||
+    input.action === 'complete' ||
+    input.action === 'cancel'
+      ? {
+          ok: true,
+          outcome: {
+            operationId: crypto.randomUUID(),
+            action: input.action,
+            entry: await feedbackEntry(env, input.entryId),
+            automatic: call?.automatic ?? false,
+            cycleEnded: !!activeCycleBeforeEnd,
+            mode:
+              input.action === 'call'
+                ? input.arrivalMode === 'present'
+                  ? 'present'
+                  : 'called'
+                : input.action === 'cancel'
+                  ? 'cancelled'
+                  : 'completed',
+          },
+        }
+      : { ok: true }
   await commitQueueTransition(
     env,
     queueId,
@@ -358,11 +775,12 @@ export async function runQueueCommand(
     [
       ...extra,
       env.DB.prepare(
-        `UPDATE queue_entry SET status=?,version=version+1,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
+        `UPDATE queue_entry SET status=?,version=version+1,priority_rank=CASE WHEN ?='cancel' THEN NULL ELSE priority_rank END,progress_initial_eta_minutes=COALESCE(progress_initial_eta_minutes,?),call_cycle=CASE WHEN ?='call' THEN call_cycle+1 ELSE call_cycle END,called_at=?,arrival_deadline_at=CASE WHEN ?='call' THEN ? WHEN ?='restore' THEN NULL ELSE arrival_deadline_at END,sequence=CASE WHEN ?='skip' THEN (SELECT COALESCE(MAX(sequence),0)+1 FROM queue_entry WHERE queue_id=?) ELSE sequence END WHERE id=? AND queue_id=? AND version=?`,
       ).bind(
         status,
+        input.action,
         input.action === 'call' && input.arrivalMode !== 'present'
-          ? state.config?.graceMinutes ?? (quick ? 2 : 5)
+          ? call!.graceMinutes
           : null,
         input.action,
         input.action === 'call'
@@ -371,9 +789,7 @@ export async function runQueueCommand(
           ? null
           : entry.called_at,
         input.action,
-        input.arrivalMode === 'present'
-          ? null
-          : now + (state.config?.graceMinutes ?? (quick ? 2 : 5)) * 60000,
+        call?.deadline ?? null,
         input.action,
         input.action,
         queueId,
@@ -405,7 +821,7 @@ export async function runQueueCommand(
         actor,
         key,
         fingerprint,
-        JSON.stringify({ ok: true }),
+        serializeStaffCommandResult(commandResult),
       ),
     ],
     now,
@@ -415,7 +831,7 @@ export async function runQueueCommand(
     await publishNotice(env, input.entryId, 'ready')
   if (notifyCancellation) await publishNotice(env, input.entryId, 'cancelled')
   await activateIfReady(env, queueId, now)
-  return { ok: true }
+  return commandResult
 }
 export async function configureQueue(
   env: CloudflareBindings,
@@ -440,7 +856,7 @@ export async function configureQueue(
   const old = await loadQueueState(env, queueId, now)
   if (old.config?.scheduleGroups && !rawConfig.scheduleGroups)
     throw new HTTPException(409, { message: 'schedule_format_conflict' })
-  const config = normalizeConfig(rawConfig, old.config)
+  const config = normalizeConfig({ ...rawConfig, automaticAssignmentEnabled: rawConfig.automaticAssignmentEnabled ?? old.config?.automaticAssignmentEnabled ?? false }, old.config)
   if (
     config.graceMinutes !== old.config?.graceMinutes &&
     (await env.DB.prepare(
@@ -511,6 +927,7 @@ export async function configureQueue(
       etaChangeThresholdMinutes: value.etaChangeThresholdMinutes ?? 5,
       notificationCooldownMinutes: value.notificationCooldownMinutes ?? 10,
       intelligencePolicy: value.intelligencePolicy ?? 'automatic',
+      automaticAssignmentEnabled: value.automaticAssignmentEnabled ?? false,
     }
   }
   const configurationChanged =
@@ -542,6 +959,7 @@ export async function configureQueue(
       ...(configurationChanged
         ? [touchVenueConfiguration(env, access.venueId, Date.now(), true)]
         : []),
+      ...(!config.automaticAssignmentEnabled ? [stopQueueAutomation(env, queueId, 'disabled', now)] : []),
       directoryConfigStatement(env, queueId, JSON.stringify(config)),
       audit(
         env,

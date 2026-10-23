@@ -145,6 +145,7 @@ async function assign(
   zone: string | null,
   size = 2,
   seating?: AssignmentSeating,
+  bindings = env,
 ) {
   f.clock(at)
   await env.DB.prepare(
@@ -153,7 +154,7 @@ async function assign(
     .bind(zone, size, f.ids[i]!)
     .run()
   await runQueueCommand(
-    env,
+    bindings,
     f.actor,
     f.queueId,
     crypto.randomUUID(),
@@ -284,6 +285,8 @@ it('uses only the last 30 valid observations at each level including sparse type
 })
 it('hands off the assigned context atomically without creating a capacity sample or moving the human progress anchor', async () => {
   const f = await fixture(4)
+  f.config.automaticAssignmentEnabled = true
+  const automatic = { ...env, QUEUE_AUTO_REPLACEMENT_ENABLED: 'true' }
   await configure(f)
   await env.DB.prepare(
     "UPDATE queue_entry SET preferred_space_id='inside' WHERE queue_id=?",
@@ -293,7 +296,7 @@ it('hands off the assigned context atomically without creating a capacity sample
   await env.DB.prepare('UPDATE queue_entry SET party_size=3 WHERE id=?')
     .bind(f.ids[1]!)
     .run()
-  await assign(f, 0, minute, 'inside', 3)
+  await assign(f, 0, minute, 'inside', 3, { mode:'confirmed', spaceId:'inside', seats:4 }, automatic)
   const before = await env.DB.prepare(
     'SELECT last_assignment_at FROM queue_cadence_state WHERE queue_id=?',
   )
@@ -302,7 +305,7 @@ it('hands off the assigned context atomically without creating a capacity sample
   f.clock(2 * minute)
   const key = crypto.randomUUID()
   await runCustomerCommand(
-    env,
+    automatic,
     f.queueId,
     f.ids[0]!,
     key,
@@ -310,7 +313,7 @@ it('hands off the assigned context atomically without creating a capacity sample
     Date.now(),
   )
   await runCustomerCommand(
-    env,
+    automatic,
     f.queueId,
     f.ids[0]!,
     key,
@@ -816,6 +819,8 @@ it('keeps inferred historical calls in general learning but excludes them from c
 
 it('hands confirmed seating to the earliest fitting same-zone or no-preference successor without learning again', async () => {
   const f = await fixture(6)
+  f.config.automaticAssignmentEnabled = true
+  const automatic = { ...env, QUEUE_AUTO_REPLACEMENT_ENABLED: 'true' }
   await configure(f)
   // Skip an earlier party preferring another zone and one that cannot fit.
   await env.DB.prepare(
@@ -835,7 +840,7 @@ it('hands confirmed seating to the earliest fitting same-zone or no-preference s
     mode: 'confirmed',
     spaceId: 'outside',
     seats: 4,
-  })
+  }, automatic)
   const before = await env.DB.prepare(
     'SELECT last_assignment_at FROM queue_cadence_state WHERE queue_id=?',
   )
@@ -845,7 +850,7 @@ it('hands confirmed seating to the earliest fitting same-zone or no-preference s
   f.clock(2 * minute)
   for (let i = 0; i < 2; i++)
     await runCustomerCommand(
-      env,
+      automatic,
       f.queueId,
       f.ids[0]!,
       key,

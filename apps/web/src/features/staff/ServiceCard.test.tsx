@@ -307,6 +307,21 @@ it('uses neutral inactive badges and real counts independently from the public m
   ).toHaveTextContent('3')
 })
 
+it('shows the service-level automatic-management badge only when opted in', () => {
+  const view = render(<ServiceCard {...props()} />)
+  const card = screen.getByRole('article', { name: 'Servicio Restaurante' })
+  expect(within(card).queryByText('Gestión automática')).not.toBeInTheDocument()
+  view.rerender(
+    <ServiceCard
+      {...props({
+        ...service,
+        config: { ...service.config, automaticAssignmentEnabled: true },
+      })}
+    />,
+  )
+  expect(within(card).getByText('Gestión automática')).toBeVisible()
+})
+
 it('restores the switch after a committed close with a delayed refresh', async () => {
   mock()
   let finish!: () => void

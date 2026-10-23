@@ -13,6 +13,7 @@ import {
   AccordionContent,
 } from '@/components/ui/accordion'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Switch } from '@/components/ui/switch'
 import { emptyService } from './model'
 import { issuesFor } from './validate'
 
@@ -29,6 +30,7 @@ export type QueueOptions = Partial<
     | 'approachMinutes'
     | 'etaChangeThresholdMinutes'
     | 'notificationCooldownMinutes'
+    | 'automaticAssignmentEnabled'
   >
 >
 
@@ -59,6 +61,7 @@ export function QueueConfigForm({
       approachMinutes: 10,
       etaChangeThresholdMinutes: 5,
       notificationCooldownMinutes: 10,
+      automaticAssignmentEnabled: false,
       ...options,
       // Missing versions are intelligent v2; explicit v1 remains a rollback.
       estimatorVersion: options?.estimatorVersion ?? 2,
@@ -81,6 +84,10 @@ export function QueueConfigForm({
   )
   const [error, setError] = useState('')
   const draft = useWatch({ control: form.control, name: 'spaces' })
+  const automaticAssignmentEnabled = useWatch({
+    control: form.control,
+    name: 'automaticAssignmentEnabled',
+  })
   const operations = null
   return (
     <form
@@ -117,6 +124,7 @@ export function QueueConfigForm({
           approachMinutes: values.approachMinutes,
           etaChangeThresholdMinutes: values.etaChangeThresholdMinutes,
           notificationCooldownMinutes: values.notificationCooldownMinutes,
+          automaticAssignmentEnabled: values.automaticAssignmentEnabled ?? false,
           estimatorVersion: values.estimatorVersion,
           estimationMode: values.estimationMode,
           resourceStateKnown: values.resourceStateKnown,
@@ -149,6 +157,30 @@ export function QueueConfigForm({
         El sistema ajusta automáticamente estas estimaciones según el ritmo real
         de asignación de turnos.
       </p>
+      <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+        <div className="min-w-0 space-y-2">
+          <FieldLabel htmlFor="automatic-assignment-enabled" className="text-base">
+            Modo de gestión automática
+          </FieldLabel>
+          <p className="text-sm text-muted-foreground">
+            Tras una asignación manual, si la automatización está disponible,
+            si vence el plazo sin confirmar la llegada, el turno quedará caducado
+            y el sistema avisará al siguiente cliente compatible. Confirmar o
+            cancelar manualmente detiene ese ciclo.
+          </p>
+        </div>
+        <Switch
+          id="automatic-assignment-enabled"
+          aria-label="Modo de gestión automática"
+          checked={automaticAssignmentEnabled ?? false}
+          onCheckedChange={(checked) =>
+            form.setValue('automaticAssignmentEnabled', checked, {
+              shouldDirty: true,
+            })
+          }
+          className="mt-0.5"
+        />
+      </div>
       <fieldset className="space-y-4 rounded-lg border p-4">
         <legend className="px-1 font-medium">Avisos de turno</legend>
         <p className="text-sm text-muted-foreground">

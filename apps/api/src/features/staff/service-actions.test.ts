@@ -131,22 +131,14 @@ it('assigns quick FIFO once, preserves grace and finishes without a resource', a
       second = await entry(t.queue)
     const key = crypto.randomUUID(),
       now = Date.now()
-    await expect(
-      runQueueCommand(
-        env,
-        t.actor,
-        t.queue,
-        crypto.randomUUID(),
-        { action: 'call', entryId: second, version: 0 },
-        now,
-      ),
-    ).rejects.toThrow('unsupported_action')
+    await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(),
+      { action: 'call', entryId: second, version: 0 }, now)
     await runQueueCommand(
       env,
       t.actor,
       t.queue,
       key,
-      { action: 'assign_next' },
+      { action: 'assign_next', expectedEntryId: first, expectedVersion: 0 },
       now,
     )
     await runQueueCommand(
@@ -154,7 +146,7 @@ it('assigns quick FIFO once, preserves grace and finishes without a resource', a
       t.actor,
       t.queue,
       key,
-      { action: 'assign_next' },
+      { action: 'assign_next', expectedEntryId: first, expectedVersion: 0 },
       now + 1000,
     )
     const row = await env.DB.prepare(
@@ -188,7 +180,7 @@ it('assigns quick FIFO once, preserves grace and finishes without a resource', a
           .bind(second)
           .first()
       )?.status,
-    ).toBe('waiting')
+    ).toBe('called')
     expect(
       (
         await env.DB.prepare(
@@ -348,7 +340,7 @@ it('keeps assigned deadlines immutable through config changes and provider deliv
     t.actor,
     t.queue,
     crypto.randomUUID(),
-    { action: 'assign_next' },
+    { action: 'assign_next', expectedEntryId: id, expectedVersion: 0 },
     now,
   )
   const q = await env.DB.prepare(
@@ -409,7 +401,7 @@ it('reissues a ready notice with a new call-cycle after expiry, restoration, and
     id = await entry(t.queue),
     now = Date.now()
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'assign_next',
+    action: 'assign_next', expectedEntryId: id, expectedVersion: 0,
   }, now)
   await expireArrivals(env, t.queue, now + 120000)
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
@@ -419,7 +411,7 @@ it('reissues a ready notice with a new call-cycle after expiry, restoration, and
     overrideReason: 'Customer returned before service ended',
   }, now + 120001)
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'assign_next',
+    action: 'assign_next', expectedEntryId: id, expectedVersion: 3,
   }, now + 120002)
   const notices = await env.DB.prepare(
     "SELECT call_cycle,payload_version,payload_snapshot FROM notification_outbox WHERE entry_id=? AND kind='ready' ORDER BY call_cycle",
@@ -450,7 +442,7 @@ it('cancels a pending joined notice atomically when the turn is assigned', async
     .run()
 
   await runQueueCommand(env, t.actor, t.queue, crypto.randomUUID(), {
-    action: 'assign_next',
+    action: 'assign_next', expectedEntryId: id, expectedVersion: 0,
   })
 
   expect(

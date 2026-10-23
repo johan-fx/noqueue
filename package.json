@@ -32,6 +32,7 @@
   },
   "devDependencies": {
     "turbo": "2.10.12",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "yaml": "2.9.0"
   }
 }

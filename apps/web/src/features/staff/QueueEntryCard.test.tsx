@@ -43,8 +43,25 @@ const props: ComponentProps<typeof QueueEntryCard> = {
   busy: false,
   revealed: null,
   onReveal: vi.fn(),
+  onManage: vi.fn(),
   onAction: vi.fn(),
 }
+
+it('keeps the manual arrival action available for a legacy automatic replacement', () => {
+  render(<QueueEntryCard {...props} revealed="all" entry={{ ...props.entry, status: 'called',
+    automaticReplacement: { origin: 'arrival_expiry', eligible: true, result: 'pending', successor: null },
+  }} />)
+  expect(screen.getAllByRole('button', { name: 'Confirmar llegada' }).length).toBeGreaterThan(0)
+})
+
+it('keeps replacement details out of the operational card', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry,status:'expired',
+    automaticReplacement:{origin:'staff',eligible:true,result:'missing_context',successor:{id:'next',code:'T2'}},
+  }} />)
+  expect(screen.queryByText(/Falta confirmar/)).not.toBeInTheDocument()
+  expect(screen.queryByRole('button',{name:/Ver turno sucesor/})).not.toBeInTheDocument()
+  expect(screen.getByText('Caducado')).toBeVisible()
+})
 
 it('counts down the public wait, not zero operational availability, and accepts revisions', () => {
   const entry = { ...props.entry, etaMinutes: 0, predictedAt: 0,
@@ -96,6 +113,12 @@ it('keeps both trays mounted but inaccessible while closed', () => {
     screen.queryByRole('button', { name: 'Asignar turno' }),
   ).not.toBeInTheDocument()
   expect(container.querySelector('li')).toHaveClass('select-none')
+})
+it('opens the manage-turn flow from the whole active customer card', () => {
+  render(<QueueEntryCard {...props} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Gestionar turno T1' }))
+  expect(props.onManage).toHaveBeenCalledWith(props.entry)
+  expect(props.onReveal).toHaveBeenCalledWith(null)
 })
 it('reveals the Figma green assignment action with a check and closes before dispatch', () => {
   render(<QueueEntryCard {...props} revealed="right" />)
@@ -185,7 +208,7 @@ it('retains only cancellation on the left for called entries', () => {
 })
 
 it.each(['reception', 'pool'] as const)(
-  'keeps %s waiting actions cancellation-only for swipe and keyboard',
+  'offers %s manual assignment, pass and cancellation for the next customer',
   (type) => {
     render(
       <QueueEntryCard
@@ -194,12 +217,82 @@ it.each(['reception', 'pool'] as const)(
         revealed="all"
       />,
     )
-    expect(
-      screen.queryByRole('button', { name: 'Asignar turno' }),
-    ).not.toBeInTheDocument()
-    expect(screen.queryByText('Pasar turno')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Asignar turno' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Pasar turno' })).toBeVisible()
     expect(
       screen.getAllByRole('button', { name: 'Cancelar turno' }),
     ).toHaveLength(1)
   },
 )
+
+it('hides the ETA and explains that retained waiting entries need manual assignment', () => {
+  render(
+    <QueueEntryCard
+      {...props}
+      entry={{
+        ...props.entry,
+        manualOnly: true,
+        waitEstimate: { predictedAt: 60_000, estimateQuality: 'estimated' },
+      }}
+    />,
+  )
+  expect(screen.getByText('Pendiente de asignación manual')).toBeVisible()
+  expect(screen.queryByText('1:00')).not.toBeInTheDocument()
+})
+
+it('keeps a retained called entry countdown while keeping the card cycle summary compact', () => {
+  render(
+    <QueueEntryCard
+      {...props}
+      entry={{
+        ...props.entry,
+        status: 'called',
+        manualOnly: true,
+        arrivalDeadlineAt: 45_000,
+        automationCycle: {
+          id: 'cycle-1',
+          capacity: 4,
+          receptionService: null,
+          state: 'active',
+          reason: null,
+        },
+      }}
+    />,
+  )
+  expect(screen.getByLabelText('Tiempo restante para llegar: 0:45')).toBeVisible()
+  expect(screen.getByText('Automático · Intento 1')).toBeVisible()
+  expect(screen.queryByText(/Confirmar o cancelar detiene/)).not.toBeInTheDocument()
+  expect(screen.getByRole('listitem')).toHaveClass('border-l-2', 'border-l-zinc-900')
+})
+
+it('labels revealed pass and priority actions and never executes them merely on reveal', () => {
+  const onAction = vi.fn()
+  const { rerender } = render(<QueueEntryCard {...props} onAction={onAction} revealed="all" isNext />)
+  expect(screen.getByRole('button', { name: 'Pasar turno' })).toBeVisible()
+  expect(screen.queryByRole('button', { name: 'Priorizar para siguiente turno' })).not.toBeInTheDocument()
+  expect(onAction).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Pasar turno' }))
+  expect(onAction).toHaveBeenCalledWith(props.entry, 'pass')
+  rerender(<QueueEntryCard {...props} onAction={onAction} revealed="all" isNext={false} />)
+  expect(screen.queryByRole('button', { name: 'Pasar turno' })).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Priorizar para siguiente turno' })).toBeVisible()
+})
+
+
+it('distinguishes a previous cycle arrival from the waiting client who passed', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry,
+    automationCycle: { id: 'previous', state: 'stopped', reason: 'arrived', capacity: 4, receptionService: null },
+  }} />)
+  expect(screen.getByText('Ciclo anterior finalizado por una llegada. Este turno sigue en espera.')).toBeVisible()
+  expect(screen.queryByText('Llegada confirmada; ciclo automático finalizado.')).not.toBeInTheDocument()
+})
+
+it('exposes call status and cycle attempt to assistive technology without hiding card text', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry, status: 'called',
+    arrivalDeadlineAt: 60000,
+    automationCycle: { id: 'c', state: 'active', capacity: 2, receptionService: null, reason: null, attempt: 2 },
+  }} />)
+  const manage = screen.getByRole('button', { name: 'Gestionar turno T1' })
+  expect(manage).toHaveAccessibleDescription(/Pendiente de llegada.*1:00.*Automático · Intento 2/)
+  expect(manage).not.toContainElement(screen.getByText('Pendiente de llegada'))
+})

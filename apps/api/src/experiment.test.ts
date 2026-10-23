@@ -816,3 +816,29 @@ it('uses waiting-list terminology in customer WhatsApp updates and the embedded 
   const page = await app.request(`http://localhost${prefix}`, {}, env)
   expect(await page.text()).toContain('Prueba la lista, de principio a fin.')
 })
+
+it('uses the same effective order for experiment advancement, snapshots and dispatch with retained and prioritized entries', async () => {
+  const customer = await confirmed()
+  const rows = (await env.DB.prepare("SELECT id FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence")
+    .bind(experimentQueueId).all<{ id: string }>()).results
+  expect(rows).toHaveLength(4)
+  await env.DB.batch([
+    env.DB.prepare('UPDATE queue_entry SET manual_only=1 WHERE id=?').bind(rows[0]!.id),
+    env.DB.prepare('UPDATE queue_entry SET priority_rank=1 WHERE id=?').bind(rows[2]!.id),
+    env.DB.prepare('UPDATE queue_entry SET priority_rank=2 WHERE id=?').bind(customer.entry_id),
+  ])
+  expect((await action('advance')).status).toBe(200)
+  expect(await env.DB.prepare('SELECT status,priority_rank FROM queue_entry WHERE id=?')
+    .bind(rows[2]!.id).first()).toEqual({ status: 'served', priority_rank: null })
+  expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?')
+    .bind(rows[0]!.id).first()).toEqual({ status: 'waiting', manual_only: 1 })
+  const updates = await pending()
+  expect(updates).toHaveLength(1)
+  expect(updates[0]!.position).toBe(1)
+  const { experimentSnapshot } = await import('./features/queue/experiment')
+  const snapshot = await experimentSnapshot(env)
+  expect(snapshot.entries).toHaveLength(2)
+  expect(snapshot.entries.map(entry => entry.position)).toEqual([1, 2])
+  await dispatchNotification(env, updates[0]!.id)
+  expect((await pending())[0]!.status).toBe('accepted')
+})

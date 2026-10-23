@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import {
   animate,
   motion,
@@ -8,9 +8,9 @@ import {
 } from 'motion/react'
 import {
   Check,
-  ChevronDown,
   Clock,
   CircleX,
+  RotateCw,
   Users,
   LogIn,
   LogOut,
@@ -45,10 +45,12 @@ export function QueueEntryCard({
   now,
   online = true,
   position,
+  isNext = position === 1,
   canOperate,
   busy,
   revealed,
   onReveal,
+  onManage,
   onAction,
 }: {
   entry: StaffEntry
@@ -56,12 +58,15 @@ export function QueueEntryCard({
   now: number
   online?: boolean
   position: number
+  isNext?: boolean
   canOperate: boolean
   busy: boolean
   revealed: 'left' | 'right' | 'all' | null
   onReveal: (direction: 'left' | 'right' | 'all' | null) => void
+  onManage: (entry: StaffEntry) => void
   onAction: (entry: StaffEntry, action: QueueCommand['action']) => void
 }) {
+  const detailsId = useId()
   const wait = entry.waitEstimate
   const waitRemaining =
     wait?.predictedAt != null &&
@@ -81,9 +86,42 @@ export function QueueEntryCard({
     wait?.estimateQuality === 'provisional'
       ? 'Espera provisional'
       : 'Espera estimada'
+  const cycle = entry.automationCycle
+  const cycleContext =
+    cycle?.state === 'stopped' && cycle.reason
+      ? {
+          arrived: entry.status === 'waiting'
+            ? 'Ciclo anterior finalizado por una llegada. Este turno sigue en espera.'
+            : ['completed', 'served'].includes(entry.status)
+              ? 'Llegada confirmada; ciclo automático finalizado.'
+              : 'Ciclo anterior finalizado por una llegada.',
+          cancelled:
+            'Ciclo detenido por cancelación manual; para reanudarlo, asigna otro turno manualmente.',
+          no_show: 'Ciclo detenido: no se encontró una alternativa compatible.',
+          no_candidate:
+            'Sin candidatos compatibles. Asigna el siguiente turno manualmente para iniciar otro ciclo.',
+          missing_context:
+            'Ciclo detenido: falta contexto para encontrar una alternativa compatible.',
+          context_changed:
+            'Ciclo detenido porque cambió el contexto de compatibilidad.',
+          service_ended: 'Ciclo detenido al cerrar el servicio.',
+          disabled: 'Ciclo detenido: gestión automática desactivada.',
+          legacy: 'Sin ciclo automático activo para este turno.',
+        }[cycle.reason] ?? 'Ciclo automático detenido.'
+      : null
   const actions = (
     entry.allowedActions ?? entryActions(entry.status, queue.config.type)
-  ).filter((action) => action !== 'release')
+  )
+    .filter((action) => action !== 'release')
+    .filter((action) =>
+      entry.status !== 'waiting'
+        ? true
+        : action === 'pass'
+          ? isNext
+          : action === 'prioritize'
+            ? !isNext
+            : true,
+    )
   const operable = canOperate && !busy && actions.length > 0
   const active = ['waiting', 'called'].includes(entry.status)
   const draggable = operable && active
@@ -180,13 +218,18 @@ export function QueueEntryCard({
   }
   return (
     <li
-      className="relative overflow-hidden rounded-lg border bg-background select-none [&_*]:select-none"
+      className={`relative overflow-hidden rounded-lg border bg-background select-none [&_*]:select-none ${
+        entry.status === 'called' && cycle?.state === 'active'
+          ? 'border-l-2 border-l-zinc-900'
+          : ''
+      }`}
       style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
       onTouchStart={(event) => event.stopPropagation()}
       onTouchMove={(event) => event.stopPropagation()}
       onTouchEnd={(event) => event.stopPropagation()}
       onTouchCancel={(event) => event.stopPropagation()}
       data-entry-code={entry.code}
+      data-entry-id={entry.id}
     >
       {canOperate && active && (
         <>
@@ -270,7 +313,7 @@ export function QueueEntryCard({
             !event.isPrimary ||
             event.button !== 0 ||
             (event.target as HTMLElement).closest(
-              'button, a, input, select, textarea',
+              'button:not([data-manage-entry]), a, input, select, textarea',
             )
           )
             return
@@ -294,6 +337,19 @@ export function QueueEntryCard({
           }
         }}
       >
+        <div className="relative flex w-full min-w-0 items-center gap-4 rounded-md bg-background p-4 text-left">
+          <button
+            type="button"
+            data-manage-entry=""
+            className="absolute inset-0 z-10 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-default"
+            aria-label={`Gestionar turno ${entry.code}`}
+            aria-describedby={detailsId}
+            disabled={!canOperate || !active || busy}
+            onClick={() => {
+              onReveal(null)
+              onManage(entry)
+            }}
+          />
         {active && (
           <span
             aria-label={`Posición ${position}`}
@@ -302,7 +358,7 @@ export function QueueEntryCard({
             {position}
           </span>
         )}
-        <div className="min-w-0 flex-1 space-y-2">
+        <div id={detailsId} className="min-w-0 flex-1 space-y-2">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <p className="break-words text-sm font-medium">
@@ -313,22 +369,6 @@ export function QueueEntryCard({
                 {entry.code}
               </p>
             </div>
-            {canOperate && actions.length > 0 && (
-              <Button
-                size="icon-sm"
-                variant="ghost"
-                disabled={busy}
-                aria-label={`Acciones del turno ${entry.code}`}
-                aria-expanded={revealed === 'all'}
-                aria-controls={`actions-${entry.id}`}
-                onClick={() => onReveal(revealed === 'all' ? null : 'all')}
-              >
-                <ChevronDown
-                  aria-hidden="true"
-                  className={revealed === 'all' ? 'rotate-180' : ''}
-                />
-              </Button>
-            )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
             {queue.config.type === 'reception' && entry.receptionService && (
@@ -361,7 +401,11 @@ export function QueueEntryCard({
               </span>
             )}
             {entry.status === 'waiting' &&
-              (waitLabel == null ? (
+              (entry.manualOnly ? (
+                <span className="ml-auto font-medium text-foreground">
+                  Pendiente de asignación manual
+                </span>
+              ) : waitLabel == null ? (
                 <span>Espera pendiente de datos</span>
               ) : (
                 <Badge
@@ -391,8 +435,8 @@ export function QueueEntryCard({
             )}
             {entry.status === 'called' && entry.arrivalDeadlineAt != null && (
               <Badge
-                variant="secondary"
-                className="tabular-nums"
+                variant={cycle?.state === 'active' ? 'destructive' : 'secondary'}
+                className={`tabular-nums ${cycle?.state === 'active' ? 'border-0 bg-red-600 text-white hover:bg-red-600' : ''}`}
                 title="Tiempo restante para llegar"
                 aria-label={`Tiempo restante para llegar: ${formatCountdown(
                   entry.arrivalDeadlineAt - now,
@@ -403,6 +447,16 @@ export function QueueEntryCard({
               </Badge>
             )}
           </div>
+          {entry.status === 'called' && cycle?.state === 'active' && (
+            <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
+              <RotateCw className="size-3.5" aria-hidden="true" />
+              Automático · Intento {cycle.attempt ?? 1}
+            </p>
+          )}
+          {cycleContext && (
+            <p className="text-xs text-muted-foreground">{cycleContext}</p>
+          )}
+        </div>
         </div>
       </motion.div>
       {canOperate && revealed === 'all' && (

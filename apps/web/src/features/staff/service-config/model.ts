@@ -41,6 +41,7 @@ export const emptyService: GroupedServiceInput = {
   averageMinutes: 60,
   graceMinutes: 5,
   cutoffMinutes: 30,
+  automaticAssignmentEnabled: false,
   scheduleGroups: [
     {
       days: [1],

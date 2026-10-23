@@ -7,23 +7,46 @@ import {
 } from './staff'
 
 describe('service action policy', () => {
-  it('keeps quick waiting selection global and arrival direct', () => {
+  it('allows manual assignment and direct arrival confirmation for every service type', () => {
     for (const type of ['reception', 'pool'] as const) {
-      expect(allowedEntryActions(type, 'waiting')).toEqual(['cancel'])
+      expect(allowedEntryActions(type, 'waiting')).toEqual(['call', 'pass', 'prioritize', 'cancel'])
       expect(allowedEntryActions(type, 'called')).toEqual([
         'complete',
+        'pass',
         'cancel',
       ])
       expect(allowedEntryActions(type, 'completed')).toEqual([])
     }
   })
+  it('accepts the automatic-assignment service setting while preserving legacy omission', async () => {
+    const { serviceSchema } = await import('./staff')
+    const base = {
+      name: 'Reception',
+      type: 'reception',
+      capacity: 10,
+      averageMinutes: 5,
+      graceMinutes: 2,
+      cutoffMinutes: 0,
+      twentyFourHours: true,
+      schedules: [],
+      spaces: [],
+      receptionServices: ['check_in'],
+    }
+
+    expect(serviceSchema.parse({ ...base, automaticAssignmentEnabled: true }).automaticAssignmentEnabled).toBe(true)
+    expect(serviceSchema.parse({ ...base, automaticAssignmentEnabled: false }).automaticAssignmentEnabled).toBe(false)
+    expect(serviceSchema.parse(base).automaticAssignmentEnabled).toBeUndefined()
+  })
   it('allows restaurant staff to assign waiting turns and makes arrival terminal', () => {
     expect(allowedEntryActions('restaurant', 'waiting')).toEqual([
       'call',
+      'pass',
+      'prioritize',
       'cancel',
     ])
     expect(allowedEntryActions('restaurant', 'called')).toEqual([
       'complete',
+      'pass',
       'cancel',
     ])
     expect(allowedEntryActions('restaurant', 'completed')).toEqual([])
@@ -51,10 +74,12 @@ describe('service action policy', () => {
       }).success,
     ).toBe(false)
   })
-  it('accepts a queue-level FIFO command without a client-selected person', () => {
+  it('parses legacy FIFO payloads for replay and validates new head preconditions', () => {
     expect(
       queueCommandSchema.safeParse({ action: 'assign_next' }).success,
     ).toBe(true)
+    expect(queueCommandSchema.safeParse({ action: 'assign_next', expectedEntryId: '00000000-0000-4000-8000-000000000000', expectedVersion: 0 }).success).toBe(true)
+    expect(queueCommandSchema.safeParse({ action: 'assign_next', expectedEntryId: 'invalid', expectedVersion: -1 }).success).toBe(false)
     expect(queueCommandSchema.safeParse({ action: 'call' }).success).toBe(false)
   })
   it('defaults only new quick queues to two minutes', () => {
@@ -85,3 +110,26 @@ it('hydrates only absent legacy grace and preserves every explicit value', async
     storedServiceSchema.parse({ ...base, graceMinutes: 17 }).graceMinutes,
   ).toBe(17)
 })
+
+it('requires versioned explicit candidates for replacement decisions', () => {
+  const command={action:'resolve_replacement',decisionId:'00000000-0000-4000-8000-000000000001',decisionVersion:0,entryId:'00000000-0000-4000-8000-000000000002',version:0}
+  expect(queueCommandSchema.safeParse(command).success).toBe(true)
+  expect(queueCommandSchema.safeParse({...command,version:undefined}).success).toBe(false)
+  expect(queueCommandSchema.safeParse({...command,decisionVersion:undefined}).success).toBe(false)
+  expect(queueCommandSchema.safeParse({...command,seating:{mode:'unspecified'}}).success).toBe(false)
+})
+it('dismisses a specific versioned decision without assigning a candidate', () => {
+  const command={action:'dismiss_replacement',decisionId:'00000000-0000-4000-8000-000000000001',decisionVersion:0}
+  expect(queueCommandSchema.safeParse(command).success).toBe(true)
+  expect(queueCommandSchema.safeParse({...command,entryId:'00000000-0000-4000-8000-000000000002'}).success).toBe(false)
+  expect(queueCommandSchema.safeParse({...command,decisionVersion:-1}).success).toBe(false)
+})
+
+for (const action of ['pass', 'prioritize'] as const) {
+  it(`requires a versioned entry for ${action}`, () => {
+    const command = {action, entryId: '00000000-0000-4000-8000-000000000001', version: 0}
+    expect(entryCommandSchema.safeParse(command).success).toBe(true)
+    expect(entryCommandSchema.safeParse({...command, version: undefined}).success).toBe(false)
+    expect(entryCommandSchema.safeParse({...command, entryId: undefined}).success).toBe(false)
+  })
+}

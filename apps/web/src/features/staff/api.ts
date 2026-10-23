@@ -10,6 +10,19 @@ export class ApiError extends Error {
   }
 }
 const messages: Record<string, string> = {
+  replacement_changed: 'La lista ha cambiado. Revisa las opciones antes de asignar.',
+  replacement_unavailable: 'Asigna el siguiente turno manualmente desde la lista.',
+  assignment_precondition_required: 'Actualiza la aplicación para asignar turnos.',
+  assignment_next_changed: 'La lista ha cambiado. Revisa el siguiente turno antes de asignar.',
+  no_compatible_successor:
+    'No hay otro turno compatible disponible. La lista no se ha modificado.',
+  manual_attention_required:
+    'Este turno requiere atención manual. Revisa la lista y gestiona el siguiente turno compatible.',
+  turn_automatically_processed:
+    'El sistema ya ha asignado este turno y ha avisado al siguiente cliente. La cola se actualizará automáticamente.',
+  turn_automatically_assigned:
+    'El sistema ya ha asignado este turno automáticamente. Actualiza la lista antes de continuar.',
+
   location_confirmation_invalid:
     'La dirección no está confirmada o la selección ha caducado. Busca y confirma de nuevo.',
   location_provider_unavailable:

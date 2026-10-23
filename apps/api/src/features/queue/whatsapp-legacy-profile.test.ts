@@ -110,11 +110,11 @@ for (const configured of [false, true]) {
               t.queue,
               crypto.randomUUID(),
               action === 'call'
-                ? { action: 'assign_next' }
+                ? { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 }
                 : { action, entryId: t.entry, version: 0 },
               now,
             ),
-          ).resolves.toEqual({ ok: true })
+          ).resolves.toMatchObject({ ok: true, outcome: { action, entry: { id: t.entry } } })
           kind = action === 'call' ? 'ready' : 'cancelled'
           status = action === 'call' ? 'called' : 'cancelled'
         } else if (action === 'expiry') {
@@ -123,7 +123,7 @@ for (const configured of [false, true]) {
             t.actor,
             t.queue,
             crypto.randomUUID(),
-            { action: 'assign_next' },
+            { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 },
             now,
           )
           await env.DB.prepare(
@@ -141,8 +141,12 @@ for (const configured of [false, true]) {
             .bind('previous-service-window', now, t.entry)
             .run()
           await maintainServiceEntries(selected, t.queue, now)
-          kind = 'service_ended'
-          status = 'cancelled'
+          expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?')
+            .bind(t.entry).first()).toEqual({ status: 'waiting', manual_only: 1 })
+          expect(await env.DB.prepare("SELECT COUNT(*) AS count FROM notification_outbox WHERE entry_id=? AND kind='service_ended'")
+            .bind(t.entry).first()).toEqual({ count: 0 })
+          expect(requests).toBe(0)
+          return
         }
         expect(
           (
@@ -216,7 +220,7 @@ it('keeps historical v1 joined and v2 ready rendering despite selecting v3 for l
     t.actor,
     t.queue,
     crypto.randomUUID(),
-    { action: 'assign_next' },
+    { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 },
   )
   const ready = await env.DB.prepare(
     "SELECT id FROM notification_outbox WHERE entry_id=? AND kind='ready'",
@@ -235,7 +239,7 @@ it('keeps historical v1 joined and v2 ready rendering despite selecting v3 for l
 })
 
 it.each(['call', 'expiry', 'service-end'] as const)(
-  'preserves the existing revoked-consent intent gate for legacy %s',
+  'preserves consent gating for legacy %s intents',
   async (action) => {
     const t = await fixture(),
       now = Date.now()
@@ -251,6 +255,8 @@ it.each(['call', 'expiry', 'service-end'] as const)(
         .bind('previous-service-window', now, t.entry)
         .run()
       await maintainServiceEntries(selected, t.queue, now)
+      expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?')
+        .bind(t.entry).first()).toEqual({ status: 'waiting', manual_only: 1 })
       kind = 'service_ended'
     } else {
       await runQueueCommand(
@@ -258,7 +264,7 @@ it.each(['call', 'expiry', 'service-end'] as const)(
         t.actor,
         t.queue,
         crypto.randomUUID(),
-        { action: 'assign_next' },
+        { action: 'assign_next', expectedEntryId: t.entry, expectedVersion: 0 },
         now,
       )
       kind = 'ready'

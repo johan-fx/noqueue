@@ -48,7 +48,11 @@ function withBuildMarker(html, build) {
 }
 
 async function prepareBuilds() {
-  buildProduction(builds.a)
+  if (process.env.NOQUEUE_E2E_PREBUILT === 'true') {
+    const checked = spawnSync('node', ['scripts/ci/assets.mjs', 'verify', 'general'], { cwd: repoRoot, stdio: 'inherit' })
+    if (checked.status !== 0) throw new Error('Invalid prebuilt PWA assets')
+    await cp(path.join(repoRoot, 'apps/web/dist'), builds.a, { recursive: true })
+  } else buildProduction(builds.a)
   await cp(builds.a, builds.b, { recursive: true })
 
   // Model a real hashed production release: every lazy/imported module in B

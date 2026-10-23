@@ -64,8 +64,8 @@ function fixture(size = 4): Entry {
     },
   }
 }
-function mount(size = 4, lang = 'es', notice?: string) {
-  resource.data = fixture(size)
+function mount(size = 4, lang = 'es', notice?: string, data?: Entry) {
+  resource.data = data ?? fixture(size)
   resource.updatedAt = Date.now()
   const fetcher = vi.fn().mockResolvedValue(Response.json({ ok: true }))
   vi.stubGlobal('fetch', fetcher)
@@ -110,6 +110,26 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
   vi.clearAllMocks()
+})
+
+it('parses a retained manual-only customer turn and keeps cancellation available', () => {
+  const retained = fixture()
+  retained.status = 'waiting'
+  retained.etaMinutes = 0
+  retained.estimateQuality = 'estimated'
+  retained.predictedAt = 1000
+  retained.customer!.manualOnly = true
+  retained.customer!.phase = 'approaching'
+  mount(4, 'es', undefined, retained)
+  expect(
+    screen.getByRole('heading', { name: 'Turno pendiente de asignación' }),
+  ).toBeVisible()
+  expect(
+    screen.getByText(/El servicio anterior ha finalizado\. Consulta al personal/),
+  ).toBeVisible()
+  expect(screen.queryByText('0 min')).not.toBeInTheDocument()
+  expect(screen.queryByText(/delante de ti/)).not.toBeInTheDocument()
+  expect(screen.getByRole('button', { name: 'Abandonar la lista' })).toBeVisible()
 })
 
 it.each([

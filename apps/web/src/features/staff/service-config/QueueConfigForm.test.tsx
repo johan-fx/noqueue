@@ -240,3 +240,26 @@ it('uses learned cadence defaults without an estimator opt-in and preserves expl
     expect.objectContaining({ estimatorVersion: 1 }),
   )
 })
+
+it('defaults automatic assignment to off and persists the explicit service opt-in', () => {
+  const confirm = vi.fn()
+  render(
+    <QueueConfigForm
+      type="pool"
+      spaces={[]}
+      averageMinutes={60}
+      saved={undefined}
+      onConfirm={confirm}
+    />,
+  )
+  const toggle = screen.getByRole('switch', {
+    name: 'Modo de gestión automática',
+  })
+  expect(toggle).not.toBeChecked()
+  fireEvent.click(toggle)
+  fireEvent.submit(document.getElementById('queue-config')!)
+  expect(confirm).toHaveBeenCalledWith(
+    [],
+    expect.objectContaining({ automaticAssignmentEnabled: true }),
+  )
+})

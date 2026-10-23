@@ -24,7 +24,7 @@ async function scenario() {
   expect((await register()).status).toBe(200)
   await joinQueue(bindings, f.queue, crypto.randomUUID(), { displayName: 'Test', partySize: 1, receptionService: 'check_in', locale: 'es', whatsapp: { consent: false } }, false, undefined, 'mobile-app', installation)
   const e = await env.DB.prepare('SELECT id FROM queue_entry WHERE queue_id=?').bind(f.queue).first<{ id: string }>()
-  await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next' })
+  await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next', expectedEntryId: e!.id, expectedVersion: 0 })
   const notice = await env.DB.prepare('SELECT id FROM mobile_push_outbox WHERE entry_id=?').bind(e!.id).first<{ id: string }>()
   return { ...f, entry: e!.id, notice: notice!.id, installation }
 }

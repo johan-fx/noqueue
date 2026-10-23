@@ -2,6 +2,20 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { createWorkerServer, routeWorkerRequest } from '../../apps/api/scripts/http-worker.mjs'
+import { verificationEnvironment } from './environment.mjs'
+
+test('full verification executes opt-in cycle suites with isolated visual artifacts', () => {
+  const parent = { NOQUEUE_E2E_AUTO_REPLACEMENT: 'false', REPLACEMENT_SCREENSHOTS: '/other-run' }
+  const full = verificationEnvironment(parent, '/isolated/report', { all: true, extended: false })
+  assert.equal(full.NOQUEUE_E2E_AUTO_REPLACEMENT, 'true')
+  assert.equal(full.REPLACEMENT_SCREENSHOTS, '/isolated/report/cycle-screenshots')
+  assert.equal(full.QUEUE_REPORT_DIR, '/isolated/report')
+  assert.equal(full.CLOUDFLARE_LOAD_DEV_VARS_FROM_DOT_ENV, 'false')
+  const standard = verificationEnvironment({ ...parent, NOQUEUE_E2E_AUTO_REPLACEMENT: 'true' }, '/isolated/report', { all: false, extended: false })
+  assert.equal(standard.NOQUEUE_E2E_AUTO_REPLACEMENT, 'false')
+  assert.equal(standard.REPLACEMENT_SCREENSHOTS, '')
+  assert.equal(parent.REPLACEMENT_SCREENSHOTS, '/other-run')
+})
 test('local worker persistence is exclusively allocated, never a shared wipe', async () => {
   const source = await readFile(
     new URL('../../apps/api/scripts/dev-e2e.mjs', import.meta.url),

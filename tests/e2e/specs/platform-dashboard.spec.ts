@@ -94,6 +94,21 @@ for (const width of [320, 390, 1280]) {
       },
       {
         method: 'GET',
+        path: '/api/v1/staff/queues/queue/automation',
+        expectedHits: { min: 1 },
+        respond: (request) => recorded(request, {
+          configured: false,
+          effective: false,
+          activeCycles: 0,
+          serverNow: Date.now(),
+          cursor: 0,
+          events: [],
+          hasMore: false,
+          nextEntry: { id: 'entry', version: 1 },
+        }),
+      },
+      {
+        method: 'GET',
         path: '/api/v1/staff/queues/queue/entries',
         expectedHits: { min: 1 },
         respond: (request) =>

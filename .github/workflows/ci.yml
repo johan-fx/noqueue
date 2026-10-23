@@ -8,19 +8,18 @@ on:
 permissions:
   contents: read
 
+# A superseded PR revision cannot integrate; main runs are never cancelled here.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  verify:
-    runs-on: ubuntu-latest
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.23.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.19.0
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/setup-ci
       - name: Verify production preparation without remote operations
         run: pnpm test:production && pnpm production:check
       - run: pnpm check-types
@@ -28,44 +27,179 @@ jobs:
       - run: pnpm --filter '!@noqueue/api' --filter '!@noqueue/root' -r --if-present test
       - name: Verify local push tooling offline
         run: pnpm --filter @noqueue/api test:tools
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-ci
       - run: pnpm build
+      - name: Archive general assets before changing the production profile
+        run: |
+          node scripts/ci/assets.mjs write general
+          tar -czf queue-reports/ci/general-assets.tar.gz apps/web/dist queue-reports/ci/general-build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: general-assets
+          path: queue-reports/ci/general-assets.tar.gz
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
       - name: Build isolated production artifacts with GA disabled
         run: pnpm production:build
-      - run: pnpm --filter @noqueue/e2e exec playwright install --with-deps chromium firefox webkit
+      - name: Archive immutable production assets
+        run: |
+          node scripts/ci/assets.mjs write production
+          tar -czf queue-reports/ci/production-assets.tar.gz queue-reports/production queue-reports/ci/production-build.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-assets
+          path: queue-reports/ci/production-assets.tar.gz
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Inventory every browser test before distributing execution
+        env:
+          NOQUEUE_E2E_AUTO_REPLACEMENT: 'true'
+          REPLACEMENT_SCREENSHOTS: ${{ github.workspace }}/queue-reports/inventory-captures
+        run: |
+          pnpm --filter @noqueue/e2e exec playwright test --list --reporter=json > queue-reports/ci/list.json
+          node scripts/queue-verification/inventory.mjs queue-reports/ci/list.json queue-reports/ci/inventory.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: queue-inventory
+          path: queue-reports/ci/inventory.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+  api:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-ci
+      - name: Full API and verification-harness suites
+        run: node scripts/queue-verification/run.mjs --all --phase=api
+        env:
+          QUEUE_PART_DIR: queue-reports/api
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: queue-part-api
+          path: queue-reports/api/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+  browser:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+    env:
+      HOME: /root
+      NOQUEUE_E2E_PREBUILT: 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-ci
+      - name: Check image and package versions agree
+        run: test "$(pnpm --filter @noqueue/e2e exec playwright --version)" = 'Version 1.63.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: general-assets
+          path: queue-reports/ci
+      - run: tar -xzf queue-reports/ci/general-assets.tar.gz && node scripts/ci/assets.mjs verify general
+      - name: Complete browser suite with cycles and visual captures
+        run: node scripts/queue-verification/run.mjs --all --phase=browser --project=${{ matrix.browser }}
+        env:
+          QUEUE_PART_DIR: queue-reports/${{ matrix.browser }}
+      - name: Ensure tests did not mutate the shared build
+        if: always()
+        run: node scripts/ci/assets.mjs verify general
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: queue-part-${{ matrix.browser }}
+          path: queue-reports/${{ matrix.browser }}/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14
+
+  production-browser:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+    env:
+      HOME: /root
+      NOQUEUE_E2E_PREBUILT: 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-ci
+      - name: Check image and package versions agree
+        run: test "$(pnpm --filter @noqueue/e2e exec playwright --version)" = 'Version 1.63.0'
+      - uses: actions/download-artifact@v4
+        with:
+          name: general-assets
+          path: queue-reports/ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: production-assets
+          path: queue-reports/ci
+      - run: |
+          tar -xzf queue-reports/ci/general-assets.tar.gz
+          tar -xzf queue-reports/ci/production-assets.tar.gz
+          node scripts/ci/assets.mjs verify general
+          node scripts/ci/assets.mjs verify production
       - name: Verify real production bundles remain analytics-disabled
         run: pnpm --filter @noqueue/e2e test:production
       - name: Verify privacy gates in Chromium, Firefox and WebKit
         run: pnpm --filter @noqueue/e2e test:privacy
-      - name: Verify safe PWA release transitions
+      - name: Verify safe PWA release transitions with service workers enabled
         run: pnpm --filter @noqueue/e2e test:pwa
         env:
           QUEUE_REPORT_DIR: ${{ github.workspace }}/queue-reports/pwa
-      - run: node scripts/queue-verification/run.mjs --all
+      - name: Ensure both profiles remain immutable
+        if: always()
+        run: |
+          node scripts/ci/assets.mjs verify general
+          node scripts/ci/assets.mjs verify production
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: queue-verification
-          path: queue-reports/
+          name: production-browser-evidence
+          path: |
+            queue-reports/pwa/
+            tests/e2e/test-results-production/
+            tests/e2e/test-results-privacy/
+          overwrite: true
+          if-no-files-found: error
           retention-days: 14
-          if-no-files-found: warn
 
   android:
-    runs-on: ubuntu-latest
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10.23.0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22.19.0
-          cache: pnpm
+      - uses: ./.github/actions/setup-ci
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: "21"
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @noqueue/web build
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: general-assets
+          path: queue-reports/ci
+      - run: tar -xzf queue-reports/ci/general-assets.tar.gz && node scripts/ci/assets.mjs verify general
       - name: Sync the Android Capacitor project
         run: pnpm --filter @noqueue/mobile exec cap sync android
       - name: Verify Android sync has no tracked drift
@@ -73,3 +207,41 @@ jobs:
       - name: Compile Android debug application
         working-directory: apps/mobile/android
         run: ./gradlew assembleDebug --no-daemon
+
+  verify:
+    if: always()
+    needs: [checks, build, api, browser, production-browser, android]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - name: Require every validation job to succeed
+        env:
+          JOB_RESULTS: ${{ toJSON(needs) }}
+        run: node scripts/ci/gate.mjs
+      - uses: actions/download-artifact@v4
+        with:
+          name: queue-inventory
+          path: queue-reports/merged
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: queue-part-*
+          path: queue-parts
+      - name: Assemble evidence without overwriting browser results
+        run: |
+          mkdir -p queue-reports/merged
+          for part in api chromium firefox webkit; do
+            mv "queue-parts/queue-part-$part" "queue-reports/merged/$part"
+          done
+          node scripts/queue-verification/merge.mjs queue-reports/merged
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: queue-verification
+          path: queue-reports/merged/
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 14

@@ -240,6 +240,8 @@ const serviceBaseSchema = z.object({
     })
     .optional(),
   spaces: z.array(spaceSchema).max(30),
+  // Optional on the wire so older update clients preserve the stored setting.
+  automaticAssignmentEnabled: z.boolean().optional(),
   intelligencePolicy: z.enum(['automatic', 'disabled']).optional(),
   estimationMode: z.enum(['shadow', 'active']).optional(),
   resourceStateKnown: z.boolean().optional(),
@@ -578,6 +580,8 @@ export const entryCommandSchema = z
       'cancel',
       'no_show',
       'skip',
+      'pass',
+      'prioritize',
       'restore',
     ]),
     overrideReason: z.string().trim().min(3).max(300).optional(),
@@ -593,8 +597,34 @@ export const entryCommandSchema = z
     message: 'operation_retired',
     path: ['action'],
   })
+export const replacementCommandSchema = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('resolve_replacement'), decisionId: z.string().uuid(),
+    decisionVersion: z.number().int().nonnegative(), entryId: z.string().uuid(),
+    version: z.number().int().nonnegative() }).strict(),
+  z.object({ action: z.literal('dismiss_replacement'), decisionId: z.string().uuid(),
+    decisionVersion: z.number().int().nonnegative() }).strict(),
+])
+export type ReplacementCommand = z.infer<typeof replacementCommandSchema>
+export type ReplacementDecision = {
+  id: string
+  version: number
+  entryId: string
+  originalPartySize: number
+  createdAt: number
+  reason: 'no_candidate' | 'missing_context' | 'context_changed'
+  unavailable: 'disabled' | 'context' | null
+  seating: { spaceId: string; spaceName: string; seats: number } | null
+  candidates: Array<{ id: string; version: number; code: string; displayName: string | null; partySize: number }>
+}
 export const queueCommandSchema = z.union([
-  z.object({ action: z.literal('assign_next') }).strict(),
+  replacementCommandSchema,
+  // Optional at parsing only: old successful requests can still replay. New
+  // commands without both preconditions fail with 409 in the coordinator.
+  z.object({
+    action: z.literal('assign_next'),
+    expectedEntryId: z.string().uuid().optional(),
+    expectedVersion: z.number().int().min(0).optional(),
+  }).strict(),
   entryCommandSchema,
 ])
 export type QueueCommand = z.infer<typeof queueCommandSchema>
@@ -603,14 +633,14 @@ export function defaultGraceMinutes(type: ServiceInput['type']) {
   return type === 'restaurant' ? 5 : 2
 }
 export function allowedEntryActions(
-  type: ServiceInput['type'],
+  _type: ServiceInput['type'],
   status: string,
   canOperate = true,
 ): EntryCommand['action'][] {
   if (!canOperate) return []
   if (status === 'waiting')
-    return type === 'restaurant' ? ['call', 'cancel'] : ['cancel']
-  if (status === 'called') return ['complete', 'cancel']
+    return ['call', 'pass', 'prioritize', 'cancel']
+  if (status === 'called') return ['complete', 'pass', 'cancel']
   return []
 }
 export const queueSettingsSchema = z.intersection(
@@ -661,6 +691,7 @@ export type QueueConfigurationContext = Pick<
 >
 
 export type QueueSummary = Partial<AdmissionStatus> & {
+  autoReplacementEnabled?: boolean
   /** Real waiting turns, independent of the paginated staff entry list. */
   waitingCount?: number
   reminderDue?: boolean
@@ -678,7 +709,50 @@ export type QueueSummary = Partial<AdmissionStatus> & {
   outsideSchedule?: boolean
   readiness?: QueueReadiness
 }
+export type QueueFeedbackEntry = { id: string; code: string; displayName: string | null }
+export type QueueAutomationEvent = {
+  id: number
+  cause: 'arrival_expiry' | 'customer_cancel' | 'customer_yield' | 'staff_pass'
+  entry: QueueFeedbackEntry
+  successor: QueueFeedbackEntry
+  cycleId: string
+  createdAt: number
+}
+export type QueueCommandResult = {
+  ok: true
+  /** Absent only on legacy results. New replays retain the same outcome/operationId. */
+  outcome?: {
+    operationId: string
+    action: EntryCommand['action']
+    entry: QueueFeedbackEntry
+    successor?: QueueFeedbackEntry | null
+    automatic: boolean
+    cycleEnded: boolean
+    mode: 'called' | 'present' | 'waiting_swap' | 'called_handoff' | 'returned_to_waiting' | 'prioritized' | 'already_prioritized' | 'cancelled' | 'completed'
+  }
+}
+export type QueueAutomation = {
+  configured: boolean
+  effective: boolean
+  activeCycles: number
+  serverNow: number
+  cursor?: number
+  events?: QueueAutomationEvent[]
+  hasMore?: boolean
+  nextEntry?: { id: string; version: number } | null
+}
 export type StaffEntry = {
+  manualOnly?: boolean
+  priorityRank?: number | null
+  /** Original queue admission timestamp; not a forecast. */
+  waitingSince?: number
+  automationCycle?: { id: string; capacity: number | null; receptionService: string | null; state: 'active' | 'stopped'; reason: string | null; attempt?: number } | null
+  automaticReplacement?: {
+    origin: 'staff' | 'yield' | 'arrival_expiry' | 'customer_cancel' | 'staff_pass' | 'legacy'
+    eligible: boolean
+    result: CallReplacementResult
+    successor: { id: string; code: string } | null
+  } | null
   /** Confirmed context for the current called/completed cycle, not a prediction. */
   assignedSeating?: { spaceId: string; spaceName: string; seats: number } | null
   cancellationReason?: 'service_ended'
@@ -717,6 +791,11 @@ export type StaffEntry = {
   resourceId?: string | null
   callable?: boolean
 }
+
+export type CallReplacementResult =
+  | 'pending' | 'replaced' | 'yielded' | 'arrived' | 'cancelled' | 'no_show'
+  | 'returned_to_waiting' | 'no_candidate' | 'missing_context' | 'context_changed'
+  | 'service_ended' | 'disabled' | 'legacy'
 
 const occupancyAnswerSchema = z.object({
   spaceId: z.string().min(1).max(100),

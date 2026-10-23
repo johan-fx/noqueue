@@ -97,6 +97,46 @@ it('shows unknown estimates honestly and renders a noninteractive stepper', () =
   expect(screen.getByText('5 turnos')).toBeVisible()
   expect(screen.queryByRole('tab')).not.toBeInTheDocument()
 })
+
+it('does not present an expired estimate as zero or approaching when manual assignment is required', () => {
+  const turn: Entry = {
+    ...entry('approaching'),
+    etaMinutes: 0,
+    initialEtaMinutes: 10,
+    predictedAt: 1000,
+    estimateQuality: 'estimated',
+  }
+  turn.customer!.manualOnly = true
+  const onAction = vi.fn()
+  render(
+    <MemoryRouter>
+      <TurnView
+        entry={turn}
+        locale="es"
+        now={1000}
+        updatedAt={1000}
+        onAction={onAction}
+      />
+    </MemoryRouter>,
+  )
+  expect(
+    screen.getByRole('heading', { name: 'Turno pendiente de asignación' }),
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'El servicio anterior ha finalizado. Consulta al personal para que te asigne un nuevo turno manualmente.',
+    ),
+  ).toBeVisible()
+  expect(screen.getByText('Asignación manual')).toBeVisible()
+  expect(screen.getByText('—', { exact: true })).toBeVisible()
+  expect(screen.queryByText('Ya casi es tu turno')).not.toBeInTheDocument()
+  expect(screen.queryByText('0 min')).not.toBeInTheDocument()
+  expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+
+  fireEvent.click(screen.getByRole('button', { name: 'Abandonar la lista' }))
+  expect(onAction).toHaveBeenCalledWith('cancel')
+})
+
 it('keeps the same progress ratio while the server phase controls its color', () => {
   const turn: Entry = {
     ...entry('waiting'),

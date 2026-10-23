@@ -106,7 +106,7 @@ it('atomically yields to the next compatible group and replays before version va
     }),
   ).rejects.toThrow('idempotency_conflict')
 })
-it('automatically calls the next compatible party without transferring inventory', async () => {
+it('returns a legacy called party to waiting without inventing automation or transferring inventory', async () => {
   const { queueId, entries } = await fixture()
   await env.DB.batch([
     env.DB.prepare(
@@ -126,17 +126,10 @@ it('automatically calls the next compatible party without transferring inventory
     .bind(queueId)
     .all()
   expect(rows.results).toMatchObject([
-    { id: entries[2]!.id, status: 'called', sequence: 1, version: 1, call_cycle: 1, arrival_deadline_at: 302_000 },
+    { id: entries[0]!.id, status: 'waiting', sequence: 1, version: 2, call_cycle: 2, arrival_deadline_at: null },
     { id: entries[1]!.id, status: 'waiting', sequence: 2 },
-    {
-      id: entries[0]!.id,
-      status: 'waiting',
-      sequence: 3,
-      version: 2,
-      arrival_deadline_at: null,
-    },
+    { id: entries[2]!.id, status: 'waiting', sequence: 3, version: 0, call_cycle: 0 },
   ])
-  expect((await env.DB.prepare('SELECT progress_initial_eta_minutes AS initial FROM queue_entry WHERE id=?').bind(entries[2]!.id).first())?.initial).toBe(5)
   const allocations = (
     await env.DB.prepare(
       'SELECT entry_id,released_at,outcome FROM queue_allocation WHERE queue_id=?',
@@ -489,6 +482,12 @@ it.each(['reception', 'pool'])(
     )
       .bind(queueId)
       .run()
+    // Reception pass compatibility is scoped to the same configured customer subtype.
+    await env.DB.prepare(
+      "UPDATE queue_entry SET reception_service='check_in' WHERE queue_id=?",
+    )
+      .bind(queueId)
+      .run()
     const token = entries[0]!.token
     await expect(
       runCustomerCommand(env, queueId, token, crypto.randomUUID(), {
@@ -681,6 +680,9 @@ it('reprojects a cancellation without inventory deltas and creates no new intent
       .first<{ n: number }>()
   const originalIntents = await intents()
   const predictionBefore = await readProjection(env, successor.id, true)
+  await env.DB.prepare('UPDATE queue_entry SET priority_rank=4 WHERE id=?')
+    .bind(cancelled.id)
+    .run()
   await runCustomerCommand(
     env,
     queueId,
@@ -689,6 +691,11 @@ it('reprojects a cancellation without inventory deltas and creates no new intent
     { action: 'cancel', version: 0 },
     now,
   )
+  expect(
+    await env.DB.prepare('SELECT status,priority_rank FROM queue_entry WHERE id=?')
+      .bind(cancelled.id)
+      .first(),
+  ).toEqual({ status: 'cancelled', priority_rank: null })
   const predictionAfter = await readProjection(env, successor.id, true)
   expect(predictionAfter?.position).toBe(2)
   expect(predictionAfter?.predictedAt).toBeLessThan(predictionBefore!.predictedAt!)

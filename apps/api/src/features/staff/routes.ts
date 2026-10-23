@@ -1,3 +1,4 @@
+import { replacementEnabled } from '../queue/call'
 import { metricsQuerySchema, venueMetricsQuerySchema } from '@noqueue/contracts/metrics'
 import { readMetrics, readVenueMetrics, metricsVenuePage } from '../metrics/read'
 import { touchVenueConfiguration } from './configuration'
@@ -640,6 +641,7 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
           ...row,
           config,
           manualJoinWhatsappRequired: manualJoinRequiresWhatsapp(c.env),
+          autoReplacementEnabled: replacementEnabled(c.env),
           ...(await admissionState(c.env, row.id)),
           outsideSchedule: !serviceWindow(config, venue!.timezone).serviceOpen,
           inventoryConfirmed: await inventoryConfirmed(c.env, row.id, config),
@@ -648,6 +650,17 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
       }),
     ),
   )
+})
+staffRoutes.get('/queues/:id/automation', async (c) => {
+  await queueAccess(c.env, c.get('actor').id, c.req.param('id'), 'queue.read')
+  const raw = c.req.query('after')
+  if (raw !== undefined && (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))))
+    throw new HTTPException(400, { message: 'invalid_feedback_cursor' })
+  return c.json(await coordinator(c.env, c.req.param('id')).automation(c.req.param('id'), raw === undefined ? undefined : Number(raw)))
+})
+staffRoutes.get('/queues/:id/replacement-decisions', async (c) => {
+  await queueAccess(c.env,c.get('actor').id,c.req.param('id'),'queue.operate')
+  return c.json(await coordinator(c.env,c.req.param('id')).replacementDecisions(c.req.param('id')))
 })
 staffRoutes.get('/queues/:id/entries', async (c) => {
   const access = await queueAccess(
@@ -659,14 +672,26 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
   const rows = await c.env.DB.prepare(
     `SELECT e.id,e.code,e.party_size AS partySize,e.status,e.sequence,e.version,
+      e.priority_rank AS priorityRank,e.created_at AS waitingSince,
       CASE WHEN EXISTS(SELECT 1 FROM queue_event WHERE entry_id=e.id AND kind='service_ended') THEN 'service_ended' ELSE NULL END AS cancellationReason,
       e.display_name_cipher AS displayNameCipher,e.reception_service AS receptionService,e.preferred_space_id AS preferredSpaceId,
       e.called_at AS calledAt,e.arrival_deadline_at AS arrivalDeadlineAt,NULL AS resourceId,
-      o.space_id AS assignedSpaceId,o.seats AS assignedSeats
+      o.space_id AS assignedSpaceId,o.seats AS assignedSeats,
+      COALESCE(r.cause,r.origin) AS replacementOrigin,r.eligible AS replacementEligible,r.result AS replacementResult,
+      r.successor_entry_id AS successorId,successor.code AS successorCode,
+      e.manual_only AS manualOnly,c.id AS automationId,c.capacity AS automationCapacity,c.reception_service AS automationService,c.state AS automationState,c.reason AS automationReason,
+      CASE WHEN e.id=c.current_entry_id AND e.call_cycle=c.current_call_cycle THEN
+        (SELECT COUNT(*) FROM queue_call_replacement attempt WHERE attempt.automation_cycle_id=c.id)
+        ELSE NULL END AS automationAttempt
       FROM queue_entry e LEFT JOIN queue_assignment_observation o
       ON o.entry_id=e.id AND o.call_cycle=e.call_cycle AND o.provenance='confirmed'
         AND e.status IN ('called','completed','served')
+      LEFT JOIN queue_call_replacement r ON r.entry_id=e.id AND r.call_cycle=(SELECT MAX(call_cycle) FROM queue_call_replacement WHERE entry_id=e.id)
+      LEFT JOIN queue_automation_cycle c ON c.id=r.automation_cycle_id
+      LEFT JOIN queue_entry successor ON successor.id=r.successor_entry_id AND successor.queue_id=e.queue_id
       WHERE e.queue_id=? ORDER BY CASE WHEN e.status IN ('waiting','called','completed') THEN 0 ELSE 1 END,
+      CASE WHEN e.status='waiting' AND e.priority_rank IS NOT NULL THEN 0 ELSE 1 END,
+      CASE WHEN e.status='waiting' THEN e.priority_rank ELSE NULL END,
       CASE WHEN e.status IN ('waiting','called','completed') THEN e.sequence ELSE -e.sequence END LIMIT 500`,
   )
     .bind(c.req.param('id'))
@@ -696,14 +721,16 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
           assignedSpaceId,
           assignedSeats,
           cancellationReason,
+          manualOnly, automationId, automationCapacity, automationService, automationState, automationReason, automationAttempt,
+          replacementOrigin, replacementEligible, replacementResult, successorId, successorCode,
           ...entry
         } = row
         const projection =
-          row.status === 'waiting'
+          row.status === 'waiting' && !row.manualOnly
             ? await readProjection(c.env, String(row.id))
             : null
         const waitProjection =
-          row.status === 'waiting'
+          row.status === 'waiting' && !row.manualOnly
             ? await readProjection(c.env, String(row.id), true)
             : null
         const preferred =
@@ -718,6 +745,14 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
         const space = config?.spaces.find((space) => space.id === spaceId)
         return {
           ...entry,
+          manualOnly: !!manualOnly,
+          automationCycle: automationId ? { id: automationId, capacity: automationCapacity, receptionService: automationService, state: automationState, reason: automationReason,
+            ...(automationAttempt == null ? {} : { attempt: Number(automationAttempt) }),
+          } : null,
+          automaticReplacement: replacementOrigin ? {
+            origin: replacementOrigin, eligible: !!replacementEligible, result: replacementResult,
+            successor: successorId && successorCode ? { id: String(successorId), code: String(successorCode) } : null,
+          } : null,
           assignedSeating:
             assignedSpaceId && assignedSeats != null
               ? {
@@ -741,11 +776,11 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
             String(row.status),
             !isCommercial(c.get('actor').role) &&
               roleCapabilities[access.role].includes('queue.operate'),
-          ),
-          ...(config?.type === 'restaurant' && row.status === 'waiting'
+          ).filter(action => !manualOnly || (action !== 'prioritize' && (action !== 'pass' || row.status === 'called'))),
+          ...(row.status === 'waiting'
             ? {
                 assignment: await assignmentContext(
-                  state,
+                  row.manualOnly ? { ...state, parties: [...state.parties, { id: String(row.id), sequence: Number(row.sequence), version: Number(row.version), partySize: Number(row.partySize), preferredSpaceId: row.preferredSpaceId == null ? null : String(row.preferredSpaceId) }] } : state,
                   String(row.id),
                   Date.now(),
                 ),

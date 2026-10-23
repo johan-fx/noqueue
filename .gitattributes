@@ -1,0 +1,2 @@
+# Generated PDFs are binary artifacts, even when their streams use ASCII85.
+*.pdf binary

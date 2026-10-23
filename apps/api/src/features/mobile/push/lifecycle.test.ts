@@ -59,7 +59,7 @@ async function change(f: Fixture, averageMinutes: number) {
 }
 async function dispatch(f: Fixture, id: string) { await dispatchPushSerialized(bindings, f.queue, id, now) }
 async function version(f: Fixture) { return (await env.DB.prepare('SELECT version FROM queue_entry WHERE id=?').bind(f.entry).first<{ version: number }>())!.version }
-async function call(f: Fixture) { await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next' }, now) }
+async function call(f: Fixture) { await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'assign_next', expectedEntryId: f.entry, expectedVersion: await version(f) }, now) }
 
 it.each(['ios', 'android'] as const)('delivers three distinct extensions and renewed approaches on %s without any WhatsApp dependency', async platform => {
   const f = await setup(platform), start = now
@@ -153,6 +153,7 @@ it.each(['cancel', 'close', 'expire', 'complete'] as const)('emits exactly the i
   const f = await setup()
   if (action === 'cancel') await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'cancel', entryId: f.entry, version: await version(f) }, now)
   if (action === 'close') {
+    await tick(f, now + 2 * minute)
     await env.DB.prepare('UPDATE queue_entry SET service_ends_at=? WHERE id=?').bind(now, f.entry).run()
     await maintainServiceEntries(bindings, f.queue, now)
   }
@@ -162,10 +163,16 @@ it.each(['cancel', 'close', 'expire', 'complete'] as const)('emits exactly the i
     else await runQueueCommand(bindings, f.actor, f.queue, crypto.randomUUID(), { action: 'complete', entryId: f.entry, version: await version(f) }, now)
   }
   for (const n of await notices(f)) await dispatch(f, n.id)
-  expect(f.send).toHaveBeenCalledTimes(action === 'complete' ? 0 : 1)
+  expect(f.send).toHaveBeenCalledTimes(action === 'complete' || action === 'close' ? 0 : 1)
+  if (action === 'close') {
+    expect(await env.DB.prepare('SELECT status,manual_only FROM queue_entry WHERE id=?').bind(f.entry).first())
+      .toMatchObject({ status: 'waiting', manual_only: 1 })
+    expect((await notices(f)).every(n => n.status === 'discarded')).toBe(true)
+    return
+  }
   if (action !== 'complete') {
     const n = (await notices(f)).find(n => n.status === 'accepted')!
-    expect(parsePushSnapshot(n.payload_snapshot).copyVariant).toBe(action === 'cancel' ? 'cancelled_staff' : action === 'close' ? 'service_ended' : 'expired')
+    expect(parsePushSnapshot(n.payload_snapshot).copyVariant).toBe(action === 'cancel' ? 'cancelled_staff' : 'expired')
     expect((await f.request('/notices/' + n.id)).status).toBe(200)
   }
 })
@@ -258,13 +265,15 @@ it('passing while waiting without a compatible successor changes nothing and emi
 })
 
 it('delivers the actual call to the mobile successor in a called-turn handoff', async () => {
-  const f=await setup()
+  const f=await setup('android',true,{ automaticAssignmentEnabled: true })
+  const automatic = { ...bindings, QUEUE_AUTO_REPLACEMENT_ENABLED: 'true' }
   const other=await joinQueue(bindings,f.queue,crypto.randomUUID(),{displayName:'Companion',partySize:1,receptionService:'check_in',locale:'es',whatsapp:{consent:false}},false,f.actor)
   const otherToken=(other.body as {recoveryToken:string}).recoveryToken
-  await runCustomerCommand(bindings,f.queue,f.token,crypto.randomUUID(),{action:'yield',version:await version(f)},now)
-  await runQueueCommand(bindings,f.actor,f.queue,crypto.randomUUID(),{action:'assign_next'},now)
+  await runCustomerCommand(automatic,f.queue,f.token,crypto.randomUUID(),{action:'yield',version:await version(f)},now)
+  const head = (await env.DB.prepare("SELECT id,version FROM queue_entry WHERE queue_id=? AND status='waiting' ORDER BY sequence,id LIMIT 1").bind(f.queue).first<{ id: string; version: number }>())!
+  await runQueueCommand(automatic,f.actor,f.queue,crypto.randomUUID(),{action:'assign_next',expectedEntryId:head.id,expectedVersion:head.version},now)
   const companion=(await env.DB.prepare('SELECT version FROM queue_entry WHERE queue_id=? AND id<>?').bind(f.queue,f.entry).first<{version:number}>())!
-  await runCustomerCommand(bindings,f.queue,otherToken,crypto.randomUUID(),{action:'yield',version:companion.version},now)
+  await runCustomerCommand(automatic,f.queue,otherToken,crypto.randomUUID(),{action:'yield',version:companion.version},now)
   const n=(await notices(f,'called')).at(-1)!
   expect(n.status).toBe('pending')
   expect(n.entry_version).toBe(await version(f))

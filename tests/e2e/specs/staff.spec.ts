@@ -250,9 +250,14 @@ test.describe('commercial provisioning save retry', () => {
     })
     await expect(creationService).toBeVisible()
     await page.getByLabel('Nombre del servicio').fill('Restaurante E2E')
-    await creationService
-      .getByRole('button', { name: 'Volver', exact: true })
-      .click()
+    const serviceBack = creationService.getByRole('button', {
+      name: 'Volver', exact: true,
+    })
+    // WebKit can briefly report a stable but partially clipped button while the
+    // drawer enters. Wait for the full hit target, not just DOM visibility.
+    await expect(serviceBack).toBeInViewport({ ratio: 1 })
+    await serviceBack.click()
+    await expect(creationService).toBeHidden()
     await expect(page.getByLabel('Usuario del administrador')).toHaveValue(owner)
     await page.getByRole('button', { name: 'Continuar', exact: true }).click()
     await creationService

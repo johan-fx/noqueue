@@ -258,6 +258,9 @@ test('captures opt-in surfaces and reception/pool automatic-assignment footers',
   expect(salesLogin.ok(), await salesLogin.text()).toBeTruthy()
 
   const common = {
+    // Seed opt-in atomically; a dashboard snapshot can age while other queues
+    // reconcile their opening windows, so it is not a configuration write token.
+    automaticAssignmentEnabled: true,
     capacity: 40,
     averageMinutes: 20,
     graceMinutes: 1,
@@ -317,18 +320,6 @@ test('captures opt-in surfaces and reception/pool automatic-assignment footers',
   const queues = (await (
     await page.request.get(`/api/v1/staff/venues/${venueId}/queues`)
   ).json()) as VisualQueue[]
-  for (const queue of queues) {
-    const saved = await page.request.patch(`/api/v1/staff/queues/${queue.id}`, {
-      headers,
-      data: {
-        ...queue.config,
-        automaticAssignmentEnabled: true,
-        version: queue.version,
-        open: !!queue.open,
-      },
-    })
-    expect(saved.ok(), await saved.text()).toBeTruthy()
-  }
   const restaurant = queues.find((queue) => queue.config.type === 'restaurant')!
   const opening = await page.request.get(
     `/api/v1/staff/queues/${restaurant.id}/opening-context`,

@@ -11,6 +11,13 @@ import {
 } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { ManualQueueEntryForm } from './ManualQueueEntryForm'
 import { api } from './api'
 import {
@@ -72,30 +79,34 @@ export function AddQueueEntryDrawer({
             <DrawerTitle className="flex-1 text-center text-base font-semibold">
               {queue.name}
             </DrawerTitle>
-            <span aria-hidden="true" className="w-9" />
+            {/* Language lives in the header, to the right of the queue name. */}
+            <Select
+              value={activeLocale}
+              items={[
+                { value: 'es', label: 'ES' },
+                { value: 'en', label: 'EN' },
+              ]}
+              disabled={busy || result !== null}
+              onValueChange={(value) => {
+                if (value === 'es' || value === 'en') setLocale(value)
+              }}
+            >
+              <SelectTrigger
+                aria-label={copy.language}
+                size="default"
+                className="w-auto shrink-0"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="end" alignItemWithTrigger={false}>
+                <SelectItem value="es">ES</SelectItem>
+                <SelectItem value="en">EN</SelectItem>
+              </SelectContent>
+            </Select>
           </div>
           <DrawerDescription className="sr-only">
             {result ? copy.added : copy.addDescription}
           </DrawerDescription>
-          <div
-            role="group"
-            aria-label={copy.language}
-            className="flex justify-end gap-1 pt-2"
-          >
-            {(['es', 'en'] as const).map((language) => (
-              <Button
-                key={language}
-                type="button"
-                variant="ghost"
-                size="sm"
-                aria-pressed={activeLocale === language}
-                disabled={busy || result !== null}
-                onClick={() => setLocale(language)}
-              >
-                {language.toUpperCase()}
-              </Button>
-            ))}
-          </div>
         </DrawerHeader>
         {result ? (
           <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">

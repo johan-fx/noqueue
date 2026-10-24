@@ -57,14 +57,18 @@ it('defaults to Spanish, preserves data across selector changes and retains subm
       returnFocus={null}
     />,
   )
-  expect(screen.getByRole('button', { name: 'ES' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  const language = screen.getByRole('combobox', {
+    name: 'Idioma del formulario',
+  })
+  expect(language).toHaveTextContent('ES')
   fireEvent.change(screen.getByLabelText('Nombre', { exact: true }), {
     target: { value: 'Guest' },
   })
-  fireEvent.click(screen.getByRole('button', { name: 'EN' }))
+  fireEvent.click(language)
+  const english = await screen.findByRole('option', { name: 'EN' })
+  fireEvent.pointerDown(english, { pointerType: 'mouse' })
+  fireEvent.click(english, { detail: 1 })
+  await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
   expect(screen.getByLabelText('Name', { exact: true })).toHaveValue('Guest')
   fireEvent.click(screen.getByRole('button', { name: 'Add queue entry' }))
   await screen.findByRole('heading', { name: 'Queue entry added' })
@@ -78,7 +82,9 @@ it('defaults to Spanish, preserves data across selector changes and retains subm
   expect(screen.getByRole('status')).toHaveTextContent(
     'The queue entry has been created.',
   )
-  fireEvent.click(screen.getByRole('button', { name: 'ES' }))
+  expect(
+    screen.getByRole('combobox', { name: 'Form language' }),
+  ).toBeDisabled()
   await waitFor(() =>
     expect(
       screen.getByRole('heading', { name: 'Queue entry added' }),
@@ -102,7 +108,7 @@ it('keeps country search keyboard focus inside the drawer and closes only the po
   const country = screen.getByRole('combobox', { name: 'País' })
   fireEvent.click(country)
   const search = await screen.findByRole('combobox', { name: 'Buscar país' })
-  expect(search).toHaveFocus()
+  await waitFor(() => expect(search).toHaveFocus())
   fireEvent.keyDown(search, { key: 'Escape' })
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
   expect(dialog).toBeVisible()

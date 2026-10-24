@@ -286,9 +286,13 @@ export function QueueView({
           {error}
         </p>
       )}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4 pb-2 text-xs text-muted-foreground">
-        <p>Última lectura: {lastSync || 'cargando…'} · Cada 5 s</p>
-        <div className="ml-auto">
+      {/* One row in the narrow queue drawer: the status wraps, the link does not. */}
+      <div className="flex flex-nowrap items-center justify-between gap-2 border-t pt-4 pb-2 text-xs text-muted-foreground">
+        <p className="min-w-0 leading-4">
+          {`Última lectura: ${lastSync || 'cargando…'} `}
+          <span className="whitespace-nowrap">· Cada 5 s</span>
+        </p>
+        <div className="shrink-0">
           <QueuePublicLinks queueId={queue.id} />
         </div>
       </div>

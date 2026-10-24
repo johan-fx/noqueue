@@ -64,10 +64,12 @@ export function QueueAutomationFooter({
               </p>
             </div>
           ) : (
-            <p className="text-xs leading-4 text-muted-foreground">
+            <p className="text-xs leading-4 text-muted-foreground sm:whitespace-nowrap">
               {type === 'restaurant' && (
                 <>
-                  No hay asignaciones de referencia.<br />
+                  No hay asignaciones de referencia.{' '}
+                  {/* Phone drawers are too narrow for both sentences. */}
+                  <br className="sm:hidden" />
                 </>
               )}
               {canOperate

@@ -357,11 +357,17 @@ it('keeps public links visible for read-only staff', () => {
 })
 it('places public links at the right of the last-read footer row instead of refresh', async () => {
   render(<Harness canOperate={false} />)
-  const lastRead = screen.getByText('Última lectura: 12:00 · Cada 5 s')
+  const lastRead = screen.getByText(
+    (_, element) =>
+      element?.tagName === 'P' &&
+      element.textContent?.replace(/\s+/g, ' ').trim() ===
+        'Última lectura: 12:00 · Cada 5 s',
+  )
   const row = lastRead.parentElement!
   expect(within(row).getByRole('button', { name: 'Abrir enlace público' })).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Actualizar' })).not.toBeInTheDocument()
-  expect(row).toHaveClass('flex', 'flex-wrap', 'items-center', 'justify-between')
+  expect(row).toHaveClass('flex', 'flex-nowrap', 'items-center', 'justify-between')
+  expect(lastRead).toHaveClass('min-w-0')
   const trigger = within(row).getByRole('button', { name: 'Abrir enlace público' })
   fireEvent.click(trigger)
   expect(await screen.findByRole('menuitem', { name: 'Inscripción' })).toBeVisible()

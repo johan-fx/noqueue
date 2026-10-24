@@ -51,7 +51,7 @@ import {
   DrawerFooter,
   DrawerClose,
 } from '@/components/ui/drawer'
-import { Plus, UsersIcon, ChevronLeft, Ellipsis } from 'lucide-react'
+import { Plus, UsersIcon, ChevronLeft, SettingsIcon } from 'lucide-react'
 import { ServiceConfigDrawer } from './ServiceConfigDrawer'
 import { api, ApiError, errorMessage } from './api'
 import { MembersDrawer } from './MembersDrawer'
@@ -1486,7 +1486,7 @@ function DashboardContent(props: DashboardProps) {
                         />
                       }
                     >
-                      <Ellipsis aria-hidden="true" />
+                      <SettingsIcon aria-hidden="true" />
                     </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="end"

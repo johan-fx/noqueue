@@ -5,6 +5,11 @@ type QueueSummary = { id: string; config: { type: string } }
 type StaffEntry = { id: string; code: string }
 
 async function swipe(page: Page, row: Locator, direction: 'left' | 'right') {
+  // Raw CDP touches do not auto-wait for actionability. A sheet can already
+  // expose the parent drawer to accessibility while its closing overlay still
+  // intercepts touches, so wait for actual unmount before starting the gesture.
+  await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0)
+  await row.scrollIntoViewIfNeeded()
   const box = await row.boundingBox()
   const y = box!.y + box!.height * 0.75,
     start = box!.x + (direction === 'left' ? box!.width - 35 : 35),

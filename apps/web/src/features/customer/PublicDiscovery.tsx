@@ -47,13 +47,18 @@ const copy = {
     scanHint: 'Accede directamente a la lista.',
     location: 'Usar mi ubicación',
     locationHint: 'Servicios cercanos a ti',
+    locationActive: 'Ubicación activada',
+    removeLocation: 'Quitar',
+    disableLocation: 'Desactivar ubicación',
+    locationResetHint: 'Vuelve al inicio y busca sin límite de distancia.',
+    nearbyEmptyTitle: 'No hay servicios cerca de ti',
     search: 'Busca un establecimiento',
     more: 'Ver más',
     wait: 'Menos espera',
     nearest: 'Más cerca',
     loading: 'Cargando servicios…',
     empty: 'No hay servicios disponibles.',
-    nearbyEmpty: 'No hay servicios disponibles en un radio de 5 km.',
+    nearbyEmpty: 'No encontramos servicios disponibles en un radio de 5 km.',
     error: 'No podemos cargar los servicios. Inténtalo de nuevo.',
     geoError:
       'No podemos acceder a tu ubicación. Puedes buscar el establecimiento.',
@@ -72,13 +77,18 @@ const copy = {
     scanHint: 'Go directly to the waiting list.',
     location: 'Use my location',
     locationHint: 'We will show nearby services',
+    locationActive: 'Location enabled',
+    removeLocation: 'Remove',
+    disableLocation: 'Turn off location',
+    locationResetHint: 'Return home and search without a distance limit.',
+    nearbyEmptyTitle: 'No services near you',
     search: 'Search for a venue',
     more: 'See more',
     wait: 'Shortest wait',
     nearest: 'Nearest',
     loading: 'Loading services…',
     empty: 'No services available.',
-    nearbyEmpty: 'No services available within 5 km.',
+    nearbyEmpty: 'We found no services available within 5 km.',
     error: 'Cannot load services. Please try again.',
     geoError: 'Cannot access your location. You can search for the venue.',
     retry: 'Retry',
@@ -220,6 +230,16 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
     if (type) next.set('type', type)
     navigate(`/search?${next}`)
   }
+  function clearLocation() {
+    // Clear the shared in-memory position before native route preparation reads it.
+    // This resets discovery, not the browser/device's location permission.
+    setDiscoveryCoordinates(undefined)
+    setGeoError(false)
+    setLoaded(null)
+    setFailure(null)
+    navigate(`/?lang=${locale}`, { replace: true, intent: 'back' })
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' })
+  }
   const filters = (
     <div
       className="flex min-w-0 gap-2 overflow-x-auto pb-1"
@@ -273,9 +293,21 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
         </div>
       )}
       {data && !data.items.length && (
-        <p role="status" className="text-sm text-gray-500">
-          {scope === 'nearby' && !text ? t.nearbyEmpty : t.empty}
-        </p>
+        scope === 'nearby' && !text ? (
+          <div className="space-y-5 py-3 text-center">
+            <div role="status" className="space-y-3">
+              <MapPin className="mx-auto size-8 text-gray-500" aria-hidden="true" />
+              <h2 className="text-lg font-semibold">{t.nearbyEmptyTitle}</h2>
+              <p className="text-sm leading-6 text-gray-500">{t.nearbyEmpty}</p>
+            </div>
+            <div className="space-y-3">
+              <Button className="h-12 w-full rounded-xl" onClick={clearLocation}>
+                {t.disableLocation}
+              </Button>
+              <p className="text-sm text-gray-500">{t.locationResetHint}</p>
+            </div>
+          </div>
+        ) : <p role="status" className="text-sm text-gray-500">{t.empty}</p>
       )}
       {data?.items.map((service) => (
         <ServiceResult
@@ -342,6 +374,15 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
               {search ? t.searchIntro : t.intro}
             </p>
           </div>
+          {coordinates && (
+            <div className="flex items-center gap-3 rounded-xl bg-gray-50 px-4 py-2">
+              <MapPin className="size-5 shrink-0" aria-hidden="true" />
+              <span className="flex-1 text-sm">{t.locationActive}</span>
+              <Button variant="ghost" className="min-h-11 shrink-0 px-3 font-semibold" onClick={clearLocation}>
+                {t.removeLocation}
+              </Button>
+            </div>
+          )}
           {search ? (
             <>
               <div className="relative">
@@ -442,14 +483,16 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
             <>
               {filters}
               {results}
-              <Button
-                variant="ghost"
-                className="h-12 text-sm!"
-                onClick={openSearch}
-              >
-                <Search className="size-4" />
-                {t.more}
-              </Button>
+              {!!data?.items.length && (
+                <Button
+                  variant="ghost"
+                  className="h-12 text-sm!"
+                  onClick={openSearch}
+                >
+                  <Search className="size-4" />
+                  {t.more}
+                </Button>
+              )}
               <Divider locale={locale} />
               {qrCard}
               <Button variant="outline" onClick={openSearch}>

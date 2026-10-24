@@ -54,3 +54,39 @@ Mobile evidence: `/private/tmp/noqueue-figma-review/implementation-mobile.jpg` (
 - [ ] Deployment operator: apply additive migration and API before releasing the interface. No deployment was authorized in this task.
 
 final result: passed
+
+---
+
+# Location-filter reset — 2026-10-24
+
+## Evidence and scope
+
+- Approved source visual: `/Users/usuario/.codex-johan/generated_images/01a16fa4-6641-7413-98f1-47f335eb5019/exec-522ad03a-89b8-473e-b7a8-034941893e19.png` (853 × 1844 pixels, intended 390 × 844 CSS-pixel mobile composition).
+- Mobile implementation: `/Users/usuario/.codex-johan/visualizations/2026/10/24/01a16fa4-6641-7413-98f1-47f335eb5019/location-implemented-mobile.png` (389 × 816 capture pixels).
+- Desktop implementation: `/Users/usuario/.codex-johan/visualizations/2026/10/24/01a16fa4-6641-7413-98f1-47f335eb5019/location-implemented-desktop.png` (1295 × 989 capture pixels).
+- Reset-state evidence: `/Users/usuario/.codex-johan/visualizations/2026/10/24/01a16fa4-6641-7413-98f1-47f335eb5019/location-reset-home.png`.
+- State: Spanish, location enabled, no nearby services, no selected category. An isolated Vite fixture imports the actual source, seeds synthetic coordinates and supplies an empty search response. No real location or production service data was used.
+- Scope: add the approved location controls and empty-state recovery to the existing shared web/native screen. Existing shell, hero typography, QR card, and search button remain unchanged rather than redesigning them to match incidental ImageGen differences.
+
+## Viewport and comparison
+
+- Mobile override 443 × 929 yielded an observed CSS viewport 402 × 844 with 389 usable content pixels; devicePixelRatio 1.1. Both clientWidth and scrollWidth were 389: no horizontal content overflow.
+- Desktop override 1440 × 1100 yielded 1309 × 1000 CSS pixels, 1295 usable content pixels; clientWidth and scrollWidth were equal.
+- Compared the source and final implementation images together in one visual inspection input. Source density is approximately 2.19 pixels per intended CSS pixel. Browser screenshots have an app-level projection offset and surrounding canvas, so comparison is hierarchy/layout review, not a pixel-diff claim. Native screenshot capture, rather than the browser fullPage capture, avoids an observed right-edge truncation in the capture pipeline.
+- Full-view comparison confirms header → enabled-location row → categories → empty state and primary recovery → divider → existing QR/search actions.
+- Focused review of the new controls in that same full-view pair confirms pin icons, light rounded status row, explicit Quitar action, centered empty-state heading/helper, full-width dark Desactivar ubicación CTA and return-home explanation. No separate region crop was necessary for these few controls.
+
+## Findings and comparison history
+
+- No actionable P0/P1/P2 issues in this scoped implementation. Buttons have at least 44px (Quitar) and 48px (Desactivar ubicación) touch heights, visible keyboard focus, and semantic button behavior. Live empty-state text is separate from the interactive button.
+- Initial 390px browser override produced only 341 usable CSS pixels due browser zoom; corrected the capture viewport and rechecked dimensions. Initial fullPage capture cropped the right edge; replaced evidence with native browser screenshot capture, without altering product layout.
+- P3/source difference: existing hero and QR typography/line wrapping are preserved. The generated mock is not an exact rendering of the original application's typography; intentionally no unrelated global styling changes.
+
+## Functional verification
+
+- Browser: Desactivar ubicación restores the initial QR/location/search actions. Searching afterward opens `/search?lang=es`, with Menos espera and no enabled-location control. Quitar also restores home on desktop. Console error/warning log inspection returned no entries.
+- Automated: complete web suite 927 tests passed, including native router/preloader tests; mobile scripts suite 47 tests passed. Web/mobile TypeScript checks, scoped ESLint, web production build and git diff whitespace checks passed. Build reports a non-blocking large-chunk warning.
+- Regression coverage: both reset buttons; empty/populated nearby discovery; native search-to-home; ES/EN preservation; recent-service retention; clearing text/type/page/scope/sort; global search after reset; explicit location opt-in again; removal during loading/error and ignored late responses.
+- Device boundary: native routes are exercised in jsdom using the actual native route loader and mocked native transport. No physical-device/emulator installation or production deployment was performed.
+
+final result: passed

@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { createNativeRoutes } from '@/app/routes/native-routes'
-import { nativeDiscoveryReturn, setDiscoveryCoordinates } from './discovery-state'
+import { getDiscoveryCoordinates, nativeDiscoveryReturn, setDiscoveryCoordinates } from './discovery-state'
 
 vi.mock('@/app/bootstrap/runtime', () => ({ detectRuntime: () => 'native' }))
 vi.mock('@/platform/capacitor/installation', () => ({ installationSecret: async () => 'ab'.repeat(32) }))
@@ -182,4 +182,36 @@ it('shows a text-free centered spinner during a slow native navigation', async (
   await act(async () => finish(Response.json(service)))
   await screen.findByLabelText('Nombre')
   expect(screen.queryByRole('status', { name: 'Cargando' })).not.toBeInTheDocument()
+})
+
+
+it.each(['Quitar', 'Desactivar ubicación'])('resets native nearby home with %s without retaining preloaded nearby data', async action => {
+  setDiscoveryCoordinates({ latitude: 36.7, longitude: -4.4 })
+  const original = fetcher.getMockImplementation()!
+  fetcher.mockImplementation((url: string, init: unknown) => url.endsWith('/search')
+    ? Promise.resolve(Response.json({ items: [], page: 1, hasMore: false })) : original(url, init))
+  mount('/?scope=nearby&sort=distance&type=pool&page=2')
+  fireEvent.click(await screen.findByRole('button', { name: action }))
+  expect(await screen.findByRole('button', { name: /Usar mi ubicación/ })).toBeVisible()
+  expect(getDiscoveryCoordinates()).toBeUndefined()
+  expect(router.state.location.pathname + router.state.location.search).toBe('/?lang=es')
+  expect(screen.queryByText('Ubicación activada')).not.toBeInTheDocument()
+  expect(screen.queryByRole('heading', { name: 'No hay servicios cerca de ti' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Busca un establecimiento' }))
+  await waitFor(() => expect(router.state.location.pathname).toBe('/search'))
+  const [, init] = fetcher.mock.calls.filter(([url]) => url.endsWith('/search')).at(-1)!
+  expect(JSON.parse(init.body)).toMatchObject({ scope: 'global', sort: 'wait', page: 1 })
+  expect(JSON.parse(init.body)).not.toHaveProperty('coordinates')
+})
+
+it('removes location from populated native search and returns to the localized home', async () => {
+  setDiscoveryCoordinates({ latitude: 36.7, longitude: -4.4 })
+  mount('/search?lang=en&scope=nearby&sort=distance&type=restaurant&page=2&text=Sol')
+  await screen.findByRole('link', { name: /Restaurante Sol/ })
+  fireEvent.click(screen.getByRole('button', { name: 'Remove' }))
+  expect(await screen.findByRole('button', { name: /Use my location/ })).toBeVisible()
+  expect(router.state.location.pathname + router.state.location.search).toBe('/?lang=en')
+  expect(router.state.historyAction).toBe('REPLACE')
+  expect(getDiscoveryCoordinates()).toBeUndefined()
+  expect(screen.queryByRole('link', { name: /Restaurante Sol/ })).not.toBeInTheDocument()
 })

@@ -671,7 +671,7 @@ test('selecting an older compatible restaurant candidate is local until Confirma
   await expect(candidateRows.getByText('Anterior de tres', { exact: true })).toBeVisible()
   await expect(candidateRows.getByText('Anterior de dos', { exact: true })).toBeVisible()
   await candidateRows
-    .getByRole('button', { name: 'Asignar →', exact: true })
+    .getByRole('button', { name: 'Asignar', exact: true })
     .first()
     .click()
   const assignment = page.getByRole('dialog', {

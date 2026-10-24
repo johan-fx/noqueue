@@ -11,10 +11,19 @@ import { UsersIcon } from 'lucide-react'
 import { QueueCycleDetails } from './QueueCycleDetails'
 import { AssignmentOptions } from './AssignmentOptions'
 import { receptionLabels, queueActionLabels } from './queue-labels'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import warningIcon from '@/assets/queue-sheet/warning.svg'
+import usersIcon from '@/assets/queue-sheet/users.svg'
+import dotIcon from '@/assets/queue-sheet/dot.svg'
+import assignIcon from '@/assets/queue-sheet/assign.svg'
+import backIcon from '@/assets/queue-sheet/back.svg'
+import arrivalClockIcon from '@/assets/queue-sheet/arrival-clock.svg'
+import closeIcon from '@/assets/queue-sheet/close.svg'
 import { Button } from '@/components/ui/button'
 import {
   Sheet,
   SheetContent,
+  SheetClose,
   SheetDescription,
   SheetFooter,
   SheetHeader,
@@ -134,6 +143,7 @@ export function QueueTurnSheets({
   const availableManagedActions = canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status)
     ? managedActions
     : []
+  const compactCalled = canOperate && managedEntry?.status === 'called' && managedEntry.automationCycle?.state !== 'stopped'
   const showingOlderWarning = !automaticConflict && olderAssignmentWarning && pending?.action === 'call'
   const hasOlderCapacity = olderCompatibleCandidates.some(
     (candidate) => candidate.partySize !== pendingEntry?.partySize,
@@ -148,19 +158,54 @@ export function QueueTurnSheets({
         <SheetContent
           side="bottom"
           finalFocus={returnFocus}
-          showCloseButton={!busy}
-          className="mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
+          showCloseButton={!busy && !compactCalled}
+          className={compactCalled ? "mx-auto max-h-[90dvh] max-w-lg gap-0 overflow-hidden rounded-t-2xl border-t-0 p-0 data-[side=bottom]:border-t-0" : "mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"}
         >
-          <SheetHeader className="px-0 pr-8">
-            <SheetTitle className="text-2xl">{canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status) ? 'Gestionar turno' : 'Detalle del turno'}</SheetTitle>
+          <div className={compactCalled ? "min-h-0 overflow-y-auto px-4 pt-6" : "contents"}>
+          <SheetHeader className={compactCalled ? "gap-0 p-0 pr-8" : "px-0 pr-8"}>
+            <SheetTitle className={compactCalled ? "text-2xl font-medium leading-none text-[#374151]" : "text-2xl"}>{canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status) ? 'Gestionar turno' : 'Detalle del turno'}</SheetTitle>
             {managedEntry && (
-              <SheetDescription>
+              <SheetDescription className={compactCalled ? "sr-only" : undefined}>
                 {managedEntry.displayName || `Turno ${managedEntry.code}`} · Turno:{' '}
                 {managedEntry.code}
               </SheetDescription>
             )}
           </SheetHeader>
-          {managedEntry && (
+          {managedEntry && (compactCalled ? (
+            <div className="mt-6 flex flex-col gap-2">
+              <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+                <p className="min-w-0 break-words text-[22px] font-normal leading-7 tracking-[-0.26px] text-[#111827]" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
+                  {managedEntry.displayName || `Turno ${managedEntry.code}`}
+                </p>
+                <p className="shrink-0 text-sm font-medium leading-5 text-[#111827]">
+                  <span className="text-[#9ca3af]">Turno: </span>{managedEntry.code}
+                </p>
+              </div>
+              {queue?.config.type === 'restaurant' ? (
+                <div className="flex min-h-5 flex-wrap items-center gap-1 text-xs font-medium leading-none text-[#9ca3af]">
+                  <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
+                  <span className="px-1" aria-label={`${managedEntry.partySize} personas`}>{managedEntry.partySize}</span>
+                  {(managedEntry.assignedSeating?.spaceName || managedEntry.space?.name) && <>
+                    <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+                    <span className="px-1">{managedEntry.assignedSeating?.spaceName || managedEntry.space?.name}</span>
+                  </>}
+                  {managedEntry.assignedSeating && <span className="sr-only">Mesa para {managedEntry.assignedSeating.seats}</span>}
+                </div>
+              ) : queue?.config.type === 'reception' && managedEntry.receptionService ? (
+                <p className="text-xs leading-5 text-[#9ca3af]">{receptionLabels[managedEntry.receptionService]}</p>
+              ) : null}
+              {managedEntry.arrivalDeadlineAt != null && (
+                <div className="flex flex-wrap items-center gap-1">
+                  <p className="px-1 text-xs font-medium leading-none text-[#9ca3af]">Tiempo para confirmar llegada</p>
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fef2f2] px-2 py-0.5 text-xs font-semibold leading-4 text-[#dc2626]">
+                    <img src={arrivalClockIcon} alt="" aria-hidden="true" className="shrink-0" />
+                    <span className="tabular-nums"><ArrivalCountdown deadline={managedEntry.arrivalDeadlineAt} clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0} /></span>
+                  </span>
+                </div>
+              )}
+              {managedEntry.automationCycle?.state === 'active' && <p className="sr-only">Ciclo automático · Intento {managedEntry.automationCycle.attempt ?? 1}. Confirmar o cancelar pausa solo este ciclo.</p>}
+            </div>
+          ) : (
             <div className="space-y-3 pb-2">
               <QueueCycleDetails entry={managedEntry} canOperate={canOperate} />
               {queue?.config.type === 'restaurant' ? (
@@ -204,11 +249,12 @@ export function QueueTurnSheets({
                   </p>
                 )}
             </div>
-          )}
-          <SheetFooter className="gap-3 px-0">
+          ))}
+          </div>
+          <SheetFooter className={compactCalled ? "shrink-0 gap-4 px-4 pt-8 pb-[max(1.5rem,env(safe-area-inset-bottom))]" : "gap-3 px-0"}>
             {managedEntry && availableManagedActions.includes('call') && (
               <Button
-                className="h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"
+                className={compactCalled ? "h-12 w-full rounded-lg text-sm font-medium" : "h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"}
                 disabled={busy}
                 onClick={() => onAction(managedEntry, 'call')}
               >
@@ -217,7 +263,7 @@ export function QueueTurnSheets({
             )}
             {managedEntry && availableManagedActions.includes('complete') && (
               <Button
-                className="h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"
+                className={compactCalled ? "h-12 w-full rounded-lg text-sm font-medium" : "h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"}
                 disabled={busy}
                 onClick={() => onAction(managedEntry, 'complete')}
               >
@@ -226,7 +272,7 @@ export function QueueTurnSheets({
             )}
             {managedEntry && !managedIsNext && availableManagedActions.includes('prioritize') && (
               <Button
-                className="h-12 w-full"
+                className={`h-12 w-full ${compactCalled ? 'rounded-lg text-sm font-medium' : ''}`}
                 variant="outline"
                 disabled={busy}
                 onClick={() => onAction(managedEntry, 'prioritize')}
@@ -238,7 +284,7 @@ export function QueueTurnSheets({
               (managedEntry.status === 'called' || managedIsNext) &&
               availableManagedActions.includes('pass') && (
               <Button
-                className="h-12 w-full"
+                className={`h-12 w-full ${compactCalled ? 'rounded-lg text-sm font-medium' : ''}`}
                 variant="outline"
                 disabled={busy}
                 onClick={() => onAction(managedEntry, 'pass')}
@@ -248,7 +294,7 @@ export function QueueTurnSheets({
             )}
             {managedEntry && availableManagedActions.includes('cancel') && (
               <Button
-                className="h-12 w-full border-destructive text-destructive hover:text-destructive"
+                className={compactCalled ? "h-12 w-full rounded-lg border-[#b91c1c] text-sm font-medium text-[#b91c1c] hover:text-[#b91c1c]" : "h-12 w-full border-destructive text-destructive hover:text-destructive"}
                 variant="outline"
                 disabled={busy}
                 onClick={() => onAction(managedEntry, 'cancel')}
@@ -256,15 +302,21 @@ export function QueueTurnSheets({
                 Cancelar turno
               </Button>
             )}
-            <Button
-              className="h-12 w-full"
+            {!compactCalled && <Button
+              className={`h-12 w-full ${compactCalled ? 'rounded-lg text-sm font-medium' : ''}`}
               variant="outline"
               disabled={busy}
               onClick={() => onManagedOpenChange(false)}
             >
               Volver
-            </Button>
+            </Button>}
           </SheetFooter>
+          {compactCalled && !busy && (
+            <SheetClose render={<Button variant="ghost" className="absolute top-6 right-4 size-6 rounded-none border-0 p-0" />}>
+              <img src={closeIcon} alt="" aria-hidden="true" className="shrink-0" />
+              <span className="sr-only">Cerrar</span>
+            </SheetClose>
+          )}
         </SheetContent>
       </Sheet>
 
@@ -272,14 +324,14 @@ export function QueueTurnSheets({
         <SheetContent
           side="bottom"
           finalFocus={returnFocus}
-          showCloseButton={!busy}
+          showCloseButton={!busy && !showingOlderWarning}
           className={showingOlderWarning
-            ? "mx-auto max-h-[90dvh] max-w-lg overflow-hidden rounded-t-xl gap-0 p-0"
+            ? "mx-auto max-h-[90dvh] max-w-lg overflow-hidden rounded-t-2xl gap-0 border-t-0 p-0"
             : "mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"}
         >
-          <div className={showingOlderWarning ? "min-h-0 overflow-y-auto p-4 space-y-4" : "contents"}>
-          <SheetHeader className="px-0 pr-8">
-            <SheetTitle className="text-2xl">
+          <div className={showingOlderWarning ? "min-h-0 overflow-y-auto px-4 pt-6 space-y-6" : "contents"}>
+          <SheetHeader className={showingOlderWarning ? "gap-2 p-0" : "px-0 pr-8"}>
+            <SheetTitle className={showingOlderWarning ? "pr-8 text-2xl font-medium leading-[1.4] text-[#374151]" : "text-2xl"}>
               {automaticConflict
                 ? 'Turno ya procesado'
                 : olderAssignmentWarning && pending?.action === 'call'
@@ -294,13 +346,13 @@ export function QueueTurnSheets({
                           ? queueActionLabels[pending.action]
                           : ''}
             </SheetTitle>
-            <SheetDescription>
+            <SheetDescription className={showingOlderWarning ? "text-sm leading-5 text-[#6b7280]" : undefined}>
               {automaticConflict === 'processed'
                 ? 'El sistema ya ha asignado este turno y ha avisado al siguiente cliente. La cola se actualizará automáticamente.'
                 : automaticConflict === 'assigned'
                   ? 'Este turno ya ha sido asignado automáticamente. La lista se actualizará automáticamente.'
                   : olderAssignmentWarning && pending?.action === 'call' && pendingEntry
-                    ? `Vas a iniciar una asignación para ${pendingEntry.partySize} personas${pendingEntry.assignedSeating?.spaceName || pendingEntry.assignment?.spaceName || pendingEntry.space?.name ? ` en ${pendingEntry.assignedSeating?.spaceName || pendingEntry.assignment?.spaceName || pendingEntry.space?.name}` : ''}.`
+                    ? <>Vas a iniciar una asignación para <strong className="font-semibold">{pendingEntry.partySize} {pendingEntry.partySize === 1 ? 'persona' : 'personas'}</strong>{pendingEntry.assignedSeating?.spaceName || pendingEntry.assignment?.spaceName || pendingEntry.space?.name ? <> en <strong className="font-semibold">{pendingEntry.assignedSeating?.spaceName || pendingEntry.assignment?.spaceName || pendingEntry.space?.name}.</strong></> : '.'}</>
                     : pending?.action === 'prioritize'
                       ? 'Esta persona tendrá prioridad en la siguiente asignación compatible. La persona que ya ha sido avisada conservará su turno y se recalcularán los tiempos estimados.'
                       : pending?.action === 'pass'
@@ -321,7 +373,7 @@ export function QueueTurnSheets({
             </SheetDescription>
           </SheetHeader>
 
-          <div className="space-y-2 pb-4">
+          {!showingOlderWarning && <div className="space-y-2 pb-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xl">
                 {pendingEntry?.displayName ||
@@ -346,47 +398,44 @@ export function QueueTurnSheets({
                   {receptionLabels[pendingEntry.receptionService]}
                 </p>
               )}
-          </div>
+          </div>}
 
           {!automaticConflict && olderAssignmentWarning &&
             pending?.action === 'call' &&
             olderCompatibleCandidates.length > 0 && (
-              <div className="space-y-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-amber-950">
-                <p className="text-sm text-amber-950">{olderWarningCopy}</p>
-                <ul aria-label="Turnos compatibles anteriores" className="space-y-2">
+              <div className="space-y-6">
+                <Alert className="grid-cols-[16px_1fr] gap-x-3 rounded-[10px] border-0 bg-[#fffbeb] px-4 py-3 text-[#b45309]">
+                  <img src={warningIcon} alt="" aria-hidden="true" className="mt-0.5 shrink-0" />
+                  <AlertDescription className="min-w-0 text-sm font-normal leading-5 text-[#b45309] text-wrap md:text-wrap">
+                    {olderWarningCopy}
+                  </AlertDescription>
+                </Alert>
+                <ul aria-label="Turnos compatibles anteriores" className="space-y-6">
                   {olderCompatibleCandidates.map((candidate) => (
-                    <li
-                      key={candidate.id}
-                      className="flex items-center justify-between gap-3 rounded-md bg-background p-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium">
-                          {candidate.displayName || `Turno ${candidate.code}`}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {candidate.partySize}{' '}
-                          {candidate.partySize === 1 ? 'persona' : 'personas'} ·{' '}
-                          {candidate.assignment?.spaceName ||
-                            candidate.space?.name ||
-                            'Espacio compatible'} ·{' '}
-                          <WaitingAge
-                            since={candidate.waitingSince}
-                            clockOffsetMs={
-                              automationSnapshot
-                                ? automationSnapshot.serverNow - automationSnapshot.observedAt
-                                : 0
-                            }
-                          />
-                        </p>
+                    <li key={candidate.id} className="min-w-0">
+                      <p className="truncate text-sm font-medium leading-5 text-[#111827]">
+                        {candidate.displayName || `Turno ${candidate.code}`}
+                      </p>
+                      <div className="flex flex-wrap items-center justify-between gap-x-2">
+                        <div className="flex min-w-0 items-center gap-1 text-xs font-medium leading-none text-[#9ca3af]">
+                          <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
+                          <span className="px-1" aria-label={`${candidate.partySize} personas`}>{candidate.partySize}</span>
+                          <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+                          <span className="max-w-24 truncate px-1">{candidate.assignment?.spaceName || candidate.space?.name || 'Espacio compatible'}</span>
+                          <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+                          <span className="px-1">
+                            <WaitingAge since={candidate.waitingSince} clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0} />
+                          </span>
+                        </div>
+                        <Button
+                          className="h-9 shrink-0 gap-2 rounded-lg px-4 text-sm font-medium"
+                          variant="ghost"
+                          disabled={busy || commandUncertain}
+                          onClick={() => onSelectCandidate(candidate)}
+                        >
+                          Asignar <img src={assignIcon} alt="" aria-hidden="true" className="shrink-0" />
+                        </Button>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={busy || commandUncertain}
-                        onClick={() => onSelectCandidate(candidate)}
-                      >
-                        Asignar →
-                      </Button>
                     </li>
                   ))}
                 </ul>
@@ -399,7 +448,7 @@ export function QueueTurnSheets({
                 'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.'}
             </p>
           )}
-          {!automaticConflict && pending?.action === 'call' && (
+          {!automaticConflict && !showingOlderWarning && pending?.action === 'call' && (
             <div className="space-y-4">
               {pendingQueue?.config.automaticAssignmentEnabled &&
               automationSnapshot?.effective &&
@@ -449,7 +498,7 @@ export function QueueTurnSheets({
           )}
 
           </div>
-          <SheetFooter className={showingOlderWarning ? "shrink-0 gap-3 border-t bg-background px-4 py-3 pb-[max(1rem,env(safe-area-inset-bottom))]" : "gap-3 px-0"}>
+          <SheetFooter className={showingOlderWarning ? "shrink-0 gap-4 bg-background px-4 pt-11 pb-[max(1.5rem,env(safe-area-inset-bottom))]" : "gap-3 px-0"}>
             {automaticConflict ? (
               <Button className="h-12 w-full" onClick={onDismissAutomaticConflict}>
                 Entendido
@@ -457,7 +506,7 @@ export function QueueTurnSheets({
             ) : (
               <>
                 <Button
-                  className={`h-12 w-full ${
+                  className={`h-12 w-full ${showingOlderWarning ? 'rounded-lg text-sm font-medium' : ''} ${
                     pending?.action === 'cancel'
                       ? 'border-destructive text-destructive hover:text-destructive'
                       : ''
@@ -495,16 +544,23 @@ export function QueueTurnSheets({
                               : 'Confirmar'}
                 </Button>
                 <Button
-                  className="h-12 w-full"
+                  className={`h-12 w-full ${showingOlderWarning ? 'gap-2 rounded-lg text-sm font-medium' : ''}`}
                   variant="outline"
                   disabled={busy}
                   onClick={onBack}
                 >
+                  {showingOlderWarning && <img src={backIcon} alt="" aria-hidden="true" className="shrink-0" />}
                   {pending?.action === 'cancel' ? '← Volver' : 'Volver'}
                 </Button>
               </>
             )}
           </SheetFooter>
+          {showingOlderWarning && !busy && (
+            <SheetClose render={<Button variant="ghost" className="absolute top-6 right-4 size-6 rounded-none border-0 p-0" />}>
+              <img src={closeIcon} alt="" aria-hidden="true" className="shrink-0" />
+              <span className="sr-only">Cerrar</span>
+            </SheetClose>
+          )}
         </SheetContent>
       </Sheet>
     </>

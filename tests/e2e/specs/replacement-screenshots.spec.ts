@@ -741,7 +741,7 @@ test('captures older compatible selection and stale conflict Figma states in mob
   await captureFigmaNode(page, '1826-37166')
   await warning
     .getByRole('list', { name: 'Turnos compatibles anteriores' })
-    .getByRole('button', { name: 'Asignar →', exact: true })
+    .getByRole('button', { name: 'Asignar', exact: true })
     .first()
     .click()
   const assignment = page.getByRole('dialog', {

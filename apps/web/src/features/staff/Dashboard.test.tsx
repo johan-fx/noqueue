@@ -2801,7 +2801,7 @@ it('keeps confirmed table capacity in turn details rather than the compact card'
   const manage = await screen.findByRole('button', { name: 'Gestionar turno C1' })
   expect(screen.queryByText(/Mesa para 4/)).not.toBeInTheDocument()
   fireEvent.click(manage)
-  expect(within(await screen.findByRole('dialog', { name: 'Gestionar turno' })).getByText(/Interior · Mesa para 4/)).toBeVisible()
+  expect(within(await screen.findByRole('dialog', { name: 'Gestionar turno' })).getByText('Mesa para 4')).toHaveClass('sr-only')
 })
 
 it.each(['queue_staff', 'viewer'] as const)('lets %s read a paused historical cycle without reopening actions', async (role) => {

@@ -241,7 +241,7 @@ it('uses learned cadence defaults without an estimator opt-in and preserves expl
   )
 })
 
-it('defaults automatic assignment to off and persists the explicit service opt-in', () => {
+it('leaves automatic assignment to the queue step', () => {
   const confirm = vi.fn()
   render(
     <QueueConfigForm
@@ -252,14 +252,12 @@ it('defaults automatic assignment to off and persists the explicit service opt-i
       onConfirm={confirm}
     />,
   )
-  const toggle = screen.getByRole('switch', {
-    name: 'Modo de gestión automática',
-  })
-  expect(toggle).not.toBeChecked()
-  fireEvent.click(toggle)
+  expect(
+    screen.queryByRole('switch', { name: 'Modo de gestión automática' }),
+  ).not.toBeInTheDocument()
   fireEvent.submit(document.getElementById('queue-config')!)
   expect(confirm).toHaveBeenCalledWith(
     [],
-    expect.objectContaining({ automaticAssignmentEnabled: true }),
+    expect.not.objectContaining({ automaticAssignmentEnabled: false }),
   )
 })

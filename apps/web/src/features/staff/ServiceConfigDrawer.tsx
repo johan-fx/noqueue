@@ -305,9 +305,6 @@ export function ServiceConfigDrawer({
                   notificationCooldownMinutes: form.getValues(
                     'notificationCooldownMinutes',
                   ),
-                  automaticAssignmentEnabled: form.getValues(
-                    'automaticAssignmentEnabled',
-                  ),
                 }}
                 spaces={form.getValues('spaces')}
                 averageMinutes={form.getValues('averageMinutes')}
@@ -357,12 +354,6 @@ export function ServiceConfigDrawer({
                       form.setValue(
                         'notificationCooldownMinutes',
                         options.notificationCooldownMinutes,
-                        { shouldDirty: true },
-                      )
-                    if (options.automaticAssignmentEnabled !== undefined)
-                      form.setValue(
-                        'automaticAssignmentEnabled',
-                        options.automaticAssignmentEnabled,
                         { shouldDirty: true },
                       )
                   }

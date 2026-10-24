@@ -572,7 +572,7 @@ test.describe('service setup retry and persistence', () => {
     await config.getByRole('button', { name: 'Siguiente' }).click()
     await config.getByRole('button', { name: 'Siguiente' }).click()
     await config
-      .getByLabel('Intervalo inicial estimado entre turnos')
+      .getByLabel('Intervalo inicial estimado entre turnos (minutos)')
       .fill('45')
     for (let step = 0; step < 2; step++)
       await config.getByRole('button', { name: 'Siguiente' }).click()
@@ -610,7 +610,7 @@ test.describe('service setup retry and persistence', () => {
     await reopened.getByRole('button', { name: 'Siguiente' }).click()
     await reopened.getByRole('button', { name: 'Siguiente' }).click()
     await expect(
-      reopened.getByLabel('Intervalo inicial estimado entre turnos'),
+      reopened.getByLabel('Intervalo inicial estimado entre turnos (minutos)'),
     ).toHaveValue('45')
   })
 })

@@ -120,7 +120,7 @@ describe('service configuration wizard', () => {
     expect(screen.getByText('Espacio 1')).toBeVisible()
     await next()
     fireEvent.change(
-      screen.getByLabelText('Intervalo inicial estimado entre turnos'),
+      screen.getByLabelText('Intervalo inicial estimado entre turnos (minutos)'),
       {
         target: { value: '45' },
       },
@@ -406,7 +406,7 @@ it('defaults an absent estimator version to adaptive v2 through the service form
   expect(screen.getByText(/ajusta automáticamente estas estimaciones/)).toBeVisible()
   fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
   expect(
-    screen.getByLabelText('Intervalo inicial estimado entre turnos'),
+    screen.getByLabelText('Intervalo inicial estimado entre turnos (minutos)'),
   ).toBeVisible()
   await next()
   await next()

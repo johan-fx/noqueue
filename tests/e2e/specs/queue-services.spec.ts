@@ -178,7 +178,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   })
   await expect(drawer.getByText('María López')).toBeVisible()
   await expect(
-    drawer.getByText('Terraza', { exact: true }),
+    drawer.getByRole('list', { name: 'Lista de espera' }).getByText('Terraza', { exact: true }),
   ).toBeVisible()
   await drawer.getByRole('button', { name: 'Añadir', exact: true }).click()
   const add = page.getByRole('dialog', { name: 'Restaurante', exact: true })
@@ -275,14 +275,12 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     fullPage: false,
     animations: 'disabled',
   })
-  await cancel.getByRole('button', { name: '← Volver', exact: true }).click()
+  await cancel.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0)
   await expect(
     page.getByRole('dialog', { name: 'Gestionar turno', exact: true }),
-  ).toBeVisible()
-  await page
-    .getByRole('dialog', { name: 'Gestionar turno', exact: true })
-    .getByRole('button', { name: 'Volver', exact: true })
-    .click()
+  ).toHaveCount(0)
+  await expect(drawer).toBeVisible()
   await expect(
     maria.getByRole('button', { name: /^Gestionar turno/ }),
   ).toBeFocused()
@@ -308,8 +306,13 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   ).toHaveCount(0)
   await expect(drawer.getByText('María López')).toHaveCount(0)
   await drawer.getByRole('tab', { name: 'Completados' }).click()
-  await expect(drawer.getByText(/Terraza · Mesa para 6/)).toBeVisible()
+  await expect(drawer.getByRole('tabpanel', { name: 'Completados' }).getByText('Terraza', { exact: true })).toBeVisible()
   await expect(drawer.getByText('Completado', { exact: true })).toBeVisible()
+  await drawer.getByRole('button', { name: /^Ver detalle del turno/ }).click()
+  const completedDetail = page.getByRole('dialog', { name: 'Detalle del turno', exact: true })
+  await expect(completedDetail.getByText(/Terraza · Mesa para 6/)).toBeVisible()
+  await completedDetail.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0)
   await expect(
     drawer.getByRole('tabpanel', { name: 'Completados' }).getByRole('button', {
       name: 'Liberar recurso',
@@ -456,6 +459,8 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   ).toHaveCount(0)
   await poolAdvance.click()
   await expect(poolRow.getByText('Pendiente de llegada')).toBeVisible()
+  // Regression: live feedback must not cover the next modal's confirmation.
+  await expect(page.getByText('Turno asignado.', { exact: true })).toBeVisible()
   await expect(
     page.getByRole('dialog', { name: 'Asignar turno', exact: true }),
   ).toHaveCount(0)

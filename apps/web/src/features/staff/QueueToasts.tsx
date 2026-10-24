@@ -33,8 +33,10 @@ export function QueueToastViewport({
   return (
     // Escape the drawer's transformed/clipped popup without reserving space.
     // Base UI keeps nested portals inside the modal's outer portal for a11y.
+    // Above the queue drawer (50), below action sheets/backdrops (60): a
+    // hovered toast must never cover and indefinitely block confirmation.
     <ToastPortal>
-      <ToastViewport className="bottom-[max(1rem,env(safe-area-inset-bottom))] z-[100] sm:inset-x-4 sm:mx-auto sm:w-auto lg:landscape:left-auto lg:landscape:right-4 lg:landscape:mx-0 lg:landscape:w-full">
+      <ToastViewport className="bottom-[max(1rem,env(safe-area-inset-bottom))] z-[55] sm:inset-x-4 sm:mx-auto sm:w-auto lg:landscape:left-auto lg:landscape:right-4 lg:landscape:mx-0 lg:landscape:w-full">
         {visibleToasts.map((toast) => {
           const isAlert = toast.type === 'cancel' || toast.type === 'expiry'
           return (

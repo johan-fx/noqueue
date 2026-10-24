@@ -211,7 +211,9 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   await expect(drawer).toBeVisible()
   expect(commands()).toBe(0)
   await called.getByRole('button', { name: /^Gestionar turno/ }).click()
-  await expect.poll(() => offset(called)).toBe(0)
+  // The sheet makes its parent drawer aria-hidden. Inspect the underlying
+  // DOM for geometry without requiring that drawer to remain accessible.
+  await expect.poll(() => offset(page.locator('[data-entry-code="T1"]'))).toBe(0)
   const manageSheet = page.getByRole('dialog', {
     name: 'Gestionar turno',
     exact: true,
@@ -221,16 +223,21 @@ test('desktop progressive swipe, limits, thresholds, exclusivity and accessible 
   ).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(manageSheet).toHaveCount(0)
+  await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0)
   await row.getByRole('button', { name: /^Gestionar turno/ }).focus()
   await page.keyboard.press('Enter')
   await expect(
     page.getByRole('dialog', { name: 'Gestionar turno', exact: true }),
   ).toBeVisible()
   await page.keyboard.press('Escape')
+  // Role queries can stop matching before the exiting modal/backdrop unmounts.
+  // Raw pointer gestures must wait until the underlying card is interactive.
+  await expect(page.locator('[data-slot="sheet-content"]')).toHaveCount(0)
   await expect(
     called.getByRole('button', { name: 'Confirmar llegada' }),
   ).toHaveCount(0)
   await mouseSwipe(page, called, 120)
+  await expect.poll(() => offset(called)).toBe(144)
   await called.getByRole('button', { name: 'Confirmar llegada' }).click()
   await expect.poll(commands).toBe(1)
   await expect(
@@ -258,8 +265,14 @@ test('legacy inventory readiness does not block assignment and viewer cannot dra
   setup = await openQueue(page, { viewer: true })
   row = setup.drawer.locator('[data-entry-code="T0"]')
   await mouseSwipe(page, row, 120)
-  await expect.poll(() => offset(row)).toBe(0)
-  await expect(row.getByRole('button', { name: /^Gestionar turno/ })).toHaveCount(
+  await expect.poll(() => offset(page.locator('[data-entry-code="T0"]'))).toBe(0)
+  // Non-draggable cards remain clickable for read-only details.
+  const detail = page.getByRole('dialog', { name: 'Detalle del turno', exact: true })
+  await expect(detail).toBeVisible()
+  await expect(detail.getByRole('button', { name: /Asignar|Cancelar|Pasar|Confirmar llegada/ })).toHaveCount(0)
+  await detail.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await expect(detail).toHaveCount(0)
+  await expect(row.getByRole('button', { name: /^Ver detalle del turno/ })).toHaveCount(
     1,
   )
   await expect(row.getByRole('button', { name: 'Asignar turno' })).toHaveCount(

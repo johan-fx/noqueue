@@ -305,6 +305,12 @@ test.describe('commercial provisioning save retry', () => {
     await spaceConfig
       .getByRole('button', { name: 'Confirmar', exact: true })
       .click()
+    const capacityConfirmation = page.getByRole('dialog', {
+      name: 'Se va a actualizar el número de mesas disponibles', exact: true,
+    })
+    await expect(capacityConfirmation).toBeVisible()
+    await capacityConfirmation.getByRole('button', { name: 'Confirmar', exact: true }).click()
+    await expect(capacityConfirmation).toHaveCount(0)
     await expect(spaceConfig).toHaveCount(0)
     for (let step = 0; step < 3; step++)
       await creationService.getByRole('button', { name: 'Siguiente' }).click()

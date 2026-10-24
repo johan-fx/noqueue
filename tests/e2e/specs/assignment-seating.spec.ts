@@ -79,7 +79,7 @@ test('staff confirms a larger table with buttons; the actual context survives re
     .click()
   const sheet = page.getByRole('dialog', { name: 'Asignar turno', exact: true })
   await expect(
-    sheet.getByText(/^Grupo de 2 personas/),
+    sheet.getByLabel('2 personas', { exact: true }),
   ).toBeVisible()
   await expect(
     sheet.getByRole('button', { name: 'Mesa para 3 personas', exact: true }),
@@ -131,7 +131,7 @@ test('staff confirms a larger table with buttons; the actual context survives re
   })
   await expect(sheet).toHaveCount(0)
   await expect(
-    drawer.getByText(`· ${outside} · Mesa para 4`, { exact: true }),
+    drawer.getByRole('list', { name: 'Lista de espera' }).getByText(outside, { exact: true }),
   ).toBeVisible()
   const assigned = (await readEntries())[0]!
   expect(assigned).toMatchObject({
@@ -168,7 +168,7 @@ test('staff confirms a larger table with buttons; the actual context survives re
   await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   await drawer.getByRole('tab', { name: 'Completados', exact: true }).click()
   await expect(
-    drawer.getByText('· Espacio ya no configurado · Mesa para 4', {
+    drawer.getByText('Espacio ya no configurado', {
       exact: true,
     }),
   ).toBeVisible()
@@ -247,5 +247,12 @@ test('a single compatible combination is informative and still saves confirmed s
   await expect(sheet).toHaveCount(0)
   await page.reload()
   await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
-  await expect(drawer.getByText('· Terraza · Mesa para 4', { exact: true })).toBeVisible()
+  await expect(drawer.getByRole('list', { name: 'Lista de espera' }).getByText('Terraza', { exact: true })).toBeVisible()
+  const entries = await page.request.get(`/api/v1/staff/queues/${f.queue}/entries`)
+  expect(entries.ok()).toBeTruthy()
+  expect((await entries.json())[0]).toMatchObject({
+    status: 'called',
+    partySize: 2,
+    assignedSeating: { spaceId: 'terrace', spaceName: 'Terraza', seats: 4 },
+  })
 })

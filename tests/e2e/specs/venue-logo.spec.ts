@@ -388,6 +388,12 @@ test.describe('venue logos', () => {
     })
     await advanced.getByRole('button', { name: 'De 4', exact: true }).click()
     await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
+    const capacityConfirmation = page.getByRole('dialog', {
+      name: 'Se va a actualizar el número de mesas disponibles', exact: true,
+    })
+    await expect(capacityConfirmation).toBeVisible()
+    await capacityConfirmation.getByRole('button', { name: 'Confirmar', exact: true }).click()
+    await expect(capacityConfirmation).toHaveCount(0)
     await expect(advanced).toHaveCount(0)
     for (let step = 0; step < 3; step++)
       await config.getByRole('button', { name: 'Siguiente' }).click()

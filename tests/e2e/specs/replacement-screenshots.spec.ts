@@ -356,18 +356,10 @@ test('captures opt-in surfaces and reception/pool automatic-assignment footers',
   })
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
-  await config
-    .getByRole('button', { name: 'Configuración avanzada', exact: true })
-    .click()
-  const advanced = page.getByRole('dialog', {
-    name: 'Configuración avanzada',
-    exact: true,
-  })
   await expect(
-    advanced.getByRole('switch', { name: 'Modo de gestión automática' }),
+    config.getByRole('switch', { name: 'Modo de gestión automática' }),
   ).toHaveAttribute('aria-checked', 'true')
   await capture(page, 'opt-in', '02-switch-configuracion')
-  await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await expect(config.getByText('Gestión automática activa')).toBeVisible()
@@ -522,7 +514,7 @@ test('captures all reception call, cancel, pass, priority and expiry Figma state
     waitingOtherManage.getByRole('button', { name: 'Pasar turno', exact: true }),
   ).toHaveCount(0)
   await captureFigmaNode(page, '1822-34572')
-  await waitingOtherManage.getByRole('button', { name: 'Volver', exact: true }).click()
+  await waitingOtherManage.getByRole('button', { name: 'Cerrar', exact: true }).click()
 
   await manage(first.code)
   await expect(
@@ -533,7 +525,7 @@ test('captures all reception call, cancel, pass, priority and expiry Figma state
   await captureFigmaNode(page, '1826-35806')
   await page
     .getByRole('dialog', { name: 'Gestionar turno', exact: true })
-    .getByRole('button', { name: 'Volver', exact: true })
+    .getByRole('button', { name: 'Cerrar', exact: true })
     .click()
 
   await drawer.getByRole('button', { name: 'Asignar próximo turno', exact: true }).click()
@@ -611,10 +603,10 @@ test('captures all reception call, cancel, pass, priority and expiry Figma state
   await page.getByRole('button', { name: 'Ver lista', exact: true }).click()
   const priorityRowManage = await manage(priority.code)
   await priorityRowManage.getByRole('button', { name: 'Asignar próximo turno', exact: true }).click()
-  await page
-    .getByRole('dialog')
-    .getByRole('button', { name: 'Asignar turno', exact: true })
-    .click()
+  // Reception assigns directly: no restaurant seating confirmation is needed.
+  await expect.poll(async () =>
+    (await readEntries()).find((entry) => entry.id === priority.id)?.status,
+  ).toBe('called')
   entries = await readEntries()
   const calledPriority = entries.find((entry) => entry.id === priority.id)!
   expect(calledPriority.status).toBe('called')
@@ -734,10 +726,12 @@ test('captures older compatible selection and stale conflict Figma states in mob
     name: 'Confirmar',
     exact: true,
   })
-  const confirmBox = await confirmSelection.boundingBox()
-  expect(confirmBox).not.toBeNull()
-  expect(confirmBox!.y).toBeGreaterThanOrEqual(0)
-  expect(confirmBox!.y + confirmBox!.height).toBeLessThanOrEqual(844)
+  // Visibility precedes the bottom sheet's entrance transition. Check its
+  // settled geometry rather than sampling a partially translated frame.
+  await expect.poll(async () => {
+    const box = await confirmSelection.boundingBox()
+    return box !== null && box.y >= 0 && box.y + box.height <= 844
+  }).toBe(true)
   await captureFigmaNode(page, '1826-37166')
   await warning
     .getByRole('list', { name: 'Turnos compatibles anteriores' })

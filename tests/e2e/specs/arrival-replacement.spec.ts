@@ -417,19 +417,12 @@ test('automatic assignment is opt-in per service in configuration and has no cyc
   })
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
-  await config
-    .getByRole('button', { name: 'Configuración avanzada', exact: true })
-    .click()
-  const advanced = page.getByRole('dialog', {
-    name: 'Configuración avanzada',
-    exact: true,
-  })
-  const automaticSwitch = advanced.getByRole('switch', {
+  const automaticSwitch = config.getByRole('switch', {
     name: 'Modo de gestión automática',
   })
   await expect(automaticSwitch).toHaveAttribute('aria-checked', 'false')
   await automaticSwitch.click()
-  await advanced.getByRole('button', { name: 'Confirmar', exact: true }).click()
+  await expect(automaticSwitch).toHaveAttribute('aria-checked', 'true')
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await config.getByRole('button', { name: 'Siguiente', exact: true }).click()
   await expect(config.getByText('Gestión automática activa')).toBeVisible()

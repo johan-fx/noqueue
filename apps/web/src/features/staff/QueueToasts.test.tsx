@@ -130,7 +130,8 @@ it('portals feedback to a fixed bottom overlay without adding a row before the f
 
   fireEvent.click(screen.getByRole('button', { name: 'Añadir notificación' }))
   const viewport = screen.getByRole('region', { name: 'Notifications' })
-  expect(viewport).toHaveClass('fixed', 'pointer-events-none', 'z-[100]')
+  // Queue feedback sits above its drawer (50), never above action sheets (60).
+  expect(viewport).toHaveClass('fixed', 'pointer-events-none', 'z-[55]')
   expect(viewport.className).toContain('env(safe-area-inset-bottom)')
   expect(viewport).toHaveClass('inset-x-4', 'mx-auto', 'sm:inset-x-4', 'sm:mx-auto', 'sm:w-auto')
   expect(viewport).not.toHaveClass('sm:left-auto', 'sm:mx-0', 'sm:w-full')

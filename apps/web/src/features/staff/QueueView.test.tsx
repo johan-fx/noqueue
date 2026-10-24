@@ -279,7 +279,7 @@ it('numbers the whole active list including called turns, preserves ordinals whe
   ).not.toBeInTheDocument()
   expect(screen.getByText('Daniel')).toBeVisible()
 })
-it('shows restaurant size filters and distinguishes predicted and preferred spaces', () => {
+it('shows restaurant size filters and the party size next to the space name', () => {
   render(
     <QueueView
       queue={{ ...queue, config: { ...queue.config, type: 'restaurant' } }}
@@ -306,8 +306,15 @@ it('shows restaurant size filters and distinguishes predicted and preferred spac
       onAction={vi.fn()}
     />,
   )
-  expect(screen.getByText('Interior · Previsto')).toBeVisible()
-  expect(screen.getByText('Terraza · Preferido')).toBeVisible()
+  const maria = screen.getByText('María').closest('li')!
+  expect(within(maria).getByText('4')).toHaveClass('px-1')
+  expect(within(maria).getByText('Interior')).toHaveClass('px-1')
+  expect(within(maria).getByText('Interior').previousElementSibling).toHaveClass(
+    'size-1',
+    'rounded-full',
+  )
+  expect(screen.getByText('Terraza')).toBeVisible()
+  expect(screen.queryByText(/Preferido|Previsto/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Filtrar 4 personas' }))
   expect(screen.getAllByRole('listitem')).toHaveLength(1)
   expect(

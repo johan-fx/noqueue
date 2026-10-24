@@ -178,7 +178,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   })
   await expect(drawer.getByText('María López')).toBeVisible()
   await expect(
-    drawer.getByText('Terraza · Preferido', { exact: true }),
+    drawer.getByText('Terraza', { exact: true }),
   ).toBeVisible()
   await drawer.getByRole('button', { name: 'Añadir', exact: true }).click()
   const add = page.getByRole('dialog', { name: 'Restaurante', exact: true })

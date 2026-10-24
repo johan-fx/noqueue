@@ -202,7 +202,7 @@ for (const type of ['restaurant', 'reception', 'pool'] as const) {
               await expect(client.getByRole('dialog')).not.toBeVisible()
               assert('edit:space', (await snapshot()).customer!.preferredSpaceId, 'interior', chapter)
               await expect.poll(async () => { const e = (await entries()).find(e => e.displayName === name)!; return { size: e.partySize, space: e.preferredSpaceId } }).toEqual({ size: 3, space: 'interior' })
-              await expect(row(name).getByText('Interior · Preferido', { exact: true })).toBeVisible()
+              await expect(row(name).getByText('Interior', { exact: true })).toBeVisible()
               await ensureRowsInViewport([row(name)])
               await moment('edited', 'Cambio confirmado en ambas vistas · 3 comensales e Interior')
             } else await expect(client.getByRole('button', { name: 'Modificar', exact: true })).toHaveCount(0)

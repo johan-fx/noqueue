@@ -287,7 +287,7 @@ export function QueueEntryCard({
       )}
       <motion.div
         data-swipe-surface=""
-        className="relative flex min-h-21 touch-pan-y items-center gap-4 bg-background p-4"
+        className="relative flex min-h-21 touch-pan-y items-center gap-4 bg-background"
         style={{ x, touchAction: 'pan-y' }}
         drag={draggable ? 'x' : false}
         dragControls={controls}
@@ -378,25 +378,30 @@ export function QueueEntryCard({
               </span>
             )}
             {queue.config.type === 'restaurant' && (
-              <span className="flex min-w-0 flex-wrap items-center gap-1">
-                <Users className="size-4" aria-hidden="true" />
-                {entry.partySize}{' '}
-                {entry.partySize === 1 ? 'persona' : 'personas'}
+              // Figma row: 16px icon, 12px medium gray labels with 4px horizontal
+              // padding, a 4px dot, and 4px gaps. The count stays numeric.
+              <span className="flex min-w-0 items-center gap-1 text-xs font-medium leading-none text-gray-400">
+                <span className="flex shrink-0 items-center gap-1">
+                  <Users className="size-4 shrink-0" aria-hidden="true" />
+                  <span className="px-1 tabular-nums">{entry.partySize}</span>
+                  <span className="sr-only">
+                    {entry.partySize === 1 ? 'persona' : 'personas'}
+                  </span>
+                </span>
                 {entry.assignedSeating ? (
-                  <span className="break-words">
+                  <span className="min-w-0 break-words px-1">
                     · {entry.assignedSeating.spaceName} · Mesa para {entry.assignedSeating.seats}
                   </span>
-                ) : entry.space && (
-                  <span className="break-words">
-                    {entry.space.name} ·{' '}
-                    {
-                      {
-                        preferred: 'Preferido',
-                        predicted: 'Previsto',
-                        assigned: 'Asignado',
-                      }[entry.space.source]
-                    }
-                  </span>
+                ) : (
+                  entry.space && (
+                    <>
+                      <span
+                        className="size-1 shrink-0 rounded-full bg-gray-400"
+                        aria-hidden="true"
+                      />
+                      <span className="min-w-0 truncate px-1">{entry.space.name}</span>
+                    </>
+                  )
                 )}
               </span>
             )}

@@ -260,9 +260,10 @@ it('keeps a retained called entry countdown while keeping the card cycle summary
     />,
   )
   expect(screen.getByLabelText('Tiempo restante para llegar: 0:45')).toBeVisible()
-  expect(screen.getByText('Automático · Intento 1')).toBeVisible()
+  expect(screen.getByText('Automático')).toBeVisible()
+  expect(screen.getByText('Intento 1')).toBeVisible()
   expect(screen.queryByText(/Confirmar o cancelar detiene/)).not.toBeInTheDocument()
-  expect(screen.getByRole('listitem')).toHaveClass('border-l-2', 'border-l-zinc-900')
+  expect(screen.getByRole('listitem')).not.toHaveClass('border-l-2', 'border-l-zinc-900')
 })
 
 it('labels revealed pass and priority actions and never executes them merely on reveal', () => {
@@ -283,7 +284,7 @@ it('distinguishes a previous cycle arrival from the waiting client who passed', 
   render(<QueueEntryCard {...props} entry={{ ...props.entry,
     automationCycle: { id: 'previous', state: 'stopped', reason: 'arrived', capacity: 4, receptionService: null },
   }} />)
-  expect(screen.getByText('Ciclo anterior finalizado por una llegada. Este turno sigue en espera.')).toBeVisible()
+  expect(screen.queryByText(/Ciclo anterior|Ciclo pausado|Ciclo detenido/)).not.toBeInTheDocument()
   expect(screen.queryByText('Llegada confirmada; ciclo automático finalizado.')).not.toBeInTheDocument()
 })
 
@@ -296,3 +297,35 @@ it('exposes call status and cycle attempt to assistive technology without hiding
   expect(manage).toHaveAccessibleDescription(/Pendiente de llegada.*1:00.*Automático · Intento 2/)
   expect(manage).not.toContainElement(screen.getByText('Pendiente de llegada'))
 })
+
+
+it('keeps confirmed seating capacity out of the card and groups the arrival deadline with its status', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry, status: 'called',
+    space: { id: 'old', name: 'Preferencia anterior', source: 'preferred' },
+    assignedSeating: { spaceId: 'inside', spaceName: 'Interior', seats: 4 },
+    arrivalDeadlineAt: 60_000,
+    automationCycle: { id: 'c', state: 'active', capacity: 2, receptionService: null, reason: null, attempt: 2 },
+  }} />)
+  expect(screen.getByText('Interior')).toBeVisible()
+  expect(screen.queryByText(/Mesa para/)).not.toBeInTheDocument()
+  expect(screen.queryByText('Preferencia anterior')).not.toBeInTheDocument()
+  const status = screen.getByText('Pendiente de llegada')
+  const badge = screen.getByLabelText('Tiempo restante para llegar: 1:00')
+  expect(status.parentElement).toContainElement(badge)
+  expect(status.parentElement).toHaveClass('shrink-0')
+  expect(badge).toHaveClass('bg-[#fef2f2]', 'text-[#dc2626]')
+})
+
+it.each(['arrived', 'cancelled', 'no_candidate', 'missing_context', 'context_changed', 'disabled', 'service_ended', 'legacy', 'no_show'])(
+  'keeps %s cycle explanations out of the card and opens historical details without actions', (reason) => {
+    const onManage = vi.fn()
+    const entry = { ...props.entry, status: 'cancelled', automationCycle: {
+      id: 'c', state: 'stopped' as const, reason, capacity: 4, receptionService: null,
+    } }
+    render(<QueueEntryCard {...props} entry={entry} onManage={onManage} />)
+    expect(screen.queryByText(/Ciclo|ciclo|candidatos compatibles/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Ver detalle del turno T1' }))
+    expect(onManage).toHaveBeenCalledWith(entry)
+    expect(screen.queryByText('Cancelar turno')).not.toBeInTheDocument()
+  },
+)

@@ -44,3 +44,4 @@ reports/*
 # Isolated consent browser test artifacts
 tests/e2e/test-results-privacy/
 tests/e2e/test-results-production/
+output/

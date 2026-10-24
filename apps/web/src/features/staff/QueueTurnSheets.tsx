@@ -8,6 +8,7 @@ import type {
 } from '@noqueue/contracts/staff'
 import { assignmentTableOptions } from '@noqueue/contracts/staff'
 import { UsersIcon } from 'lucide-react'
+import { QueueCycleDetails } from './QueueCycleDetails'
 import { AssignmentOptions } from './AssignmentOptions'
 import { receptionLabels, queueActionLabels } from './queue-labels'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ type AutomationSnapshot = QueueAutomation & { observedAt: number }
 type QueueTurnSheetsProps = {
   queue?: QueueSummary | undefined
   automationSnapshot: AutomationSnapshot | null
+  canOperate?: boolean
   managedOpen: boolean
   managedEntry?: StaffEntry | undefined
   managedActions: EntryCommand['action'][]
@@ -96,6 +98,7 @@ function WaitingAge({
 
 export function QueueTurnSheets({
   queue,
+  canOperate = true,
   automationSnapshot,
   managedOpen,
   managedEntry,
@@ -128,6 +131,9 @@ export function QueueTurnSheets({
   onSeatingChange,
   onArrivalModeChange,
 }: QueueTurnSheetsProps) {
+  const availableManagedActions = canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status)
+    ? managedActions
+    : []
   const showingOlderWarning = !automaticConflict && olderAssignmentWarning && pending?.action === 'call'
   const hasOlderCapacity = olderCompatibleCandidates.some(
     (candidate) => candidate.partySize !== pendingEntry?.partySize,
@@ -146,7 +152,7 @@ export function QueueTurnSheets({
           className="mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
         >
           <SheetHeader className="px-0 pr-8">
-            <SheetTitle className="text-2xl">Gestionar turno</SheetTitle>
+            <SheetTitle className="text-2xl">{canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status) ? 'Gestionar turno' : 'Detalle del turno'}</SheetTitle>
             {managedEntry && (
               <SheetDescription>
                 {managedEntry.displayName || `Turno ${managedEntry.code}`} · Turno:{' '}
@@ -156,13 +162,14 @@ export function QueueTurnSheets({
           </SheetHeader>
           {managedEntry && (
             <div className="space-y-3 pb-2">
+              <QueueCycleDetails entry={managedEntry} canOperate={canOperate} />
               {queue?.config.type === 'restaurant' ? (
                 <p className="flex items-center gap-1 text-sm text-muted-foreground">
                   <UsersIcon className="size-4" aria-hidden="true" />
                   {managedEntry.partySize}{' '}
                   {managedEntry.partySize === 1 ? 'persona' : 'personas'}
                   {managedEntry.assignedSeating
-                    ? ` · ${managedEntry.assignedSeating.spaceName}`
+                    ? ` · ${managedEntry.assignedSeating.spaceName} · Mesa para ${managedEntry.assignedSeating.seats}`
                     : managedEntry.space
                       ? ` · ${managedEntry.space.name}`
                       : ''}
@@ -193,13 +200,13 @@ export function QueueTurnSheets({
                   <p className="text-xs text-muted-foreground">
                     Ciclo automático · Intento{' '}
                     {managedEntry.automationCycle.attempt ?? 1}. Confirmar o
-                    cancelar detiene solo este ciclo.
+                    cancelar pausa solo este ciclo.
                   </p>
                 )}
             </div>
           )}
           <SheetFooter className="gap-3 px-0">
-            {managedEntry && managedActions.includes('call') && (
+            {managedEntry && availableManagedActions.includes('call') && (
               <Button
                 className="h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"
                 disabled={busy}
@@ -208,7 +215,7 @@ export function QueueTurnSheets({
                 Asignar próximo turno
               </Button>
             )}
-            {managedEntry && managedActions.includes('complete') && (
+            {managedEntry && availableManagedActions.includes('complete') && (
               <Button
                 className="h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"
                 disabled={busy}
@@ -217,7 +224,7 @@ export function QueueTurnSheets({
                 Confirmar llegada
               </Button>
             )}
-            {managedEntry && !managedIsNext && managedActions.includes('prioritize') && (
+            {managedEntry && !managedIsNext && availableManagedActions.includes('prioritize') && (
               <Button
                 className="h-12 w-full"
                 variant="outline"
@@ -229,7 +236,7 @@ export function QueueTurnSheets({
             )}
             {managedEntry &&
               (managedEntry.status === 'called' || managedIsNext) &&
-              managedActions.includes('pass') && (
+              availableManagedActions.includes('pass') && (
               <Button
                 className="h-12 w-full"
                 variant="outline"
@@ -239,7 +246,7 @@ export function QueueTurnSheets({
                 Pasar turno
               </Button>
             )}
-            {managedEntry && managedActions.includes('cancel') && (
+            {managedEntry && availableManagedActions.includes('cancel') && (
               <Button
                 className="h-12 w-full border-destructive text-destructive hover:text-destructive"
                 variant="outline"
@@ -307,10 +314,10 @@ export function QueueTurnSheets({
                               : null}
               {!automaticConflict && pending?.action === 'cancel' &&
                 pendingEntry?.automationCycle?.state === 'active' &&
-                ' La cancelación manual detendrá únicamente este ciclo automático y no avisará al siguiente. Para reanudarlo, asigna otro turno manualmente.'}
+                ' La cancelación manual pausará únicamente este ciclo automático y no avisará al siguiente. Para reanudarlo, asigna otro turno manualmente.'}
               {!automaticConflict && pending?.action === 'complete' &&
                 pendingEntry?.automationCycle?.state === 'active' &&
-                ' Confirmar la llegada completará el turno y detendrá únicamente este ciclo automático.'}
+                ' Confirmar la llegada completará el turno y pausará únicamente este ciclo automático.'}
             </SheetDescription>
           </SheetHeader>
 
@@ -400,9 +407,9 @@ export function QueueTurnSheets({
                 <p className="text-sm text-muted-foreground">
                   {restaurantAssignment
                     ? seating?.mode === 'confirmed'
-                      ? `Si vence el plazo, cancelaremos este turno y avisaremos automáticamente a un grupo compatible: primero del mismo tamaño (${pendingEntry?.partySize} personas) y después grupos más pequeños hasta una persona; nunca uno mayor. Si no quedan candidatos compatibles, el ciclo se detendrá y tendrás que iniciar otro con una nueva asignación manual. Confirmar la llegada o cancelar manualmente detiene solo este ciclo.`
+                      ? `Si vence el plazo, cancelaremos este turno y avisaremos automáticamente a un grupo compatible: primero del mismo tamaño (${pendingEntry?.partySize} personas) y después grupos más pequeños hasta una persona; nunca uno mayor. Si no quedan candidatos compatibles, el ciclo quedará pausado y tendrás que iniciar otro con una nueva asignación manual. Confirmar la llegada o cancelar manualmente pausa solo este ciclo.`
                       : 'Sin espacio y capacidad confirmados, tendrás que asignar el siguiente turno manualmente.'
-                    : 'Si vence el plazo, cancelaremos este turno y avisaremos automáticamente al siguiente candidato compatible. Confirmar la llegada o cancelar manualmente detiene solo este ciclo.'}
+                    : 'Si vence el plazo, cancelaremos este turno y avisaremos automáticamente al siguiente candidato compatible. Confirmar la llegada o cancelar manualmente pausa solo este ciclo.'}
                 </p>
               ) : (
                 <p>

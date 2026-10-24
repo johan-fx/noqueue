@@ -32,7 +32,12 @@ export function QueueToastViewport({
       (sessionId === undefined || toast.data?.queueSessionId === sessionId),
   )
 
-  if ((inline && !container) || sessionId === null) return null
+  // The inline region sits in the document flow, above the sticky footer.
+  // Its padding still takes 16px when it has no toasts, so the list stops
+  // short and leaves a blank strip. Mount it only while feedback is visible.
+  if ((inline && !container) || sessionId === null || (inline && visibleToasts.length === 0)) {
+    return null
+  }
 
   return (
     <Toast.Portal {...(inline ? { container } : {})}>

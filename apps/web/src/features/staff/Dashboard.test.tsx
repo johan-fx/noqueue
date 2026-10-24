@@ -2446,7 +2446,7 @@ it('explains restaurant capacity descent and manual cycle stops before assigning
     ),
   ).toBeVisible()
   expect(
-    within(sheet).getByText(/Confirmar la llegada o cancelar manualmente detiene solo este ciclo/),
+    within(sheet).getByText(/Confirmar la llegada o cancelar manualmente pausa solo este ciclo/),
   ).toBeVisible()
   expect(
     within(sheet).queryByText(/te avisaremos aquí para que elijas/),
@@ -2776,4 +2776,58 @@ it('opens the automatic conflict sheet when direct arrival loses to expiry', asy
   fireEvent.click(within(conflict).getByRole('button', { name: 'Entendido' }))
   await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Turno ya procesado' })).not.toBeInTheDocument())
   expect(commands).toHaveLength(1)
+})
+
+it('keeps confirmed table capacity in turn details rather than the compact card', async () => {
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues')) return [service]
+    if (path.includes('/automation')) return { configured: true, effective: true, activeCycles: 1, serverNow: Date.now() }
+    return [{ id: 'called', code: 'C1', status: 'called', partySize: 2, sequence: 1, version: 1, calledAt: Date.now(),
+      assignedSeating: { spaceId: 'inside', spaceName: 'Interior', seats: 4 },
+    }]
+  })
+  render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Empresa', role: 'queue_staff' }} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  const manage = await screen.findByRole('button', { name: 'Gestionar turno C1' })
+  expect(screen.queryByText(/Mesa para 4/)).not.toBeInTheDocument()
+  fireEvent.click(manage)
+  expect(within(await screen.findByRole('dialog', { name: 'Gestionar turno' })).getByText(/Interior · Mesa para 4/)).toBeVisible()
+})
+
+it.each(['queue_staff', 'viewer'] as const)('lets %s read a paused historical cycle without reopening actions', async (role) => {
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues')) return [service]
+    if (path.includes('/automation')) return { configured: true, effective: true, activeCycles: 1, serverNow: Date.now() }
+    return [{ id: 'completed', code: 'C1', status: 'completed', partySize: 2, sequence: 1, version: 1, calledAt: Date.now(),
+      automationCycle: { id: 'cycle', state: 'stopped', reason: 'arrived', capacity: 4, receptionService: null },
+    }]
+  })
+  render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Empresa', role }} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  fireEvent.click(screen.getByRole('tab', { name: 'Completados' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver detalle del turno C1' }))
+  const detail = await screen.findByRole('dialog', { name: 'Detalle del turno' })
+  expect(within(detail).getByText('Ciclo pausado')).toBeVisible()
+  expect(within(detail).getByText('Se confirmó la llegada de este turno.')).toBeVisible()
+  expect(within(detail).queryByRole('button', { name: 'Asignar próximo turno' })).not.toBeInTheDocument()
+  expect(within(detail).queryByRole('button', { name: 'Cancelar turno' })).not.toBeInTheDocument()
+})
+
+it.each(['restaurant', 'pool', 'reception'] as const)('renders the correct manual footer container for %s', async type => {
+  vi.mocked(api).mockImplementation(async path => {
+    if (path.endsWith('/queues')) return [{ ...service, config: { ...service.config, type, automaticAssignmentEnabled: false } }]
+    if (path.includes('/automation')) return { configured: false, effective: false, activeCycles: 0, serverNow: Date.now(), nextEntry: { id: 'waiting', version: 0 } }
+    return [{ id: 'waiting', code: 'W1', status: 'waiting', partySize: 2, sequence: 1, version: 0, calledAt: null }]
+  })
+  render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Empresa', role: 'queue_staff' }} />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+  await screen.findByRole('button', { name: 'Gestionar turno W1' })
+  const footer = document.querySelector('[data-queue-automation-footer]')
+  if (type === 'restaurant') {
+    expect(footer).not.toBeInTheDocument()
+  } else {
+    expect(footer).toBeInTheDocument()
+    expect(within(footer as HTMLElement).getByRole('button', { name: 'Asignar próximo turno' })).toBeEnabled()
+    expect(within(footer as HTMLElement).queryByRole('status')).not.toBeInTheDocument()
+  }
 })

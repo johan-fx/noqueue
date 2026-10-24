@@ -340,7 +340,7 @@ function DashboardContent(props: DashboardProps) {
   const managedEntry = managedEntryId
     ? entries.find((entry) => entry.id === managedEntryId)
     : undefined
-  const managedActions = managedEntry
+  const managedActions = managedEntry && permissions.includes('queue.operate')
     ? managedEntry.allowedActions ?? entryActions(managedEntry.status, queue?.config.type)
     : []
   const managedIsNext =
@@ -1573,10 +1573,9 @@ function DashboardContent(props: DashboardProps) {
           {drawer === 'queue' &&
             tab === 'active' &&
             queue &&
-            (permissions.includes('queue.operate') ||
-              automationSnapshot?.configured ||
-              queue.config.automaticAssignmentEnabled) && (
-              <DrawerFooter className="border-t bg-background p-4">
+            ((automationSnapshot?.configured ?? queue.config.automaticAssignmentEnabled === true) ||
+              (queue.config.type !== 'restaurant' && permissions.includes('queue.operate'))) && (
+              <DrawerFooter data-queue-automation-footer="" className="border-t bg-background p-4">
                 <QueueAutomationFooter
                   type={queue.config.type}
                   configured={
@@ -1610,6 +1609,7 @@ function DashboardContent(props: DashboardProps) {
           )}
           <QueueTurnSheets
             queue={queue}
+            canOperate={permissions.includes('queue.operate')}
             automationSnapshot={automationSnapshot}
             managedOpen={!!managedEntry}
             managedEntry={managedEntry}

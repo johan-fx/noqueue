@@ -1,3 +1,4 @@
+import spaceDot from '@/assets/queue-card/space-dot.svg'
 import '@testing-library/jest-dom/vitest'
 import { useState } from 'react'
 import {
@@ -167,9 +168,11 @@ it('opens turn management from the active card rather than exposing inline actio
 })
 it('keeps the viewer read-only', () => {
   render(<Harness canOperate={false} />)
-  expect(screen.getAllByRole('button', { name: /Gestionar turno/ }).every(
-    (button) => (button as HTMLButtonElement).disabled,
+  expect(screen.queryByRole('button', { name: /Gestionar turno/ })).not.toBeInTheDocument()
+  expect(screen.getAllByRole('button', { name: /Ver detalle del turno/ }).every(
+    (button) => !(button as HTMLButtonElement).disabled,
   )).toBe(true)
+  expect(screen.queryByRole('button', { name: 'Cancelar turno' })).not.toBeInTheDocument()
 })
 it('keeps completed turns final with no resource-release action', () => {
   render(
@@ -282,7 +285,17 @@ it('numbers the whole active list including called turns, preserves ordinals whe
 it('shows restaurant size filters and the party size next to the space name', () => {
   render(
     <QueueView
-      queue={{ ...queue, config: { ...queue.config, type: 'restaurant' } }}
+      queue={{
+        ...queue,
+        config: {
+          ...queue.config,
+          type: 'restaurant',
+          spaces: [
+            { id: 'a', name: 'Interior', tables: 1 },
+            { id: 'b', name: 'Terraza', tables: 1 },
+          ],
+        },
+      }}
       entries={[
         {
           ...entries[0]!,
@@ -292,8 +305,17 @@ it('shows restaurant size filters and the party size next to the space name', ()
         },
         {
           ...entries[1]!,
-          partySize: 2,
+          displayName: 'Pedro',
+          partySize: 4,
           space: { id: 'b', name: 'Terraza', source: 'preferred' },
+        },
+        {
+          ...entries[1]!,
+          id: 'extra',
+          code: 'T9',
+          displayName: 'Lucía',
+          partySize: 2,
+          space: { id: 'a', name: 'Interior', source: 'preferred' },
         },
       ]}
       tab="active"
@@ -309,14 +331,27 @@ it('shows restaurant size filters and the party size next to the space name', ()
   const maria = screen.getByText('María').closest('li')!
   expect(within(maria).getByText('4')).toHaveClass('px-1')
   expect(within(maria).getByText('Interior')).toHaveClass('px-1')
-  expect(within(maria).getByText('Interior').previousElementSibling).toHaveClass(
-    'size-1',
-    'rounded-full',
-  )
-  expect(screen.getByText('Terraza')).toBeVisible()
+  expect(within(maria).getByText('Interior').previousElementSibling).toHaveAttribute('aria-hidden', 'true')
+  expect(within(maria).getByText('Interior').previousElementSibling).toHaveAttribute('src', spaceDot)
   expect(screen.queryByText(/Preferido|Previsto/)).not.toBeInTheDocument()
+  const clear = screen.getByRole('button', { name: 'Limpiar filtros' })
+  expect(clear).toBeDisabled()
+  expect(screen.getAllByRole('listitem')).toHaveLength(3)
+  // Size alone: both 4-person turns.
   fireEvent.click(screen.getByRole('button', { name: 'Filtrar 4 personas' }))
+  expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  expect(clear).toBeEnabled()
+  // Space is added on top of the size (AND).
+  fireEvent.click(screen.getByRole('button', { name: 'Filtrar Terraza' }))
   expect(screen.getAllByRole('listitem')).toHaveLength(1)
+  expect(screen.getByText('Pedro')).toBeVisible()
+  // Pressing the active chip again removes only that filter.
+  fireEvent.click(screen.getByRole('button', { name: 'Filtrar 4 personas' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Filtrar Interior' }))
+  expect(screen.getAllByRole('listitem')).toHaveLength(2)
+  fireEvent.click(clear)
+  expect(screen.getAllByRole('listitem')).toHaveLength(3)
+  expect(clear).toBeDisabled()
   expect(
     screen.queryByRole('button', { name: 'Añadir' }),
   ).not.toBeInTheDocument()

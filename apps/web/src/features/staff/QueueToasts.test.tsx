@@ -122,9 +122,11 @@ it('renders queue feedback in the reserved row before the sticky footer, not ove
     </Toast.Provider>,
   )
 
-  fireEvent.click(screen.getByRole('button', { name: 'Añadir notificación' }))
-
   const host = screen.getByTestId('queue-toast-host')
+  // No feedback yet: the reserved row must not occupy space above the footer.
+  expect(host).toBeEmptyDOMElement()
+
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir notificación' }))
   const toast = host.querySelector('[role="dialog"]')
   const footerAction = screen.getByRole('button', { name: 'Acción fija del footer' })
   expect(toast).toBeInTheDocument()

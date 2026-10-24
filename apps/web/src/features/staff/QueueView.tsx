@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Plus, Users, LogIn, LogOut, BadgeHelp } from 'lucide-react'
+import { Plus, LogIn, LogOut, BadgeHelp } from 'lucide-react'
 import { QueueEntryCard } from './QueueEntryCard'
+import { RestaurantFilters } from './RestaurantFilters'
 import type {
   EntryCommand as QueueCommand,
   QueueSummary,
@@ -135,31 +136,66 @@ export function QueueView({
     value: string
   } | null>(null)
   const filter = selection?.queueId === queue.id ? selection.value : 'all'
+  // Restaurant filters are additive: one space AND one party size.
+  // Empty string means "no filter" for that row.
+  const [restaurantSelection, setRestaurantSelection] = useState<{
+    queueId: string
+    space: string
+    size: string
+  } | null>(null)
+  const pickedSpace =
+    restaurantSelection?.queueId === queue.id ? restaurantSelection.space : ''
+  const pickedSize =
+    restaurantSelection?.queueId === queue.id ? restaurantSelection.size : ''
   // Closing the list (paused) or leaving it inactive blocks new turns.
   // The button stays visible so staff can read why it is disabled.
   const listDeactivated =
     queue.queueState === 'inactive' || queue.queueState === 'paused'
+  const isRestaurant = queue.config.type === 'restaurant'
   const options =
     queue.config.type === 'reception'
       ? queue.config.receptionServices.map((type) => ({
           value: type,
           label: receptionLabels[type],
         }))
-      : queue.config.type === 'restaurant'
-      ? [
-          ...new Set(
-            entries
-              .filter((entry) => ['waiting', 'called'].includes(entry.status))
-              .map((entry) => entry.partySize),
-          ),
-        ]
-          .sort((a, b) => a - b)
-          .map((size) => ({ value: String(size), label: `${size} personas` }))
       : []
   const activeFilter = options.some((option) => option.value === filter)
     ? filter
     : 'all'
-  const scope = `${queue.id}:${tab}:${activeFilter}`
+  // Spaces come from the configuration. A space without id uses the same
+  // `legacy-<index>` id as assignmentTableOptions.
+  const spaceOptions = isRestaurant
+    ? queue.config.spaces.map((space, index) => ({
+        value: space.id ?? `legacy-${index}`,
+        label: space.name,
+      }))
+    : []
+  // Sizes come from the turns that are still in the list.
+  const sizeOptions = isRestaurant
+    ? [
+        ...new Set(
+          entries
+            .filter((entry) => ['waiting', 'called'].includes(entry.status))
+            .map((entry) => entry.partySize),
+        ),
+      ].sort((a, b) => a - b)
+    : []
+  // A selection that no longer exists in the data stops filtering.
+  const activeSpace = spaceOptions.some((option) => option.value === pickedSpace)
+    ? pickedSpace
+    : ''
+  const activeSize = sizeOptions.map(String).includes(pickedSize)
+    ? pickedSize
+    : ''
+  const changeRestaurantFilter = (next: { space?: string; size?: string }) => {
+    setRestaurantSelection({
+      queueId: queue.id,
+      space: next.space ?? activeSpace,
+      size: next.size ?? activeSize,
+    })
+    setReveal(null)
+  }
+  const scope = `${queue.id}:${tab}:${activeFilter}:${activeSpace}:${activeSize}`
   const [previousScope, setPreviousScope] = useState(scope)
   if (previousScope !== scope) {
     setPreviousScope(scope)
@@ -189,14 +225,21 @@ export function QueueView({
           const allRows = entries.filter((entry) =>
             (view.statuses as readonly string[]).includes(entry.status),
           )
-          const rows = allRows.filter(
-            (entry) =>
-              view.value !== 'active' ||
+          const rows = allRows.filter((entry) => {
+            if (view.value !== 'active') return true
+            if (isRestaurant) {
+              // Same space the card shows: assigned seating first.
+              const entrySpace = entry.assignedSeating?.spaceId ?? entry.space?.id
+              return (
+                (!activeSpace || entrySpace === activeSpace) &&
+                (!activeSize || String(entry.partySize) === activeSize)
+              )
+            }
+            return (
               activeFilter === 'all' ||
-              (queue.config.type === 'reception'
-                ? entry.receptionService === activeFilter
-                : String(entry.partySize) === activeFilter),
-          )
+              entry.receptionService === activeFilter
+            )
+          })
           return (
             <TabsContent
               key={view.value}
@@ -231,6 +274,19 @@ export function QueueView({
                   </span>
                 </div>
               </div>
+              {view.value === 'active' &&
+                isRestaurant &&
+                (spaceOptions.length > 0 || sizeOptions.length > 0) && (
+                  <RestaurantFilters
+                    spaces={spaceOptions}
+                    sizes={sizeOptions}
+                    space={activeSpace}
+                    size={activeSize}
+                    onSpaceChange={(space) => changeRestaurantFilter({ space })}
+                    onSizeChange={(size) => changeRestaurantFilter({ size })}
+                    onClear={() => changeRestaurantFilter({ space: '', size: '' })}
+                  />
+                )}
               {view.value === 'active' && options.length > 0 && (
                 <div
                   role="group"
@@ -240,9 +296,7 @@ export function QueueView({
                   {[{ value: 'all', label: 'Todos' }, ...options].map(
                     (option) => {
                       const Icon =
-                        queue.config.type === 'restaurant'
-                          ? Users
-                          : option.value === 'check_in'
+                        option.value === 'check_in'
                           ? LogIn
                           : option.value === 'check_out'
                           ? LogOut
@@ -268,10 +322,7 @@ export function QueueView({
                           {option.value !== 'all' && (
                             <Icon className="size-4" aria-hidden="true" />
                           )}
-                          {queue.config.type === 'restaurant' &&
-                          option.value !== 'all'
-                            ? option.value
-                            : option.label}
+                          {option.label}
                         </Button>
                       )
                     },

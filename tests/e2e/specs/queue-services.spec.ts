@@ -240,7 +240,12 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await expect(drawer.getByText('Daniel García')).toBeVisible()
   await expect(drawer.getByText('María López')).toHaveCount(0)
   await expect(drawer.getByLabel('Posición 2')).toBeVisible()
-  await drawer.getByRole('button', { name: 'Filtrar Todos' }).click()
+  // Filters add up: María is on Terraza but has another size, so she stays
+  // hidden while "2 personas" and "Terraza" are both active.
+  await drawer.getByRole('button', { name: 'Filtrar Terraza' }).click()
+  await expect(drawer.getByText('María López')).toHaveCount(0)
+  await drawer.getByRole('button', { name: 'Limpiar filtros' }).click()
+  await expect(drawer.getByText('María López')).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('restaurant-mobile.png'),
     fullPage: false,

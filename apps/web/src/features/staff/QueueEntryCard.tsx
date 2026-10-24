@@ -10,8 +10,6 @@ import {
   Check,
   Clock,
   CircleX,
-  RotateCw,
-  Users,
   LogIn,
   LogOut,
   BadgeHelp,
@@ -25,6 +23,11 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { formatCountdown } from '@/lib/countdown'
 import assignmentCheck from '@/assets/queue-actions/queue-assignment-check.svg'
+import cardUsers from '@/assets/queue-card/users.svg'
+import spaceDot from '@/assets/queue-card/space-dot.svg'
+import arrivalClock from '@/assets/queue-card/arrival-clock.svg'
+import automaticIcon from '@/assets/queue-card/automatic.svg'
+import attemptDot from '@/assets/queue-card/attempt-dot.svg'
 import {
   queueActionLabels,
   receptionLabels,
@@ -86,29 +89,8 @@ export function QueueEntryCard({
     wait?.estimateQuality === 'provisional'
       ? 'Espera provisional'
       : 'Espera estimada'
+  const seatingSpaceName = entry.assignedSeating?.spaceName ?? entry.space?.name
   const cycle = entry.automationCycle
-  const cycleContext =
-    cycle?.state === 'stopped' && cycle.reason
-      ? {
-          arrived: entry.status === 'waiting'
-            ? 'Ciclo anterior finalizado por una llegada. Este turno sigue en espera.'
-            : ['completed', 'served'].includes(entry.status)
-              ? 'Llegada confirmada; ciclo automático finalizado.'
-              : 'Ciclo anterior finalizado por una llegada.',
-          cancelled:
-            'Ciclo detenido por cancelación manual; para reanudarlo, asigna otro turno manualmente.',
-          no_show: 'Ciclo detenido: no se encontró una alternativa compatible.',
-          no_candidate:
-            'Sin candidatos compatibles. Asigna el siguiente turno manualmente para iniciar otro ciclo.',
-          missing_context:
-            'Ciclo detenido: falta contexto para encontrar una alternativa compatible.',
-          context_changed:
-            'Ciclo detenido porque cambió el contexto de compatibilidad.',
-          service_ended: 'Ciclo detenido al cerrar el servicio.',
-          disabled: 'Ciclo detenido: gestión automática desactivada.',
-          legacy: 'Sin ciclo automático activo para este turno.',
-        }[cycle.reason] ?? 'Ciclo automático detenido.'
-      : null
   const actions = (
     entry.allowedActions ?? entryActions(entry.status, queue.config.type)
   )
@@ -218,11 +200,7 @@ export function QueueEntryCard({
   }
   return (
     <li
-      className={`relative overflow-hidden rounded-lg border bg-background select-none [&_*]:select-none ${
-        entry.status === 'called' && cycle?.state === 'active'
-          ? 'border-l-2 border-l-zinc-900'
-          : ''
-      }`}
+      className="relative overflow-hidden rounded-lg border border-[#d1d5db] bg-background select-none [&_*]:select-none"
       style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
       onTouchStart={(event) => event.stopPropagation()}
       onTouchMove={(event) => event.stopPropagation()}
@@ -337,14 +315,14 @@ export function QueueEntryCard({
           }
         }}
       >
-        <div className="relative flex w-full min-w-0 items-center gap-4 rounded-md bg-background p-4 text-left">
+        <div className="relative flex w-full min-w-0 items-center gap-4 rounded-md bg-background p-[15px] text-left">
           <button
             type="button"
             data-manage-entry=""
             className="absolute inset-0 z-10 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-default"
-            aria-label={`Gestionar turno ${entry.code}`}
+            aria-label={`${canOperate && active ? 'Gestionar turno' : 'Ver detalle del turno'} ${entry.code}`}
             aria-describedby={detailsId}
-            disabled={!canOperate || !active || busy}
+            disabled={busy}
             onClick={() => {
               onReveal(null)
               onManage(entry)
@@ -364,13 +342,13 @@ export function QueueEntryCard({
               <p className="break-words text-sm font-medium">
                 {entry.displayName || `Turno ${entry.code}`}
               </p>
-              <p className="text-sm">
-                <span className="text-muted-foreground">Turno: </span>
+              <p className="text-sm font-medium">
+                <span className="text-[#9ca3af]">Turno: </span>
                 {entry.code}
               </p>
             </div>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          <div className="flex flex-wrap items-center justify-between gap-y-1 text-xs text-[#9ca3af]">
             {queue.config.type === 'reception' && entry.receptionService && (
               <span className="flex items-center gap-1">
                 <ReceptionIcon className="size-4" aria-hidden="true" />
@@ -380,28 +358,19 @@ export function QueueEntryCard({
             {queue.config.type === 'restaurant' && (
               // Figma row: 16px icon, 12px medium gray labels with 4px horizontal
               // padding, a 4px dot, and 4px gaps. The count stays numeric.
-              <span className="flex min-w-0 items-center gap-1 text-xs font-medium leading-none text-gray-400">
+              <span className={`flex min-w-0 items-center gap-1 text-xs font-medium leading-none text-[#9ca3af] ${entry.status === 'called' ? 'flex-1 pr-1' : ''}`}>
                 <span className="flex shrink-0 items-center gap-1">
-                  <Users className="size-4 shrink-0" aria-hidden="true" />
+                  <img src={cardUsers} alt="" aria-hidden="true" className="shrink-0" />
                   <span className="px-1 tabular-nums">{entry.partySize}</span>
                   <span className="sr-only">
                     {entry.partySize === 1 ? 'persona' : 'personas'}
                   </span>
                 </span>
-                {entry.assignedSeating ? (
-                  <span className="min-w-0 break-words px-1">
-                    · {entry.assignedSeating.spaceName} · Mesa para {entry.assignedSeating.seats}
-                  </span>
-                ) : (
-                  entry.space && (
-                    <>
-                      <span
-                        className="size-1 shrink-0 rounded-full bg-gray-400"
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 truncate px-1">{entry.space.name}</span>
-                    </>
-                  )
+                {seatingSpaceName && (
+                  <>
+                    <img src={spaceDot} alt="" aria-hidden="true" className="shrink-0" />
+                    <span className="min-w-0 truncate px-1">{seatingSpaceName}</span>
+                  </>
                 )}
               </span>
             )}
@@ -423,43 +392,48 @@ export function QueueEntryCard({
                 </Badge>
               ))}
             {entry.status !== 'waiting' && (
-              <span
-                className={
-                  entry.status === 'served' || entry.status === 'completed'
-                    ? 'text-green-600'
-                    : ''
-                }
-              >
-                {entry.status === 'completed' &&
-                queue.config.type !== 'restaurant'
-                  ? 'Completado'
-                  : entry.cancellationReason === 'service_ended'
-                  ? 'Cancelado por cierre de servicio'
-                  : statusLabels[entry.status] ?? entry.status}
+              // Keep the arrival status and its deadline together at narrow widths.
+              <span className="flex shrink-0 items-center gap-1" data-arrival-status={entry.status === 'called' ? '' : undefined}>
+                <span
+                  className={
+                    entry.status === 'served' || entry.status === 'completed'
+                      ? 'text-green-600'
+                      : ''
+                  }
+                >
+                  {entry.status === 'completed' &&
+                  queue.config.type !== 'restaurant'
+                    ? 'Completado'
+                    : entry.cancellationReason === 'service_ended'
+                    ? 'Cancelado por cierre de servicio'
+                    : statusLabels[entry.status] ?? entry.status}
+                </span>
+                {entry.status === 'called' && entry.arrivalDeadlineAt != null && (
+                  <Badge
+                    variant={cycle?.state === 'active' ? 'destructive' : 'secondary'}
+                    className={`tabular-nums ${cycle?.state === 'active' ? 'border-0 bg-[#fef2f2] font-semibold text-[#dc2626]' : ''}`}
+                    title="Tiempo restante para llegar"
+                    aria-label={`Tiempo restante para llegar: ${formatCountdown(
+                      entry.arrivalDeadlineAt - now,
+                    )}`}
+                  >
+                    {cycle?.state === 'active'
+                      ? <img src={arrivalClock} alt="" aria-hidden="true" className="shrink-0" />
+                      : <Clock className="size-3" aria-hidden="true" />}
+                    {formatCountdown(entry.arrivalDeadlineAt - now)}
+                  </Badge>
+                )}
               </span>
-            )}
-            {entry.status === 'called' && entry.arrivalDeadlineAt != null && (
-              <Badge
-                variant={cycle?.state === 'active' ? 'destructive' : 'secondary'}
-                className={`tabular-nums ${cycle?.state === 'active' ? 'border-0 bg-red-600 text-white hover:bg-red-600' : ''}`}
-                title="Tiempo restante para llegar"
-                aria-label={`Tiempo restante para llegar: ${formatCountdown(
-                  entry.arrivalDeadlineAt - now,
-                )}`}
-              >
-                <Clock className="size-3" aria-hidden="true" />
-                {formatCountdown(entry.arrivalDeadlineAt - now)}
-              </Badge>
             )}
           </div>
           {entry.status === 'called' && cycle?.state === 'active' && (
-            <p className="flex items-center gap-1 text-xs font-medium text-muted-foreground">
-              <RotateCw className="size-3.5" aria-hidden="true" />
-              Automático · Intento {cycle.attempt ?? 1}
+            <p className="flex items-center gap-1 text-xs font-medium leading-none text-[#1f2937]">
+              <img src={automaticIcon} alt="" aria-hidden="true" className="shrink-0" />
+              <span className="px-1">Automático</span>
+              <img src={attemptDot} alt="" aria-hidden="true" className="shrink-0" />
+              {' '}<span className="sr-only">·</span>{' '}
+              <span className="px-1">Intento {cycle.attempt ?? 1}</span>
             </p>
-          )}
-          {cycleContext && (
-            <p className="text-xs text-muted-foreground">{cycleContext}</p>
           )}
         </div>
         </div>

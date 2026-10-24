@@ -208,6 +208,16 @@ it('announces an expiry from another cycle during a forced post-command refresh'
       'El turno de Ana ha expirado. Se ha avisado a Luis.',
     ),
   ).toBeVisible()
+  // The real modal drawer must not capture the toast in its layout or hide
+  // its live region from assistive technology.
+  const viewport = screen.getByRole('region', { name: 'Notifications' })
+  expect(viewport).toHaveClass('fixed', 'pointer-events-none')
+  expect(viewport.closest('[data-slot="drawer-popup"]')).toBeNull()
+  expect(viewport.closest('[aria-hidden="true"], [inert]')).toBeNull()
+  // Base UI nests portals in the modal portal, outside its transformed popup.
+  expect(viewport.parentElement?.parentElement).toHaveAttribute('data-slot', 'drawer-portal')
+  expect(document.querySelector('[data-queue-toast-anchor]')).toBeNull()
+
 })
 
 it('rebaselines the same queue on every open and only announces newly observed events once', async () => {

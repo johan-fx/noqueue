@@ -329,3 +329,28 @@ it.each(['arrived', 'cancelled', 'no_candidate', 'missing_context', 'context_cha
     expect(screen.queryByText('Cancelar turno')).not.toBeInTheDocument()
   },
 )
+
+it.each([
+  ['completed', 'Completado', 'text-[#84cc16]'],
+  ['served', 'Completado', 'text-[#84cc16]'],
+  ['cancelled', 'Cancelado', 'text-[#b91c1c]'],
+])('places %s only in the identity header with its Figma status icon', (status, label, color) => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry, status, displayName: 'María García' }} />)
+  const text = screen.getByText(label!)
+  const indicator = text.closest('[data-entry-status]')!
+  expect(indicator).toHaveClass(color!, 'gap-1', 'text-xs', 'font-normal', 'leading-4')
+  expect(indicator.parentElement).toContainElement(screen.getByText('María García'))
+  expect(indicator.querySelector('img')).toHaveAttribute('aria-hidden', 'true')
+  expect(screen.getAllByText(label!)).toHaveLength(1)
+  expect(screen.getByRole('button', { name: 'Ver detalle del turno T1' })).toHaveAccessibleDescription(new RegExp(label!))
+})
+
+it('preserves the service-closure explanation in the cancelled status', () => {
+  render(<QueueEntryCard {...props} entry={{ ...props.entry, status: 'cancelled', cancellationReason: 'service_ended' }} />)
+  expect(screen.getByText('Cancelado por cierre de servicio').closest('[data-entry-status]')).not.toBeNull()
+})
+
+it.each(['waiting', 'called', 'expired', 'no_show'])('does not move or restyle the %s status', status => {
+  const { container } = render(<QueueEntryCard {...props} entry={{ ...props.entry, status }} />)
+  expect(container.querySelector('[data-entry-status]')).toBeNull()
+})

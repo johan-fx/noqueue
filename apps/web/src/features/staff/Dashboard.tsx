@@ -241,8 +241,6 @@ function DashboardContent(props: DashboardProps) {
   const [automationSnapshot, setAutomationSnapshot] = useState<
     (QueueAutomation & { observedAt: number }) | null
   >(null)
-  const [queueToastContainer, setQueueToastContainer] =
-    useState<HTMLDivElement | null>(null)
   const automationCursor = useRef<{ queueId: string; cursor: number } | null>(null)
   const seenAutomationEventIds = useRef(new Set<number>())
   const automationCursorGeneration = useRef(0)
@@ -1558,17 +1556,7 @@ function DashboardContent(props: DashboardProps) {
             )}
           </div>
           {drawer === 'queue' && (
-            <div
-              ref={setQueueToastContainer}
-              data-queue-toast-anchor=""
-              className="pointer-events-none w-full shrink-0"
-            />
-          )}
-          {drawer === 'queue' && (
-            <QueueToastViewport
-              container={queueToastContainer}
-              sessionId={queueToastSessionId}
-            />
+            <QueueToastViewport sessionId={queueToastSessionId} />
           )}
           {drawer === 'queue' &&
             tab === 'active' &&

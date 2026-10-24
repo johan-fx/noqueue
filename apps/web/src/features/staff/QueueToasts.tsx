@@ -1,74 +1,62 @@
-import { Toast } from '@base-ui/react/toast'
+import { CircleAlert } from 'lucide-react'
+import successIcon from '@/assets/queue-toast/success.svg'
 import {
-  CircleAlert,
-  CircleCheck,
-} from 'lucide-react'
+  Toast,
+  ToastContent,
+  ToastPortal,
+  ToastTitle,
+  ToastViewport,
+  useToastManager,
+} from '@/components/ui/toast'
 
 export type QueueToastData = { queueSessionId: string }
 
 export function QueueToastViewport({
-  container,
   sessionId,
 }: {
-  /**
-   * When supplied, place toasts in the queue drawer's reserved row above its
-   * sticky footer rather than overlaying the list header or action controls.
-   * Omit for standalone stories/tests that need the safe-area viewport.
-   */
-  container?: HTMLElement | null
   /**
    * Limits visible feedback to one opening of one queue drawer. `null` means
    * the queue view is hidden; `undefined` keeps standalone previews unscoped.
    */
   sessionId?: string | null
 } = {}) {
-  const { toasts } = Toast.useToastManager<QueueToastData>()
-  const inline = container !== undefined
-  // Base UI retains older limited toasts so they can animate out. Omit them
-  // from the viewport markup as well, ensuring no more than three are visible.
+  const { toasts } = useToastManager<QueueToastData>()
+  // Do not render retained, limited toasts or feedback from an older opening.
   const visibleToasts = toasts.filter(
     (toast) =>
       !toast.limited &&
       (sessionId === undefined || toast.data?.queueSessionId === sessionId),
   )
 
-  // The inline region sits in the document flow, above the sticky footer.
-  // Its padding still takes 16px when it has no toasts, so the list stops
-  // short and leaves a blank strip. Mount it only while feedback is visible.
-  if ((inline && !container) || sessionId === null || (inline && visibleToasts.length === 0)) {
-    return null
-  }
+  if (sessionId === null) return null
 
   return (
-    <Toast.Portal {...(inline ? { container } : {})}>
-      <Toast.Viewport
-        className={
-          inline
-            ? 'relative z-[100] mx-auto flex w-full max-w-md flex-col gap-2 px-4 py-2 outline-none'
-            : 'fixed inset-x-0 bottom-0 z-[100] mx-auto flex w-full max-w-md flex-col gap-2 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] outline-none'
-        }
-      >
+    // Escape the drawer's transformed/clipped popup without reserving space.
+    // Base UI keeps nested portals inside the modal's outer portal for a11y.
+    <ToastPortal>
+      <ToastViewport className="bottom-[max(1rem,env(safe-area-inset-bottom))] z-[100] sm:inset-x-4 sm:mx-auto sm:w-auto lg:landscape:left-auto lg:landscape:right-4 lg:landscape:mx-0 lg:landscape:w-full">
         {visibleToasts.map((toast) => {
-          const Icon =
-            toast.type === 'cancel' || toast.type === 'expiry'
-              ? CircleAlert
-              : CircleCheck
+          const isAlert = toast.type === 'cancel' || toast.type === 'expiry'
           return (
-            <Toast.Root
+            <Toast
               key={toast.id}
               toast={toast}
-              className="pointer-events-auto flex items-center gap-2 rounded-lg border border-white/10 bg-[#262626] p-4 text-sm font-medium leading-5 text-white shadow-sm outline-none data-ending-style:translate-y-[-0.5rem] data-ending-style:opacity-0 data-starting-style:translate-y-[-0.5rem] data-starting-style:opacity-0"
+              className="rounded-lg border-white/10 bg-[#262626] font-sans text-[#fafafa] shadow-[0_4px_6px_rgba(0,0,0,0.1)]"
             >
-              <Icon className="size-5 shrink-0" aria-hidden="true" />
-              <Toast.Content className="min-w-0 flex-1">
-                <Toast.Title className="text-sm font-medium leading-5">
+              <ToastContent className="gap-2">
+                {isAlert ? (
+                  <CircleAlert className="size-5 shrink-0" aria-hidden="true" />
+                ) : (
+                  <img src={successIcon} alt="" width={20} height={20} className="shrink-0" />
+                )}
+                <ToastTitle className="min-w-0 flex-1 wrap-break-word text-sm font-medium leading-5">
                   {toast.title}
-                </Toast.Title>
-              </Toast.Content>
-            </Toast.Root>
+                </ToastTitle>
+              </ToastContent>
+            </Toast>
           )
         })}
-      </Toast.Viewport>
-    </Toast.Portal>
+      </ToastViewport>
+    </ToastPortal>
   )
 }

@@ -28,6 +28,8 @@ import spaceDot from '@/assets/queue-card/space-dot.svg'
 import arrivalClock from '@/assets/queue-card/arrival-clock.svg'
 import automaticIcon from '@/assets/queue-card/automatic.svg'
 import attemptDot from '@/assets/queue-card/attempt-dot.svg'
+import completedCheck from '@/assets/queue-card/completed-check.svg'
+import cancelledX from '@/assets/queue-card/cancelled-x.svg'
 import {
   queueActionLabels,
   receptionLabels,
@@ -90,6 +92,8 @@ export function QueueEntryCard({
       ? 'Espera provisional'
       : 'Espera estimada'
   const seatingSpaceName = entry.assignedSeating?.spaceName ?? entry.space?.name
+  const completed = entry.status === 'completed' || entry.status === 'served'
+  const headerStatus = completed || entry.status === 'cancelled'
   const cycle = entry.automationCycle
   const actions = (
     entry.allowedActions ?? entryActions(entry.status, queue.config.type)
@@ -347,6 +351,15 @@ export function QueueEntryCard({
                 {entry.code}
               </p>
             </div>
+            {headerStatus && (
+              <span
+                data-entry-status=""
+                className={`flex max-w-[55%] shrink-0 items-start gap-1 text-xs font-normal leading-4 ${completed ? 'text-[#84cc16]' : 'text-[#b91c1c]'}`}
+              >
+                <img src={completed ? completedCheck : cancelledX} alt="" aria-hidden="true" className="shrink-0" />
+                <span>{completed ? 'Completado' : entry.cancellationReason === 'service_ended' ? 'Cancelado por cierre de servicio' : 'Cancelado'}</span>
+              </span>
+            )}
           </div>
           <div className="flex flex-wrap items-center justify-between gap-y-1 text-xs text-[#9ca3af]">
             {queue.config.type === 'reception' && entry.receptionService && (
@@ -391,7 +404,7 @@ export function QueueEntryCard({
                   {waitLabel}
                 </Badge>
               ))}
-            {entry.status !== 'waiting' && (
+            {entry.status !== 'waiting' && !headerStatus && (
               // Keep the arrival status and its deadline together at narrow widths.
               <span className="flex shrink-0 items-center gap-1" data-arrival-status={entry.status === 'called' ? '' : undefined}>
                 <span

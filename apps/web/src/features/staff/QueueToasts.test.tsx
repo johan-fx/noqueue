@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Toast } from '@base-ui/react/toast'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -23,21 +23,15 @@ function ToastHarness() {
   )
 }
 
-function InlineToastHarness() {
+function OverlayToastHarness() {
   const manager = Toast.useToastManager<{ title: string }>()
-  const [container, setContainer] = useState<HTMLDivElement | null>(null)
   return (
     <>
       <main>Contenido de la lista</main>
-      <div
-        ref={setContainer}
-        data-testid="queue-toast-host"
-        className="shrink-0"
-      />
       <footer>
         <button type="button">Acción fija del footer</button>
       </footer>
-      <QueueToastViewport container={container} />
+      <QueueToastViewport />
       <button
         type="button"
         onClick={() => manager.add({ title: 'Turno asignado', priority: 'low' })}
@@ -50,7 +44,7 @@ function InlineToastHarness() {
 
 function SessionToastHarness() {
   const manager = Toast.useToastManager<{ queueSessionId: string }>()
-  const [sessionId, setSessionId] = useState('queue-a:1')
+  const [sessionId, setSessionId] = useState<string | null>('queue-a:1')
   return (
     <>
       <button
@@ -64,6 +58,9 @@ function SessionToastHarness() {
         }
       >
         Añadir A
+      </button>
+      <button type="button" onClick={() => setSessionId(null)}>
+        Ocultar cola
       </button>
       <button type="button" onClick={() => setSessionId('queue-b:2')}>
         Cambiar de sesión
@@ -110,30 +107,42 @@ it('keeps at most three polite, non-focus-stealing toasts visible and dismisses 
   expect(document.activeElement).toBe(addButton)
 
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(5000)
+    await vi.advanceTimersByTimeAsync(4999)
+  })
+  expect(screen.getAllByRole('dialog')).toHaveLength(3)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(1)
   })
   expect(screen.queryAllByRole('dialog')).toHaveLength(0)
 })
 
-it('renders queue feedback in the reserved row before the sticky footer, not over controls', () => {
-  render(
+it('portals feedback to a fixed bottom overlay without adding a row before the footer', () => {
+  const { container } = render(
     <Toast.Provider timeout={5000} limit={3}>
-      <InlineToastHarness />
+      <OverlayToastHarness />
     </Toast.Provider>,
   )
 
-  const host = screen.getByTestId('queue-toast-host')
-  // No feedback yet: the reserved row must not occupy space above the footer.
-  expect(host).toBeEmptyDOMElement()
+  const footer = container.querySelector('footer')!
+  const previousSibling = footer.previousElementSibling
+  expect(previousSibling?.tagName).toBe('MAIN')
+  expect(container.querySelector('[data-slot="toast-viewport"]')).toBeNull()
 
   fireEvent.click(screen.getByRole('button', { name: 'Añadir notificación' }))
-  const toast = host.querySelector('[role="dialog"]')
-  const footerAction = screen.getByRole('button', { name: 'Acción fija del footer' })
-  expect(toast).toBeInTheDocument()
-  expect(host.querySelector('[role="region"]')).not.toHaveClass('fixed')
-  expect(
-    host.compareDocumentPosition(footerAction) & Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy()
+  const viewport = screen.getByRole('region', { name: 'Notifications' })
+  expect(viewport).toHaveClass('fixed', 'pointer-events-none', 'z-[100]')
+  expect(viewport.className).toContain('env(safe-area-inset-bottom)')
+  expect(viewport).toHaveClass('inset-x-4', 'mx-auto', 'sm:inset-x-4', 'sm:mx-auto', 'sm:w-auto')
+  expect(viewport).not.toHaveClass('sm:left-auto', 'sm:mx-0', 'sm:w-full')
+  // Wide portrait tablets stay centered; only wide landscape screens align right.
+  expect(viewport).toHaveClass('lg:landscape:left-auto', 'lg:landscape:right-4', 'lg:landscape:mx-0', 'lg:landscape:w-full')
+  expect(viewport.parentElement).toHaveAttribute('data-slot', 'toast-portal')
+  expect(viewport.parentElement?.parentElement).toBe(document.body)
+  expect(container).not.toContainElement(viewport)
+  expect(footer.previousElementSibling).toBe(previousSibling)
+  expect(screen.getByText('Turno asignado').closest('[data-slot="toast"]'))
+    .toHaveClass('absolute', 'bg-[#262626]', 'text-[#fafafa]', 'rounded-lg')
+
 })
 
 it('only renders feedback scoped to the active queue-view session', () => {
@@ -152,4 +161,39 @@ it('only renders feedback scoped to the active queue-view session', () => {
   fireEvent.click(screen.getByRole('button', { name: 'Añadir B' }))
   expect(screen.getByText('Notificación de B')).toBeVisible()
   expect(screen.queryByText('Notificación de A')).not.toBeInTheDocument()
+})
+
+it('hides all feedback when the queue session closes', () => {
+  render(
+    <Toast.Provider timeout={5000} limit={3}>
+      <SessionToastHarness />
+    </Toast.Provider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir A' }))
+  expect(screen.getByText('Notificación de A')).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Ocultar cola' }))
+  expect(screen.queryByText('Notificación de A')).not.toBeInTheDocument()
+  expect(screen.queryByRole('region', { name: 'Notifications' })).not.toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: 'Cambiar de sesión' }))
+  expect(screen.queryByText('Notificación de A')).not.toBeInTheDocument()
+})
+
+it('closes the focused toast with Escape and reflows the remaining stack', async () => {
+  render(
+    <Toast.Provider timeout={5000} limit={3}>
+      <ToastHarness />
+    </Toast.Provider>,
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir cinco' }))
+  expect(screen.getAllByRole('dialog').map((node) => node.textContent))
+    .toEqual(['Notificación 5', 'Notificación 4', 'Notificación 3'])
+  const newest = screen.getByRole('dialog', { name: 'Notificación 5' })
+  act(() => newest.focus())
+  fireEvent.keyDown(newest, { key: 'Escape' })
+  await waitFor(() => expect(screen.queryByText('Notificación 5')).not.toBeInTheDocument())
+  expect(screen.getAllByRole('dialog').map((node) => node.textContent))
+    .toEqual(['Notificación 4', 'Notificación 3', 'Notificación 2'])
+  // Closing one toast must not leave holes in the stack's positioning indices.
+  expect(screen.getAllByRole('dialog').map((node) => node.style.getPropertyValue('--toast-index')))
+    .toEqual(['0', '1', '2'])
 })

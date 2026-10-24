@@ -10,7 +10,6 @@ import {
   DrawerDescription,
 } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -20,11 +19,7 @@ import {
 } from '@/components/ui/select'
 import { ManualQueueEntryForm } from './ManualQueueEntryForm'
 import { api } from './api'
-import {
-  manualQueueCopy,
-  manualQueueError,
-  type ManualLocale,
-} from './manual-queue-copy'
+import { manualQueueCopy, type ManualLocale } from './manual-queue-copy'
 export function AddQueueEntryDrawer({
   queue,
   onClose,
@@ -38,19 +33,7 @@ export function AddQueueEntryDrawer({
 }) {
   const [locale, setLocale] = useState<ManualLocale>('es')
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{
-    code: string
-    recoveryToken: string
-    locale: ManualLocale
-  } | null>(null)
-  const [notice, setNotice] = useState<
-    'copied' | 'copyFailed' | { error: unknown } | null
-  >(null)
-  const activeLocale = result?.locale ?? locale
-  const copy = manualQueueCopy[activeLocale]
-  const url = result
-    ? `${window.location.origin}/t/${result.recoveryToken}?lang=${result.locale}`
-    : ''
+  const copy = manualQueueCopy[locale]
   return (
     <Drawer
       open
@@ -60,7 +43,7 @@ export function AddQueueEntryDrawer({
       }}
     >
       <DrawerContent
-        lang={activeLocale}
+        lang={locale}
         finalFocus={() => returnFocus}
         className="w-full sm:w-[28rem]"
       >
@@ -81,12 +64,12 @@ export function AddQueueEntryDrawer({
             </DrawerTitle>
             {/* Language lives in the header, to the right of the queue name. */}
             <Select
-              value={activeLocale}
+              value={locale}
               items={[
                 { value: 'es', label: 'ES' },
                 { value: 'en', label: 'EN' },
               ]}
-              disabled={busy || result !== null}
+              disabled={busy}
               onValueChange={(value) => {
                 if (value === 'es' || value === 'en') setLocale(value)
               }}
@@ -105,82 +88,35 @@ export function AddQueueEntryDrawer({
             </Select>
           </div>
           <DrawerDescription className="sr-only">
-            {result ? copy.added : copy.addDescription}
+            {copy.addDescription}
           </DrawerDescription>
         </DrawerHeader>
-        {result ? (
-          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
-            <h2 className="text-2xl font-medium">{copy.added}</h2>
-            <p className="text-xl font-medium">
-              {copy.code}: {result.code}
-            </p>
-            <label className="block space-y-2">
-              {copy.link}
-              <Input readOnly value={url} onFocus={(e) => e.target.select()} />
-            </label>
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={() => {
-                void navigator.clipboard
-                  .writeText(url)
-                  .then(() => setNotice('copied'))
-                  .catch(() => setNotice('copyFailed'))
-              }}
-            >
-              {copy.copy}
-            </Button>
-            <a
-              href={url}
-              target="_blank"
-              rel="noreferrer"
-              className="block text-center underline"
-            >
-              {copy.open}
-            </a>
-            <Button className="w-full" onClick={onClose}>
-              {copy.close}
-            </Button>
-          </div>
-        ) : (
-          <ManualQueueEntryForm
-            locale={locale}
-            service={{
-              type: queue.config.type,
-              receptionServices: queue.config.receptionServices,
-              spaces: queue.config.spaces.map((space) => ({
-                id: space.id!,
-                name: space.name,
-                maxPartySize: space.tableTypes?.length
-                  ? Math.max(...space.tableTypes.map((type) => type.seats))
-                  : 20,
-              })),
-            }}
-            whatsappRequired={queue.manualJoinWhatsappRequired !== false}
-            onBusyChange={setBusy}
-            onSubmit={async (input, key) => {
-              const entry = joinedEntrySchema.parse(
-                await api(`/queues/${queue.id}/entries`, 'POST', input, key),
-              )
-              setResult({ ...entry, locale: input.locale })
-              try {
-                await onSaved()
-              } catch (e) {
-                setNotice({ error: e })
-              }
-            }}
-          />
-        )}
-        {notice && (
-          <p role="status" className="px-4 pb-4">
-            {typeof notice === 'string'
-              ? copy[notice]
-              : `${copy.created} ${manualQueueError(
-                  notice.error,
-                  activeLocale,
-                )}`}
-          </p>
-        )}
+        <ManualQueueEntryForm
+          locale={locale}
+          service={{
+            type: queue.config.type,
+            receptionServices: queue.config.receptionServices,
+            spaces: queue.config.spaces.map((space) => ({
+              id: space.id!,
+              name: space.name,
+              maxPartySize: space.tableTypes?.length
+                ? Math.max(...space.tableTypes.map((type) => type.seats))
+                : 20,
+            })),
+          }}
+          whatsappRequired={queue.manualJoinWhatsappRequired !== false}
+          onBusyChange={setBusy}
+          onSubmit={async (input, key) => {
+            // Validate the response so a malformed reply stays in the form as an error.
+            joinedEntrySchema.parse(
+              await api(`/queues/${queue.id}/entries`, 'POST', input, key),
+            )
+            // The turn is already saved, so a failed list refresh must not block
+            // the close. The dashboard shows its own refresh error.
+            await onSaved().catch(() => undefined)
+            onClose()
+          }}
+        />
       </DrawerContent>
     </Drawer>
   )

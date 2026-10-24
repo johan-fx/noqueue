@@ -350,6 +350,72 @@ it('keeps automatic service closure in cancelled history with a truthful reason'
   expect(screen.getByText('Cancelado por cierre de servicio')).toBeVisible()
   expect(screen.queryByText('No presentado')).not.toBeInTheDocument()
 })
+it('disables adding turns and explains why when the list is deactivated', async () => {
+  const onAdd = vi.fn()
+  const { rerender } = render(
+    <QueueView
+      queue={{ ...queue, queueState: 'inactive' }}
+      entries={entries}
+      tab="active"
+      onTabChange={vi.fn()}
+      canOperate
+      busy={false}
+      lastSync=""
+      error=""
+      onRefresh={vi.fn()}
+      onAdd={onAdd}
+      onAction={vi.fn()}
+    />,
+  )
+  const button = screen.getByRole('button', { name: 'Añadir' })
+  expect(button).toBeDisabled()
+  fireEvent.click(button)
+  expect(onAdd).not.toHaveBeenCalled()
+  fireEvent.focus(button.parentElement!)
+  expect(
+    await screen.findByText(
+      'No se pueden añadir turnos ya que la lista está desactivada.',
+    ),
+  ).toBeVisible()
+
+  rerender(
+    <QueueView
+      queue={{ ...queue, queueState: 'paused' }}
+      entries={entries}
+      tab="active"
+      onTabChange={vi.fn()}
+      canOperate
+      busy={false}
+      lastSync=""
+      error=""
+      onRefresh={vi.fn()}
+      onAdd={onAdd}
+      onAction={vi.fn()}
+    />,
+  )
+  expect(screen.getByRole('button', { name: 'Añadir' })).toBeDisabled()
+
+  rerender(
+    <QueueView
+      queue={{ ...queue, queueState: 'active' }}
+      entries={entries}
+      tab="active"
+      onTabChange={vi.fn()}
+      canOperate
+      busy={false}
+      lastSync=""
+      error=""
+      onRefresh={vi.fn()}
+      onAdd={onAdd}
+      onAction={vi.fn()}
+    />,
+  )
+  const enabled = screen.getByRole('button', { name: 'Añadir' })
+  expect(enabled).toBeEnabled()
+  fireEvent.click(enabled)
+  expect(onAdd).toHaveBeenCalledTimes(1)
+})
+
 it('keeps public links visible for read-only staff', () => {
   render(<Harness canOperate={false} />)
   expect(screen.getByRole('button', { name: 'Abrir enlace público' })).toBeVisible()

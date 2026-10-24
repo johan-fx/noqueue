@@ -227,14 +227,8 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await add.getByRole('button', { name: 'Añadir turno' }).click()
   await expect(add.getByRole('alert')).toBeVisible()
   await add.getByRole('button', { name: 'Añadir turno' }).click()
-  const result = add
-  await expect(
-    result.getByRole('heading', { name: 'Turno añadido' }),
-  ).toBeVisible()
-  await expect(result.getByLabel('Enlace del turno')).toHaveValue(
-    /\/t\/[a-f0-9]{64}/,
-  )
-  await result.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  // A saved manual turn closes the form and returns straight to the list.
+  await expect(add).toHaveCount(0)
   await expect(
     drawer.getByRole('button', { name: 'Añadir', exact: true }),
   ).toBeFocused()
@@ -360,12 +354,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
     .getByRole('button', { name: 'Check-out', exact: true })
     .click()
   await receptionAdd.getByRole('button', { name: 'Añadir turno' }).click()
-  await expect(
-    receptionAdd.getByRole('heading', { name: 'Turno añadido' }),
-  ).toBeVisible()
-  await receptionAdd
-    .getByRole('button', { name: 'Cerrar', exact: true })
-    .click()
+  await expect(receptionAdd).toHaveCount(0)
   await drawer.getByRole('button', { name: 'Filtrar Check-in' }).click()
   await expect(drawer.getByText('Ana Recepción')).toHaveCount(0)
   await drawer.getByRole('button', { name: 'Filtrar Check-out' }).click()
@@ -425,10 +414,7 @@ test('service-specific public/manual joins, filters, swipe sheets and real queue
   await drawer.getByRole('button', { name: 'Añadir', exact: true }).click()
   await poolAdd.getByLabel('Nombre', { exact: true }).fill('Piscina Manual')
   await poolAdd.getByRole('button', { name: 'Añadir turno' }).click()
-  await expect(
-    poolAdd.getByRole('heading', { name: 'Turno añadido' }),
-  ).toBeVisible()
-  await poolAdd.getByRole('button', { name: 'Cerrar', exact: true }).click()
+  await expect(poolAdd).toHaveCount(0)
   await expect(
     drawer.getByRole('group', { name: 'Filtros de la lista' }),
   ).toHaveCount(0)

@@ -40,7 +40,7 @@ const queue: QueueSummary = {
     receptionServices: [],
   },
 }
-it('defaults to Spanish, preserves data across selector changes and retains submitted locale in the result link', async () => {
+it('defaults to Spanish, preserves data across selector changes and closes after saving even if the refresh fails', async () => {
   vi.mocked(api).mockResolvedValue({
     code: 'P1',
     recoveryToken: 'a'.repeat(64),
@@ -49,11 +49,13 @@ it('defaults to Spanish, preserves data across selector changes and retains subm
     status: 'waiting',
     notification: 'disabled',
   })
+  const onClose = vi.fn()
+  const onSaved = vi.fn().mockRejectedValue(new Error('Refresh failed'))
   render(
     <AddQueueEntryDrawer
       queue={queue}
-      onClose={vi.fn()}
-      onSaved={vi.fn().mockRejectedValue(new Error('Refresh failed'))}
+      onClose={onClose}
+      onSaved={onSaved}
       returnFocus={null}
     />,
   )
@@ -71,28 +73,36 @@ it('defaults to Spanish, preserves data across selector changes and retains subm
   await waitFor(() => expect(screen.queryByRole('listbox')).toBeNull())
   expect(screen.getByLabelText('Name', { exact: true })).toHaveValue('Guest')
   fireEvent.click(screen.getByRole('button', { name: 'Add queue entry' }))
-  await screen.findByRole('heading', { name: 'Queue entry added' })
+  await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
   expect(vi.mocked(api).mock.calls[0]?.[2]).toMatchObject({
     displayName: 'Guest',
     locale: 'en',
   })
-  expect(screen.getByLabelText('Queue entry link')).toHaveValue(
-    window.location.origin + '/t/' + 'a'.repeat(64) + '?lang=en',
+  expect(onSaved).toHaveBeenCalledTimes(1)
+  expect(onSaved.mock.invocationCallOrder[0]).toBeLessThan(
+    onClose.mock.invocationCallOrder[0]!,
   )
-  expect(screen.getByRole('status')).toHaveTextContent(
-    'The queue entry has been created.',
+})
+
+it('stays open with the error when the entry cannot be created', async () => {
+  vi.mocked(api).mockRejectedValue(new TypeError('Network down'))
+  const onClose = vi.fn()
+  const onSaved = vi.fn()
+  render(
+    <AddQueueEntryDrawer
+      queue={queue}
+      onClose={onClose}
+      onSaved={onSaved}
+      returnFocus={null}
+    />,
   )
-  expect(
-    screen.getByRole('combobox', { name: 'Form language' }),
-  ).toBeDisabled()
-  await waitFor(() =>
-    expect(
-      screen.getByRole('heading', { name: 'Queue entry added' }),
-    ).toBeVisible(),
-  )
-  expect(screen.getByLabelText('Queue entry link')).toHaveValue(
-    window.location.origin + '/t/' + 'a'.repeat(64) + '?lang=en',
-  )
+  fireEvent.change(screen.getByLabelText('Nombre', { exact: true }), {
+    target: { value: 'Guest' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir turno' }))
+  expect(await screen.findByRole('alert')).toBeVisible()
+  expect(onSaved).not.toHaveBeenCalled()
+  expect(onClose).not.toHaveBeenCalled()
 })
 
 it('keeps country search keyboard focus inside the drawer and closes only the popup on Escape', async () => {

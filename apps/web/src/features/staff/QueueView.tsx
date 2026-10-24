@@ -8,6 +8,12 @@ import type {
 } from '@noqueue/contracts/staff'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { QueuePublicLinks } from './QueuePublicLinks'
 
 import { receptionLabels } from './queue-labels'
@@ -31,6 +37,43 @@ const views = [
     statuses: ['cancelled', 'no_show', 'expired'],
   },
 ] as const
+
+function AddTurnButton({
+  busy,
+  deactivated,
+  onAdd,
+}: {
+  busy: boolean
+  deactivated: boolean
+  onAdd: (trigger: HTMLElement) => void
+}) {
+  const button = (
+    <Button
+      size="sm"
+      variant="outline"
+      disabled={busy || deactivated}
+      onClick={(event) => onAdd(event.currentTarget)}
+    >
+      <Plus aria-hidden="true" />
+      Añadir
+    </Button>
+  )
+  if (!deactivated) return button
+  // A disabled button ignores pointer events, so the tooltip listens on the span.
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger render={<span className="inline-flex" tabIndex={0} />}>
+          {button}
+        </TooltipTrigger>
+        <TooltipContent>
+          No se pueden añadir turnos ya que la lista está desactivada.
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
+
 export function QueueView({
   queue,
   entries,
@@ -92,6 +135,10 @@ export function QueueView({
     value: string
   } | null>(null)
   const filter = selection?.queueId === queue.id ? selection.value : 'all'
+  // Closing the list (paused) or leaving it inactive blocks new turns.
+  // The button stays visible so staff can read why it is disabled.
+  const listDeactivated =
+    queue.queueState === 'inactive' || queue.queueState === 'paused'
   const options =
     queue.config.type === 'reception'
       ? queue.config.receptionServices.map((type) => ({
@@ -162,15 +209,11 @@ export function QueueView({
                     {view.title}
                   </h3>
                   {view.value === 'active' && canOperate && onAdd && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={(event) => onAdd(event.currentTarget)}
-                    >
-                      <Plus aria-hidden="true" />
-                      Añadir
-                    </Button>
+                    <AddTurnButton
+                      busy={busy}
+                      deactivated={listDeactivated}
+                      onAdd={onAdd}
+                    />
                   )}
                 </div>
                 <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">

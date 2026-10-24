@@ -459,7 +459,7 @@ it('keeps the wait baseline through delays then fills a separate arrival window'
   const { rerender, container } = render(view())
   const ring = () => screen.getByRole('progressbar')
   const arc = () => container.querySelector('circle[stroke="currentColor"]')
-  expect(ring()).toHaveAccessibleName('Estimated wait: 50:00 (minutes:seconds)')
+  expect(ring()).toHaveAccessibleName('Estimated wait: 50:00')
   expect(ring()).toHaveAttribute('aria-valuenow', '0')
   expect(arc()).toBeNull()
   for (const [remaining, percentage] of [
@@ -580,8 +580,8 @@ it.each(['waiting', 'approaching'] as const)(
     )
     const { rerender, container } = render(view(1000))
     expect(screen.getByText('30:00')).toBeVisible()
-    expect(screen.getByText(/minutos:segundos/)).toBeVisible()
-    expect(screen.getByText(/aprox\./)).toBeVisible()
+    expect(screen.getByText('espera aproximada')).toBeVisible()
+    expect(screen.queryByText(/minutos:segundos/)).not.toBeInTheDocument()
     rerender(view(2000))
     expect(screen.getByText('29:59')).toHaveClass(
       'tabular-nums',
@@ -594,11 +594,11 @@ it.each(['waiting', 'approaching'] as const)(
       .map(Number)
     expect(length! / circumference!).toBeCloseTo(1 / 1800)
     expect(screen.getByRole('progressbar')).toHaveAccessibleName(
-      'Espera aproximada: 29:59 (minutos:segundos)',
+      'Espera aproximada: 29:59',
     )
     expect(screen.getByRole('progressbar')).toHaveAttribute(
       'aria-valuetext',
-      'Espera aproximada: 29:59 (minutos:segundos). Progreso de la espera: 0%',
+      'Espera aproximada: 29:59. Progreso de la espera: 0%',
     )
     expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-live')
     turn.predictedAt = 1000
@@ -637,7 +637,7 @@ it.each([
     expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
     expect(screen.getByRole('progressbar')).toHaveAttribute(
       'aria-valuetext',
-      `Estimated wait: ${label} (minutes:seconds)`,
+      `Estimated wait: ${label}`,
     )
   },
 )

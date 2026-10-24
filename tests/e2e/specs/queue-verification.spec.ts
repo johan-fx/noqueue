@@ -50,7 +50,7 @@ async function expectProjectedCountdown(
         now: Date.now(),
       }))
       const countdown =
-        /^Espera aproximada: (\d+):(\d{2}) \(minutos:segundos\)$/.exec(
+        /^Espera aproximada: (\d+):(\d{2})$/.exec(
           sample.label ?? '',
         )
       if (!countdown || Number(countdown[2]) >= 60) return Infinity
@@ -423,7 +423,7 @@ test('Q-BROWSER-COUNTDOWN polls and returning to the tab never restart the custo
     const countdown = customer.getByRole('progressbar')
     const seconds = async () => {
       const label = await countdown.getAttribute('aria-label')
-      const match = /^Espera aproximada: (\d+):(\d{2}) \(minutos:segundos\)$/.exec(label ?? '')
+      const match = /^Espera aproximada: (\d+):(\d{2})$/.exec(label ?? '')
       expect(match, label ?? 'Missing countdown').not.toBeNull()
       return Number(match![1]) * 60 + Number(match![2])
     }

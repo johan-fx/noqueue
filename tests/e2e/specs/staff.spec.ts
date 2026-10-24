@@ -679,7 +679,7 @@ test('owner can assign from the queue without releasing inventory and arrival fi
     const guest = await guestContext.newPage()
     await guest.goto(`/t/${recoveryToken}`)
     await expect(
-      guest.getByRole('progressbar').getByText(/^minutos:segundos\s*provisional$/),
+      guest.getByRole('progressbar').getByText('espera aproximada'),
     ).toBeVisible()
     const provisional = await guest.request.get(`/api/v1/public/entries/${recoveryToken}`)
     expect(await provisional.json()).toMatchObject({

@@ -263,7 +263,30 @@ it('keeps a retained called entry countdown while keeping the card cycle summary
   expect(screen.getByText('Automático')).toBeVisible()
   expect(screen.getByText('Intento 1')).toBeVisible()
   expect(screen.queryByText(/Confirmar o cancelar detiene/)).not.toBeInTheDocument()
-  expect(screen.getByRole('listitem')).not.toHaveClass('border-l-2', 'border-l-zinc-900')
+  const border = screen.getByRole('listitem').querySelector('[data-automatic-border]')
+  expect(border).toHaveClass('border-l-2', 'border-black', 'absolute', 'pointer-events-none')
+  expect(border).toHaveAttribute('aria-hidden', 'true')
+})
+
+it.each(['restaurant', 'pool', 'reception'] as const)('marks only the actively managed called card in %s', (type) => {
+  const queue = { ...props.queue, config: { ...props.queue.config, type, automaticAssignmentEnabled: true } }
+  const cycle = { id: 'cycle', state: 'active' as const, reason: null, capacity: 4, receptionService: null }
+  const entry = { ...props.entry, status: 'called', automationCycle: cycle }
+  const { container, rerender } = render(<QueueEntryCard {...props} queue={queue} entry={entry} />)
+  const border = () => container.querySelector('[data-automatic-border]')
+  expect(border()).toBeInTheDocument()
+  expect(border()?.parentElement).toBe(screen.getByRole('listitem'))
+  expect(container.querySelector('[data-swipe-surface]')).not.toContainElement(border() as HTMLElement)
+  for (const status of ['waiting', 'completed', 'served', 'cancelled', 'expired', 'no_show']) {
+    rerender(<QueueEntryCard {...props} queue={queue} entry={{ ...entry, status }} />)
+    expect(border()).not.toBeInTheDocument()
+  }
+  rerender(<QueueEntryCard {...props} queue={queue} entry={{ ...entry, automationCycle: { ...cycle, state: 'stopped', reason: 'disabled' } }} />)
+  expect(border()).not.toBeInTheDocument()
+  rerender(<QueueEntryCard {...props} queue={queue} entry={{ ...entry, automationCycle: null }} />)
+  expect(border()).not.toBeInTheDocument()
+  rerender(<QueueEntryCard {...props} queue={queue} entry={entry} revealed="right" />)
+  expect(border()).toBeInTheDocument()
 })
 
 it('labels revealed pass and priority actions and never executes them merely on reveal', () => {

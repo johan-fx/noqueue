@@ -95,6 +95,7 @@ export function QueueEntryCard({
   const completed = entry.status === 'completed' || entry.status === 'served'
   const headerStatus = completed || entry.status === 'cancelled'
   const cycle = entry.automationCycle
+  const automaticallyManaged = entry.status === 'called' && cycle?.state === 'active'
   const actions = (
     entry.allowedActions ?? entryActions(entry.status, queue.config.type)
   )
@@ -213,6 +214,14 @@ export function QueueEntryCard({
       data-entry-code={entry.code}
       data-entry-id={entry.id}
     >
+      {automaticallyManaged && (
+        // Figma's outer accent stays fixed during swipe, without changing layout.
+        <span
+          data-automatic-border=""
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-20 rounded-[inherit] border-l-2 border-black"
+        />
+      )}
       {canOperate && active && (
         <>
           <div
@@ -439,7 +448,7 @@ export function QueueEntryCard({
               </span>
             )}
           </div>
-          {entry.status === 'called' && cycle?.state === 'active' && (
+          {automaticallyManaged && (
             <p className="flex items-center gap-1 text-xs font-medium leading-none text-[#1f2937]">
               <img src={automaticIcon} alt="" aria-hidden="true" className="shrink-0" />
               <span className="px-1">Automático</span>

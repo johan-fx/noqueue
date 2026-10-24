@@ -115,10 +115,10 @@ export function TurnView({
     : waitMs
   const countdown = formatCountdown(remaining)
   const known = !manualOnly && knownEstimate(entry)
-  const units = es ? 'minutos:segundos' : 'minutes:seconds'
+  // Se quitó el sufijo de unidades "(minutos:segundos)" de la etiqueta accesible.
   const waitLabel = refreshStatus ?? (waitMs == null
     ? `${entry.etaMinutes} min`
-    : `${countdown} (${units})`)
+    : countdown)
   const estimatedWaitLabel = es
     ? `Espera aproximada: ${waitLabel}`
     : `Estimated wait: ${waitLabel}`
@@ -376,11 +376,8 @@ export function TurnView({
                   ) : forecastExhausted ? (
                     es ? 'esperando actualización' : 'waiting for update'
                   ) : known ? (
-                    <>
-                      {waitMs == null ? es ? 'minutos' : 'minutes' : units}
-                      <br />
-                          {entry.estimateQuality === 'provisional' ? es ? 'provisional' : 'provisional' : es ? 'aprox.' : 'approx.'}
-                    </>
+                    // Antes de la llamada: un solo texto claro (sin "minutos:segundos").
+                    es ? 'espera aproximada' : 'approximate wait'
                   ) : es ? (
                     'Sin estimación'
                   ) : (

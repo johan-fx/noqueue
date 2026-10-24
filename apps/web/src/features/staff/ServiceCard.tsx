@@ -236,7 +236,9 @@ export function ServiceCard({
                   height="16"
                 />
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
+              {/* The menu defaults to the gear button's width, which is tiny. */}
+              {/* w-auto lets it grow to fit the longest option on one line. */}
+              <DropdownMenuContent align="end" className="w-auto">
                 <DropdownMenuItem
                   onClick={() => gear.current && onAdvanced(gear.current)}
                 >

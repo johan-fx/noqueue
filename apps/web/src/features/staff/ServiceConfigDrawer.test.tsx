@@ -29,7 +29,77 @@ async function next() {
   fireEvent.click(screen.getByRole('button', { name: 'Siguiente' }))
 }
 
+// Name of the confirmation sheet that opens when the breakdown changes the total.
+const sheetName = /Se va a actualizar el número de mesas disponibles/
+
+// Accepts the confirmation sheet shown when the advanced total differs.
+function confirmTotalSheet() {
+  const sheet = screen.getByRole('dialog', { name: sheetName })
+  fireEvent.click(within(sheet).getByRole('button', { name: 'Confirmar' }))
+}
+
 describe('service configuration wizard', () => {
+  it('asks before changing the total and keeps the draft on Volver', async () => {
+    renderWizard()
+    fireEvent.change(screen.getByLabelText('Nombre del servicio'), {
+      target: { value: 'Chez Paul' },
+    })
+    await next()
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Configuración avanzada' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'De 2' }))
+    fireEvent.click(screen.getByRole('button', { name: 'De 4' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    const sheet = screen.getByRole('dialog', { name: sheetName })
+    expect(within(sheet).getByText('Interior')).toBeVisible()
+    expect(within(sheet).getByText('Mesas de 2')).toBeVisible()
+    // Volver closes only the sheet. The advanced draft stays open.
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Volver' }))
+    await waitFor(() =>
+      expect(
+        screen.queryByRole('dialog', { name: sheetName }),
+      ).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: 'De 2' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.getByLabelText('Nº total de mesas disponibles')).toHaveValue(
+      10,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    confirmTotalSheet()
+    expect(screen.getByLabelText('Nº total de mesas disponibles')).toHaveValue(
+      2,
+    )
+  })
+
+  it('applies the breakdown without asking when the total already matches', async () => {
+    renderWizard()
+    fireEvent.change(screen.getByLabelText('Nombre del servicio'), {
+      target: { value: 'Chez Paul' },
+    })
+    await next()
+    fireEvent.change(screen.getByLabelText('Nº total de mesas disponibles'), {
+      target: { value: '2' },
+    })
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Configuración avanzada' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'De 2' }))
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Añadir una mesa de 2' }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    expect(
+      screen.queryByRole('dialog', { name: sheetName }),
+    ).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Nº total de mesas disponibles')).toHaveValue(
+      2,
+    )
+  })
+
   it('does not leave the first step when the name is empty', async () => {
     const onSave = renderWizard()
     await next()
@@ -91,6 +161,7 @@ describe('service configuration wizard', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'De 4' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    confirmTotalSheet()
     expect(screen.getByLabelText('Nº total de mesas disponibles')).toHaveValue(
       3,
     )
@@ -129,6 +200,7 @@ describe('service configuration wizard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'De 2' }))
     fireEvent.click(screen.getByRole('button', { name: 'De 4' }))
     fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    confirmTotalSheet()
     await next()
     fireEvent.click(
       screen.getByRole('button', { name: 'Configuración avanzada' }),

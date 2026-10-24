@@ -28,7 +28,8 @@
     "production:build": "node scripts/production/build.mjs",
     "test:production": "node --test scripts/production/*.test.mjs",
     "production:backup": "node scripts/production/backup-production.mjs",
-    "production:deploy": "node scripts/production/deploy.mjs"
+    "production:deploy": "node scripts/production/deploy.mjs",
+    "demo:queue:automatic": "node scripts/queue-demo/automatic-video.mjs record"
   },
   "devDependencies": {
     "turbo": "2.10.12",

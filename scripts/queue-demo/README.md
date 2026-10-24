@@ -76,3 +76,62 @@ subsecond remaining time. The product is intentionally unchanged in this video
 verification task. The harness now checks waiting-clock zero samples and preserves
 any discovered discrepancy at normal playback speed; see the browser video report.
 A failed acceptance check must not be relabelled as a successful product test.
+
+## Automatic assignment cycles (October 24)
+
+```sh
+FFMPEG_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg \
+FFPROBE_PATH=/opt/homebrew/opt/ffmpeg-full/bin/ffprobe pnpm demo:queue:automatic
+```
+
+This opt-in recorder uses `tests/e2e/automatic-demo.config.ts` and a fresh local
+worker with `NOQUEUE_E2E_AUTO_REPLACEMENT=true`. Nothing is enabled in production.
+Four independent chapters capture the actual mobile UI, staff left/customer right:
+
+1. **Restaurant substitution**: manual group of four; same-size FIFO (including
+   a younger group of four ahead of an older group of three); descending 3, 2, 1;
+   no candidate; a group of five remains waiting; stopped-cycle detail.
+2. **Restaurant concurrent cycles**: independent capacities 4 + 4 + 2; staff
+   cancellation and arrival stop only their own cycle; explicit priority for a
+   compatible smaller group; restart only through another manual assignment.
+3. **Reception**: concurrent check-in/check-out/other; swipe cancellation and
+   confirmation; subtype-compatible priority replacement; footer CTA restart.
+4. **Bar/pool**: client abandonment versus staff cancellation; pass a called turn;
+   priority plus real expiry; passed entry returns to waiting; card assignment and swipe.
+
+The scenarios use pre-enrolled fictional clients via the public API. Every action
+shown after calibration is real UI against the real isolated backend. Grace is
+configured to **1 minute** for substitution/pool, **2 minutes** for concurrent
+restaurant/reception. Clocks are never mocked. Idle wait interiors alone are
+accelerated ×20 in `resumen.mp4`; `flujo-completo.mp4` preserves real-time waits.
+The right camera switches to the named customer between operations. Recordings
+are silent and captioned, matching the original pipeline. Allow ~15 minutes plus
+encoding; failures publish no success-named final video.
+
+**Semantics worth noticing:** explicit priority precedes normal size/FIFO, but
+never bypasses compatibility or initial capacity. Abandonment by the called
+customer continues substitution; cancellation by staff stops that cycle. These
+are current product behaviors, not changes made by this demonstration. The user
+brief's final footer description was incomplete, so the recording shows the
+implemented footer rather than inventing a new one.
+
+Run `node --test scripts/queue-demo/*.test.mjs` and
+`pnpm --filter @noqueue/e2e check-types`. The runner requires all four chapters,
+coverage events, successful commands/assertions and zero remaining active cycles
+before composition. `verification-public.json` is sanitized for sharing;
+`delivery.json`, raw JSON, screenshots and traces remain local/private.
+This demonstrates the stated branches, **not exhaustive production validation**
+(network loss, service closure, feature-disable races and concurrent operators
+are covered elsewhere, not claimed by this recording).
+
+### Independent recapture without rewriting evidence
+
+`automatic-video.mjs capture <new-directory> <chapter-id> ...` records and verifies
+only the selected chapters (no final video). `assemble <new-delivery-directory>
+<chain-source> <parallel-source> <reception-source> <pool-source>` accepts four
+explicit source directories, checks every selected chapter passed, verifies each
+archived recording harness and identical application fingerprints, then records
+SHA-256 provenance before composing. A failed batch can contribute a separately
+passed chapter, but its failed chapters are never selected or relabelled.
+`compose <delivery-directory>` rechecks this provenance. Always use fresh recording
+and delivery directories; original attempts are immutable.

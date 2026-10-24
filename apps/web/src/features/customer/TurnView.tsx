@@ -4,6 +4,8 @@ import { detectRuntime } from '@/app/bootstrap/runtime'
 import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
 import { visibleWaitingCount, type Entry } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import { Spinner } from '@/components/ui/spinner'
 import { Alert, AlertTitle, AlertDescription } from '@/components/ui/alert'
 import {
   Stepper,
@@ -455,11 +457,15 @@ export function TurnView({
           </div>
         )}
         {called && remaining === 0 && (
-          <p role="status">
-            {es
-              ? 'Comprobando el estado del turno…'
-              : 'Checking your turn status…'}
-          </p>
+          // flex-1 ocupa el espacio libre bajo el cronómetro.
+          // Así el Badge queda centrado en vertical y en horizontal.
+          <div role="status" className="flex flex-1 items-center justify-center">
+            <Badge variant="secondary">
+              {/* aria-hidden: el texto del Badge ya anuncia el estado. */}
+              <Spinner data-icon="inline-start" aria-hidden="true" />
+              {es ? 'Comprobando turno' : 'Checking your turn'}
+            </Badge>
+          </div>
         )}
         {(active && !called && adaptive && entry.delay ||
           yielded && (phase === 'waiting' || approaching) ||

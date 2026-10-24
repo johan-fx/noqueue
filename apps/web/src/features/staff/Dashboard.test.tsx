@@ -707,7 +707,7 @@ it('allows assignment when legacy inventory says unavailable and asks for no pri
   fireEvent.click(await screen.findByRole('button', { name: 'Gestionar turno A1' }))
   fireEvent.click(screen.getByRole('button', { name: 'Asignar próximo turno' }))
   const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
-  expect(within(sheet).getByText(/confirmas que puedes atender/i)).toBeVisible()
+  expect(within(sheet).queryByText(/confirmas que puedes atender/i)).not.toBeInTheDocument()
   expect(within(sheet).queryByLabelText(/motivo de prioridad/i)).not.toBeInTheDocument()
   expect(within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })).toBeEnabled()
   fireEvent.click(within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' }))
@@ -1334,15 +1334,12 @@ it('reuses the exact request after an unknown outcome when refreshed assignment 
   )
   fireEvent.click(screen.getByRole('button', { name: 'Asignar próximo turno' }))
   const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
-  fireEvent.click(
-    within(sheet).getByRole('button', { name: 'Ya está presente' }),
-  )
   expect(within(sheet).queryByLabelText(/motivo de prioridad/i)).not.toBeInTheDocument()
   const confirm = within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })
   fireEvent.click(confirm)
   await waitFor(() => expect(commands).toHaveLength(1))
   await waitFor(() => expect(entryReads).toBeGreaterThan(1))
-  expect(await within(sheet).findByText(/Al asignar confirmas/)).toBeVisible()
+  expect(within(sheet).queryByText(/Al asignar confirmas/)).not.toBeInTheDocument()
   expect(within(sheet).queryByText(/Terraza|Interior/)).not.toBeInTheDocument()
   await waitFor(() => expect(confirm).toBeEnabled())
 
@@ -1352,7 +1349,7 @@ it('reuses the exact request after an unknown outcome when refreshed assignment 
     entryId: 'retry-entry',
     version: 1,
     action: 'call',
-    arrivalMode: 'present',
+    arrivalMode: 'notify',
     assignmentToken: 'first-token',
     seating: { mode: 'unspecified' },
   })
@@ -1469,29 +1466,16 @@ it.each([false, true])(
     )
     fireEvent.click(screen.getByRole('button', { name: 'Asignar próximo turno' }))
     const sheet = await screen.findByRole('dialog', { name: 'Asignar turno' })
-    expect(
-      within(sheet).getByRole('button', { name: 'Ya está presente' }),
-    ).toHaveAttribute('aria-pressed', 'false')
-    expect(
-      within(sheet).getByRole('button', { name: 'Ya está presente' }),
-    ).toHaveAttribute('data-slot', 'button')
+    expect(within(sheet).queryByRole('group', { name: 'Cliente' })).not.toBeInTheDocument()
     const submit = within(sheet).getByRole('button', { name: 'Asignar sin especificar mesa' })
-    const present = within(sheet).getByRole('button', {
-      name: 'Ya está presente',
-    })
-    fireEvent.click(present)
-    expect(present).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(within(sheet).getByRole('button', { name: 'Avisar al cliente' }))
-    expect(present).toHaveAttribute('aria-pressed', 'false')
     if (available) {
       expect(submit).toBeEnabled()
-      fireEvent.click(present)
       fireEvent.click(submit)
       await waitFor(() =>
         expect(api).toHaveBeenCalledWith(
           '/queues/restaurant/commands',
           'POST',
-          expect.objectContaining({ action: 'call', arrivalMode: 'present' }),
+          expect.objectContaining({ action: 'call', arrivalMode: 'notify' }),
           expect.any(String),
         ),
       )
@@ -1752,7 +1736,7 @@ it('does not commit a late entry refresh for a queue that is no longer selected'
   ).not.toBeInTheDocument()
 })
 
-it('returns cancellation Back and Escape focus to the persistent management card', async () => {
+it('returns cancellation close focus to the persistent management card', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [service]
@@ -1794,12 +1778,8 @@ it('returns cancellation Back and Escape focus to the persistent management card
   const confirmation = await screen.findByRole('dialog', {
     name: '¿Confirmas que quieres cancelar el turno?',
   })
-  fireEvent.click(within(confirmation).getByRole('button', { name: '← Volver' }))
-  const reopenedManager = await screen.findByRole('dialog', {
-    name: 'Gestionar turno',
-  })
-  fireEvent.keyDown(reopenedManager, { key: 'Escape' })
-  await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Gestionar turno' })).not.toBeInTheDocument())
+  fireEvent.click(within(confirmation).getByRole('button', { name: 'Cerrar' }))
+  await waitFor(() => expect(screen.queryByRole('dialog', { name: '¿Confirmas que quieres cancelar el turno?' })).not.toBeInTheDocument())
   await waitFor(() => expect(trigger).toHaveFocus())
 })
 
@@ -2428,7 +2408,7 @@ async function openSeatingDashboard() {
   fireEvent.click(screen.getByRole('button', { name: 'Asignar próximo turno' }))
   return screen.findByRole('dialog', { name: 'Asignar turno' })
 }
-it('explains restaurant capacity descent and manual cycle stops before assigning', async () => {
+it('keeps assignment compact without automatic-cycle explanatory copy', async () => {
   vi.mocked(api).mockImplementation(async (path) => {
     if (path.endsWith('/queues'))
       return [
@@ -2450,14 +2430,8 @@ it('explains restaurant capacity descent and manual cycle stops before assigning
     return [seatingEntry]
   })
   const sheet = await openSeatingDashboard()
-  expect(
-    within(sheet).getByText(
-      /Si vence el plazo, cancelaremos este turno y avisaremos automáticamente a un grupo compatible: primero del mismo tamaño \(2 personas\) y después grupos más pequeños hasta una persona; nunca uno mayor/,
-    ),
-  ).toBeVisible()
-  expect(
-    within(sheet).getByText(/Confirmar la llegada o cancelar manualmente pausa solo este ciclo/),
-  ).toBeVisible()
+  expect(within(sheet).queryByText(/Si vence el plazo/)).not.toBeInTheDocument()
+  expect(within(sheet).queryByText(/Confirmar la llegada o cancelar manualmente pausa/)).not.toBeInTheDocument()
   expect(
     within(sheet).queryByText(/te avisaremos aquí para que elijas/),
   ).not.toBeInTheDocument()
@@ -2473,7 +2447,7 @@ it('confirms a larger table and changed space through buttons, and resets on reo
     return [seatingEntry]
   })
   let sheet = await openSeatingDashboard()
-  expect(within(sheet).getByText('Grupo de 2 personas')).toBeVisible()
+  expect(within(sheet).getByLabelText('2 personas')).toBeVisible()
   expect(
     within(sheet).getByRole('button', { name: 'Mesa para 3 personas' }),
   ).toHaveAttribute('aria-pressed', 'true')
@@ -2484,15 +2458,12 @@ it('confirms a larger table and changed space through buttons, and resets on reo
   expect(within(sheet).getByRole('status')).toHaveTextContent(
     'El cliente pidió Interior',
   )
-  fireEvent.click(
-    within(sheet).getByRole('button', { name: 'Ya está presente' }),
-  )
   expect(commands).toHaveLength(0)
   fireEvent.click(within(sheet).getByRole('button', { name: 'Asignar turno' }))
   await waitFor(() =>
     expect(commands).toEqual([
       expect.objectContaining({
-        arrivalMode: 'present',
+        arrivalMode: 'notify',
         seating: { mode: 'confirmed', spaceId: 'outside', seats: 4 },
       }),
     ]),
@@ -2514,8 +2485,8 @@ it('confirms a larger table and changed space through buttons, and resets on reo
     within(sheet).getByRole('button', { name: 'Mesa para 3 personas' }),
   ).toHaveAttribute('aria-pressed', 'true')
   expect(
-    within(sheet).getByRole('button', { name: 'Avisar al cliente' }),
-  ).toHaveAttribute('aria-pressed', 'true')
+    within(sheet).queryByRole('button', { name: 'Avisar al cliente' }),
+  ).not.toBeInTheDocument()
 })
 it('requires a space choice for an ambiguous no-preference party', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
@@ -2561,8 +2532,8 @@ it('freezes and retries the exact confirmed selection after an uncertain result 
   await within(sheet).findByText(/Reintenta la misma acción/)
   await waitFor(() => expect(submit).toBeEnabled())
   expect(
-    within(sheet).getByRole('button', { name: 'Ya está presente' }),
-  ).toBeDisabled()
+    within(sheet).queryByRole('button', { name: 'Ya está presente' }),
+  ).not.toBeInTheDocument()
   fireEvent.click(submit)
   await waitFor(() => expect(commands).toHaveLength(2))
   expect(commands[1]).toEqual(commands[0])
@@ -2840,4 +2811,84 @@ it.each(['restaurant', 'pool', 'reception'] as const)('renders the correct manua
     expect(within(footer as HTMLElement).getByRole('button', { name: 'Asignar próximo turno' })).toBeEnabled()
     expect(within(footer as HTMLElement).queryByRole('status')).not.toBeInTheDocument()
   }
+})
+
+describe('direct assignment from quick-service management', () => {
+  const guest = { id: 'managed-guest', code: 'DIRECT', displayName: 'Cliente directo', status: 'waiting', partySize: 1, version: 2, sequence: 3, calledAt: null, manualOnly: true, assignment: { available: true, spaceName: null, priorityRequired: false, token: 'original-token' } }
+  async function openManager() {
+    render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Empresa', role: 'queue_staff' }} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+    const trigger = await screen.findByRole('button', { name: 'Gestionar turno DIRECT' })
+    fireEvent.click(trigger)
+    const manager = await screen.findByRole('dialog', { name: 'Gestionar turno' })
+    return { trigger, button: within(manager).getByRole('button', { name: 'Asignar próximo turno' }) }
+  }
+  function setup(type: 'pool' | 'reception', automatic: boolean, send: (body: unknown, key: unknown) => Promise<unknown>, current = () => guest) {
+    vi.mocked(api).mockImplementation(async (path, _method, body, key) => {
+      if (path.endsWith('/queues')) return [{ ...service, config: { ...service.config, type, automaticAssignmentEnabled: automatic } }]
+      if (path.includes('/automation')) return { configured: automatic, effective: automatic, activeCycles: 0, serverNow: Date.now(), nextEntry: { id: 'different-head', version: 0 } }
+      if (path.endsWith('/commands')) return send(body, key)
+      if (path.endsWith('/entries')) return [current()]
+      return []
+    })
+  }
+  it.each([['pool', false], ['pool', true], ['reception', false], ['reception', true]] as const)('calls the selected %s entry directly (automatic=%s), not assign_next', async (type, automatic) => {
+    const sends: unknown[] = []
+    let finish!: (value: unknown) => void
+    setup(type, automatic, async body => { sends.push(body); return new Promise(resolve => { finish = resolve }) })
+    const { trigger, button } = await openManager()
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(screen.queryByRole('dialog', { name: 'Asignar turno' })).not.toBeInTheDocument()
+    expect(sends).toEqual([{ action: 'call', entryId: guest.id, version: 2, arrivalMode: 'notify', assignmentToken: 'original-token' }])
+    await act(async () => finish({ ok: true }))
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(screen.queryByRole('dialog', { name: 'Asignar turno' })).not.toBeInTheDocument()
+    expect(sends).toHaveLength(1)
+  })
+  it('opens recovery only on uncertain result and retries the identical body and key after a refresh', async () => {
+    let updated = false
+    const requests: { body: unknown; key: unknown }[] = []
+    setup('reception', true, async (body, key) => {
+      requests.push({ body, key })
+      if (requests.length === 1) { updated = true; throw new TypeError('Network lost') }
+      return { ok: true }
+    }, () => updated ? { ...guest, version: 3, assignment: { ...guest.assignment, token: 'new-token' } } : guest)
+    const { button } = await openManager()
+    fireEvent.click(button)
+    const recovery = await screen.findByRole('dialog', { name: 'Asignar turno' })
+    await within(recovery).findByText(/Reintenta la misma acción/)
+    const retry = within(recovery).getByRole('button', { name: 'Asignar turno' })
+    await waitFor(() => expect(retry).toBeEnabled())
+    fireEvent.click(retry)
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1]).toEqual(requests[0])
+    expect(requests[0]?.body).toMatchObject({ version: 2, assignmentToken: 'original-token' })
+  })
+  it('requires explicit confirmation with fresh version/token/key after a definitive conflict', async () => {
+    let updated = false
+    const requests: { body: unknown; key: unknown }[] = []
+    setup('pool', false, async (body, key) => {
+      requests.push({ body, key })
+      if (requests.length === 1) { updated = true; throw new ApiError(409, 'version_conflict') }
+      return { ok: true }
+    }, () => updated ? { ...guest, version: 3, assignment: { ...guest.assignment, token: 'new-token' } } : guest)
+    fireEvent.click((await openManager()).button)
+    const recovery = await screen.findByRole('dialog', { name: 'Asignar turno' })
+    await within(recovery).findByText(/Datos actualizados/)
+    expect(requests).toHaveLength(1)
+    fireEvent.click(within(recovery).getByRole('button', { name: 'Asignar turno' }))
+    await waitFor(() => expect(requests).toHaveLength(2))
+    expect(requests[1]?.body).toMatchObject({ action: 'call', entryId: guest.id, version: 3, assignmentToken: 'new-token' })
+    expect(requests[1]?.key).not.toBe(requests[0]?.key)
+  })
+  it('shows automatic-conflict feedback instead of retrying an already assigned entry', async () => {
+    const sends: unknown[] = []
+    setup('reception', true, async body => { sends.push(body); throw new ApiError(409, 'Already assigned', 0, 'turn_automatically_assigned') })
+    fireEvent.click((await openManager()).button)
+    const conflict = await screen.findByRole('dialog', { name: 'Turno ya procesado' })
+    expect(within(conflict).queryByRole('button', { name: 'Asignar turno' })).not.toBeInTheDocument()
+    fireEvent.click(within(conflict).getByRole('button', { name: 'Entendido' }))
+    expect(sends).toHaveLength(1)
+  })
 })

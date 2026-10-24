@@ -302,7 +302,6 @@ function DashboardContent(props: DashboardProps) {
   }
   const [arrivalMode, setArrivalMode] = useState<'notify' | 'present'>('notify')
   const [managedEntryId, setManagedEntryId] = useState<string | null>(null)
-  const [returnManageEntryId, setReturnManageEntryId] = useState<string | null>(null)
   const [olderAssignmentWarning, setOlderAssignmentWarning] = useState(false)
   const [automaticConflict, setAutomaticConflict] = useState<
     'processed' | 'assigned' | null
@@ -911,14 +910,20 @@ function DashboardContent(props: DashboardProps) {
           )
         : []
     setOlderAssignmentWarning(olderCompatible.length > 0)
-    setReturnManageEntryId(entry.id)
-    setManagedEntryId(null)
-    setPending({
+    const immediateCall = action === 'call' && queue.config.type !== 'restaurant'
+    if (!immediateCall) setManagedEntryId(null)
+    const snapshot = {
       queueId: queue.id,
       entryId: entry.id,
       action,
       key: crypto.randomUUID(),
-    })
+    }
+    if (immediateCall) {
+      // Quick services have no assignment choices. Send the selected entry's
+      // call (not assign_next), retaining the confirmed-command safety path.
+      setPending(null)
+      void command(snapshot)
+    } else setPending(snapshot)
   }
   function handleEntryAction(entry: StaffEntry, action: EntryCommand['action']) {
     if (action !== 'complete') {
@@ -1013,13 +1018,6 @@ function DashboardContent(props: DashboardProps) {
       })
     }
   }
-  function backToManagedEntry() {
-    setPending(null)
-    setOlderAssignmentWarning(false)
-    setAutomaticConflict(null)
-    setCommandError('')
-    setManagedEntryId(returnManageEntryId)
-  }
   async function directCommand(input: QueueCommand) {
     if (!queue || commandLock.current) return
     const queueId = queue.id
@@ -1072,11 +1070,19 @@ function DashboardContent(props: DashboardProps) {
       )
     }
   }
-  async function command() {
-    const retryRequest = commandUncertain ? commandRequest.current : null
-    if (!pending || commandLock.current || (commandStale && !retryRequest))
+  async function command(initialSnapshot?: NonNullable<typeof pending>) {
+    // React state resets from selectCommand are not visible in this closure.
+    // An immediate call is a new intent, never a retry of the previous sheet.
+    const retryRequest = !initialSnapshot && commandUncertain ? commandRequest.current : null
+    const snapshot = initialSnapshot ?? pending
+    if (!snapshot || commandLock.current || (!initialSnapshot && commandStale && !retryRequest))
       return
-    const snapshot = pending
+    const showRecovery = () => {
+      if (initialSnapshot && selectedRef.current === snapshot.queueId) {
+        setManagedEntryId(null)
+        setPending(snapshot)
+      }
+    }
     const currentEntry = entriesRef.current.find(
       (entry) => entry.id === snapshot.entryId,
     )
@@ -1086,6 +1092,7 @@ function DashboardContent(props: DashboardProps) {
         !currentEntry ||
         !allowsEntryAction(currentEntry, snapshot.queueId, snapshot.action))
     ) {
+      showRecovery()
       setCommandStale(true)
       setCommandError(
         'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.',
@@ -1097,6 +1104,7 @@ function DashboardContent(props: DashboardProps) {
       snapshot.action === 'call' &&
       currentEntry?.assignment?.available === false
     ) {
+      showRecovery()
       setCommandError('El turno ya no permite esta acción. Actualiza la lista.')
       return
     }
@@ -1134,14 +1142,15 @@ function DashboardContent(props: DashboardProps) {
     commandLock.current = true
     setBusy(true)
     setCommandError('')
-    const reason = overrideReason.trim()
+    const reason = initialSnapshot ? '' : overrideReason.trim()
+    const callArrivalMode = initialSnapshot ? 'notify' : arrivalMode
     const input = {
       entryId: currentEntry?.id ?? snapshot.entryId,
       version: currentEntry?.version ?? 0,
       action: snapshot.action,
       ...(snapshot.action === 'call'
         ? {
-            arrivalMode,
+            arrivalMode: callArrivalMode,
             assignmentToken: currentEntry?.assignment?.token,
             ...(selectedSeating ? { seating: selectedSeating } : {}),
           }
@@ -1157,7 +1166,7 @@ function DashboardContent(props: DashboardProps) {
       action: snapshot.action,
       ...(snapshot.action === 'call'
         ? {
-            arrivalMode,
+            arrivalMode: callArrivalMode,
             ...(selectedSeating ? { seating: selectedSeating } : {}),
           }
         : {}),
@@ -1182,6 +1191,7 @@ function DashboardContent(props: DashboardProps) {
       )
       if (selectedRef.current === snapshot.queueId)
         announceCommandResult(result)
+      if (initialSnapshot) setManagedEntryId(null)
       setPending(null)
       setCommandUncertain(false)
       setOlderAssignmentWarning(false)
@@ -1193,9 +1203,17 @@ function DashboardContent(props: DashboardProps) {
       )
       restoreCommandFocus()
     } catch (e) {
+      showRecovery()
       const uncertain = !(e instanceof ApiError) || e.status >= 500
       setCommandUncertain(uncertain)
-      if (!uncertain) commandRequest.current = null
+      if (!uncertain) {
+        commandRequest.current = null
+        // A definitive rejection ends this attempt. A user-confirmed retry
+        // after refresh may carry a new version/token and needs a new key.
+        setPending((current) => current?.key === snapshot.key
+          ? { ...current, key: crypto.randomUUID() }
+          : current)
+      }
       if (selectedRef.current === snapshot.queueId)
         setCommandError(
           uncertain
@@ -1618,7 +1636,6 @@ function DashboardContent(props: DashboardProps) {
             restaurantAssignment={!!restaurantAssignment}
             seatingOptions={seatingOptions}
             seating={seating}
-            arrivalMode={arrivalMode}
             returnFocus={() =>
               commandTrigger.current?.isConnected
                 ? commandTrigger.current
@@ -1640,7 +1657,6 @@ function DashboardContent(props: DashboardProps) {
             }}
             onAction={handleEntryAction}
             onConfirm={() => void command()}
-            onBack={backToManagedEntry}
             onDismissAutomaticConflict={() => {
               setPending(null)
               setAutomaticConflict(null)
@@ -1656,7 +1672,6 @@ function DashboardContent(props: DashboardProps) {
                 '[data-manage-entry]',
               )
               if (candidateTrigger) commandTrigger.current = candidateTrigger
-              setReturnManageEntryId(candidate.id)
               const candidateSeating = defaultAssignmentSeating(
                 pendingQueue.config,
                 candidate,
@@ -1682,7 +1697,6 @@ function DashboardContent(props: DashboardProps) {
               setArrivalMode('notify')
             }}
             onSeatingChange={setSeating}
-            onArrivalModeChange={setArrivalMode}
           />
         </DrawerContent>
       </Drawer>

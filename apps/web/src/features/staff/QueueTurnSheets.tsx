@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type {
   AssignmentSeating,
   EntryCommand,
@@ -16,7 +16,6 @@ import warningIcon from '@/assets/queue-sheet/warning.svg'
 import usersIcon from '@/assets/queue-sheet/users.svg'
 import dotIcon from '@/assets/queue-sheet/dot.svg'
 import assignIcon from '@/assets/queue-sheet/assign.svg'
-import backIcon from '@/assets/queue-sheet/back.svg'
 import arrivalClockIcon from '@/assets/queue-sheet/arrival-clock.svg'
 import closeIcon from '@/assets/queue-sheet/close.svg'
 import { Button } from '@/components/ui/button'
@@ -63,18 +62,76 @@ type QueueTurnSheetsProps = {
   restaurantAssignment: boolean
   seatingOptions: ReturnType<typeof assignmentTableOptions>
   seating: AssignmentSeating | null
-  arrivalMode: 'notify' | 'present'
   returnFocus: () => HTMLElement | null
   onManagedOpenChange: (open: boolean) => void
   onPendingOpenChange: (open: boolean) => void
   onAction: (entry: StaffEntry, action: EntryCommand['action']) => void
   onConfirm: () => void
-  onBack: () => void
   onDismissAutomaticConflict: () => void
   onSelectCandidate: (candidate: StaffEntry) => void
   onSeatingChange: (seating: AssignmentSeating | null) => void
-  onArrivalModeChange: (mode: 'notify' | 'present') => void
 }
+
+// The action, not the automation setting, owns the sheet presentation.
+// Keep the reviewed F01/G03 frame shared so both assignment modes evolve together.
+function TurnSheetFrame({ children, footer, busy, returnFocus, warning = false, hasFooter = true }: {
+  children: ReactNode
+  footer: ReactNode
+  busy: boolean
+  returnFocus: () => HTMLElement | null
+  warning?: boolean
+  hasFooter?: boolean
+}) {
+  return (
+    <SheetContent
+      side="bottom"
+      finalFocus={returnFocus}
+      showCloseButton={false}
+      className="mx-auto max-h-[90dvh] max-w-lg gap-0 overflow-hidden rounded-t-2xl border-t-0 p-0 data-[side=bottom]:border-t-0"
+    >
+      <div className={`min-h-0 overflow-y-auto px-4 pt-6 ${hasFooter ? '' : 'pb-[max(1.5rem,env(safe-area-inset-bottom))]'}`}>{children}</div>
+      {hasFooter && <SheetFooter className={`shrink-0 gap-4 bg-background px-4 ${warning ? 'pt-11' : 'pt-8'} pb-[max(1.5rem,env(safe-area-inset-bottom))]`}>
+        {footer}
+      </SheetFooter>}
+      {!busy && (
+        <SheetClose render={<Button variant="ghost" className="absolute top-6 right-4 size-6 rounded-none border-0 p-0" />}>
+          <img src={closeIcon} alt="" aria-hidden="true" className="shrink-0" />
+          <span className="sr-only">Cerrar</span>
+        </SheetClose>
+      )}
+    </SheetContent>
+  )
+}
+
+function TurnIdentity({ entry, queue }: { entry: StaffEntry; queue?: QueueSummary | undefined }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
+        <p className="min-w-0 break-words text-[22px] font-normal leading-7 tracking-[-0.26px] text-[#111827]" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
+          {entry.displayName || `Turno ${entry.code}`}
+        </p>
+        <p className="shrink-0 text-sm font-medium leading-5 text-[#111827]">
+          <span className="text-[#9ca3af]">Turno: </span>{entry.code}
+        </p>
+      </div>
+      {queue?.config.type === 'restaurant' ? (
+        <div className="flex min-h-5 flex-wrap items-center gap-1 text-xs font-medium leading-none text-[#9ca3af]">
+          <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
+          <span className="px-1" aria-label={`${entry.partySize} personas`}>{entry.partySize}</span>
+          {(entry.assignedSeating?.spaceName || entry.space?.name) && <>
+            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+            <span className="px-1">{entry.assignedSeating?.spaceName || entry.space?.name}</span>
+          </>}
+          {entry.assignedSeating && <span className="sr-only">Mesa para {entry.assignedSeating.seats}</span>}
+        </div>
+      ) : queue?.config.type === 'reception' && entry.receptionService ? (
+        <p className="text-xs leading-5 text-[#9ca3af]">{receptionLabels[entry.receptionService]}</p>
+      ) : null}
+    </div>
+  )
+}
+
+const actionButtonClass = 'h-12 w-full rounded-lg text-sm font-medium'
 
 function ArrivalCountdown({ deadline, clockOffsetMs }: { deadline: number; clockOffsetMs: number }) {
   const [now, setNow] = useState(Date.now)
@@ -128,22 +185,19 @@ export function QueueTurnSheets({
   restaurantAssignment,
   seatingOptions,
   seating,
-  arrivalMode,
   returnFocus,
   onManagedOpenChange,
   onPendingOpenChange,
   onAction,
   onConfirm,
-  onBack,
   onDismissAutomaticConflict,
   onSelectCandidate,
   onSeatingChange,
-  onArrivalModeChange,
 }: QueueTurnSheetsProps) {
   const availableManagedActions = canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status)
     ? managedActions
     : []
-  const compactCalled = canOperate && managedEntry?.status === 'called' && managedEntry.automationCycle?.state !== 'stopped'
+  const compactManagement = canOperate && !!managedEntry && ['waiting', 'called'].includes(managedEntry.status) && managedEntry.automationCycle?.state !== 'stopped'
   const showingOlderWarning = !automaticConflict && olderAssignmentWarning && pending?.action === 'call'
   const hasOlderCapacity = olderCompatibleCandidates.some(
     (candidate) => candidate.partySize !== pendingEntry?.partySize,
@@ -155,46 +209,72 @@ export function QueueTurnSheets({
   return (
     <>
       <Sheet open={managedOpen} onOpenChange={onManagedOpenChange}>
-        <SheetContent
-          side="bottom"
-          finalFocus={returnFocus}
-          showCloseButton={!busy && !compactCalled}
-          className={compactCalled ? "mx-auto max-h-[90dvh] max-w-lg gap-0 overflow-hidden rounded-t-2xl border-t-0 p-0 data-[side=bottom]:border-t-0" : "mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"}
-        >
-          <div className={compactCalled ? "min-h-0 overflow-y-auto px-4 pt-6" : "contents"}>
-          <SheetHeader className={compactCalled ? "gap-0 p-0 pr-8" : "px-0 pr-8"}>
-            <SheetTitle className={compactCalled ? "text-2xl font-medium leading-none text-[#374151]" : "text-2xl"}>{canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status) ? 'Gestionar turno' : 'Detalle del turno'}</SheetTitle>
+        <TurnSheetFrame busy={busy} returnFocus={returnFocus} hasFooter={availableManagedActions.length > 0} footer={<>
+            {managedEntry && availableManagedActions.includes('call') && (
+              <Button
+                className={actionButtonClass}
+                disabled={busy}
+                onClick={() => onAction(managedEntry, 'call')}
+              >
+                Asignar próximo turno
+              </Button>
+            )}
+            {managedEntry && availableManagedActions.includes('complete') && (
+              <Button
+                className={actionButtonClass}
+                disabled={busy}
+                onClick={() => onAction(managedEntry, 'complete')}
+              >
+                Confirmar llegada
+              </Button>
+            )}
+            {managedEntry && !managedIsNext && availableManagedActions.includes('prioritize') && (
+              <Button
+                className={actionButtonClass}
+                variant="outline"
+                disabled={busy}
+                onClick={() => onAction(managedEntry, 'prioritize')}
+              >
+                Priorizar para siguiente turno
+              </Button>
+            )}
+            {managedEntry &&
+              (managedEntry.status === 'called' || managedIsNext) &&
+              availableManagedActions.includes('pass') && (
+              <Button
+                className={actionButtonClass}
+                variant="outline"
+                disabled={busy}
+                onClick={() => onAction(managedEntry, 'pass')}
+              >
+                Pasar turno
+              </Button>
+            )}
+            {managedEntry && availableManagedActions.includes('cancel') && (
+              <Button
+                className={`${actionButtonClass} border-[#b91c1c] text-[#b91c1c] hover:text-[#b91c1c]`}
+                variant="outline"
+                disabled={busy}
+                onClick={() => onAction(managedEntry, 'cancel')}
+              >
+                Cancelar turno
+              </Button>
+            )}
+
+          </>}>
+          <SheetHeader className="gap-2 p-0 pr-8">
+            <SheetTitle className="text-2xl font-medium leading-none text-[#374151]">{canOperate && managedEntry && ['waiting', 'called'].includes(managedEntry.status) ? 'Gestionar turno' : 'Detalle del turno'}</SheetTitle>
             {managedEntry && (
-              <SheetDescription className={compactCalled ? "sr-only" : undefined}>
+              <SheetDescription className={compactManagement ? "sr-only" : "text-sm leading-5 text-[#6b7280]"}>
                 {managedEntry.displayName || `Turno ${managedEntry.code}`} · Turno:{' '}
                 {managedEntry.code}
               </SheetDescription>
             )}
           </SheetHeader>
-          {managedEntry && (compactCalled ? (
+          {managedEntry && (compactManagement ? (
             <div className="mt-6 flex flex-col gap-2">
-              <div className="flex flex-wrap items-end justify-between gap-x-3 gap-y-1">
-                <p className="min-w-0 break-words text-[22px] font-normal leading-7 tracking-[-0.26px] text-[#111827]" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, sans-serif' }}>
-                  {managedEntry.displayName || `Turno ${managedEntry.code}`}
-                </p>
-                <p className="shrink-0 text-sm font-medium leading-5 text-[#111827]">
-                  <span className="text-[#9ca3af]">Turno: </span>{managedEntry.code}
-                </p>
-              </div>
-              {queue?.config.type === 'restaurant' ? (
-                <div className="flex min-h-5 flex-wrap items-center gap-1 text-xs font-medium leading-none text-[#9ca3af]">
-                  <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
-                  <span className="px-1" aria-label={`${managedEntry.partySize} personas`}>{managedEntry.partySize}</span>
-                  {(managedEntry.assignedSeating?.spaceName || managedEntry.space?.name) && <>
-                    <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
-                    <span className="px-1">{managedEntry.assignedSeating?.spaceName || managedEntry.space?.name}</span>
-                  </>}
-                  {managedEntry.assignedSeating && <span className="sr-only">Mesa para {managedEntry.assignedSeating.seats}</span>}
-                </div>
-              ) : queue?.config.type === 'reception' && managedEntry.receptionService ? (
-                <p className="text-xs leading-5 text-[#9ca3af]">{receptionLabels[managedEntry.receptionService]}</p>
-              ) : null}
-              {managedEntry.arrivalDeadlineAt != null && (
+              <TurnIdentity entry={managedEntry} queue={queue} />
+              {managedEntry.status === 'called' && managedEntry.arrivalDeadlineAt != null && (
                 <div className="flex flex-wrap items-center gap-1">
                   <p className="px-1 text-xs font-medium leading-none text-[#9ca3af]">Tiempo para confirmar llegada</p>
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[#fef2f2] px-2 py-0.5 text-xs font-semibold leading-4 text-[#dc2626]">
@@ -206,7 +286,7 @@ export function QueueTurnSheets({
               {managedEntry.automationCycle?.state === 'active' && <p className="sr-only">Ciclo automático · Intento {managedEntry.automationCycle.attempt ?? 1}. Confirmar o cancelar pausa solo este ciclo.</p>}
             </div>
           ) : (
-            <div className="space-y-3 pb-2">
+            <div className="mt-6 space-y-3">
               <QueueCycleDetails entry={managedEntry} canOperate={canOperate} />
               {queue?.config.type === 'restaurant' ? (
                 <p className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -250,88 +330,62 @@ export function QueueTurnSheets({
                 )}
             </div>
           ))}
-          </div>
-          <SheetFooter className={compactCalled ? "shrink-0 gap-4 px-4 pt-8 pb-[max(1.5rem,env(safe-area-inset-bottom))]" : "gap-3 px-0"}>
-            {managedEntry && availableManagedActions.includes('call') && (
-              <Button
-                className={compactCalled ? "h-12 w-full rounded-lg text-sm font-medium" : "h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"}
-                disabled={busy}
-                onClick={() => onAction(managedEntry, 'call')}
-              >
-                Asignar próximo turno
-              </Button>
-            )}
-            {managedEntry && availableManagedActions.includes('complete') && (
-              <Button
-                className={compactCalled ? "h-12 w-full rounded-lg text-sm font-medium" : "h-12 w-full bg-zinc-900 text-white hover:bg-zinc-800"}
-                disabled={busy}
-                onClick={() => onAction(managedEntry, 'complete')}
-              >
-                Confirmar llegada
-              </Button>
-            )}
-            {managedEntry && !managedIsNext && availableManagedActions.includes('prioritize') && (
-              <Button
-                className={`h-12 w-full ${compactCalled ? 'rounded-lg text-sm font-medium' : ''}`}
-                variant="outline"
-                disabled={busy}
-                onClick={() => onAction(managedEntry, 'prioritize')}
-              >
-                Priorizar para siguiente turno
-              </Button>
-            )}
-            {managedEntry &&
-              (managedEntry.status === 'called' || managedIsNext) &&
-              availableManagedActions.includes('pass') && (
-              <Button
-                className={`h-12 w-full ${compactCalled ? 'rounded-lg text-sm font-medium' : ''}`}
-                variant="outline"
-                disabled={busy}
-                onClick={() => onAction(managedEntry, 'pass')}
-              >
-                Pasar turno
-              </Button>
-            )}
-            {managedEntry && availableManagedActions.includes('cancel') && (
-              <Button
-                className={compactCalled ? "h-12 w-full rounded-lg border-[#b91c1c] text-sm font-medium text-[#b91c1c] hover:text-[#b91c1c]" : "h-12 w-full border-destructive text-destructive hover:text-destructive"}
-                variant="outline"
-                disabled={busy}
-                onClick={() => onAction(managedEntry, 'cancel')}
-              >
-                Cancelar turno
-              </Button>
-            )}
-            {!compactCalled && <Button
-              className={`h-12 w-full ${compactCalled ? 'rounded-lg text-sm font-medium' : ''}`}
-              variant="outline"
-              disabled={busy}
-              onClick={() => onManagedOpenChange(false)}
-            >
-              Volver
-            </Button>}
-          </SheetFooter>
-          {compactCalled && !busy && (
-            <SheetClose render={<Button variant="ghost" className="absolute top-6 right-4 size-6 rounded-none border-0 p-0" />}>
-              <img src={closeIcon} alt="" aria-hidden="true" className="shrink-0" />
-              <span className="sr-only">Cerrar</span>
-            </SheetClose>
-          )}
-        </SheetContent>
+        </TurnSheetFrame>
       </Sheet>
 
       <Sheet open={!!pending} onOpenChange={onPendingOpenChange}>
-        <SheetContent
-          side="bottom"
-          finalFocus={returnFocus}
-          showCloseButton={!busy && !showingOlderWarning}
-          className={showingOlderWarning
-            ? "mx-auto max-h-[90dvh] max-w-lg overflow-hidden rounded-t-2xl gap-0 border-t-0 p-0"
-            : "mx-auto max-h-[90dvh] max-w-lg overflow-y-auto rounded-t-xl p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"}
-        >
-          <div className={showingOlderWarning ? "min-h-0 overflow-y-auto px-4 pt-6 space-y-6" : "contents"}>
-          <SheetHeader className={showingOlderWarning ? "gap-2 p-0" : "px-0 pr-8"}>
-            <SheetTitle className={showingOlderWarning ? "pr-8 text-2xl font-medium leading-[1.4] text-[#374151]" : "text-2xl"}>
+        <TurnSheetFrame busy={busy} returnFocus={returnFocus} warning={showingOlderWarning} footer={<>
+            {automaticConflict ? (
+              <Button className={actionButtonClass} onClick={onDismissAutomaticConflict}>
+                Entendido
+              </Button>
+            ) : (
+              <>
+                <Button
+                  className={`${actionButtonClass} ${
+                    pending?.action === 'cancel'
+                      ? 'border-destructive text-destructive hover:text-destructive'
+                      : ''
+                  }`}
+                  variant={pending?.action === 'cancel' ? 'outline' : 'default'}
+                  disabled={
+                    busy ||
+                    (!commandUncertain &&
+                      (commandStale ||
+                        pendingActionUnavailable ||
+                        !validSeating ||
+                        (pending?.action === 'call' &&
+                          pendingEntry?.assignment?.available === false)))
+                  }
+                  onClick={onConfirm}
+                >
+                  {busy
+                    ? 'Guardando…'
+                    : pending?.action === 'cancel'
+                      ? 'Cancelar turno'
+                      : pending?.action === 'call'
+                        ? olderAssignmentWarning
+                          ? 'Confirmar'
+                          : restaurantAssignment &&
+                              !seatingOptions.length &&
+                              !commandUncertain
+                            ? 'Asignar sin especificar mesa'
+                            : 'Asignar turno'
+                        : pending?.action === 'complete'
+                          ? 'Confirmar llegada'
+                          : pending?.action === 'pass'
+                            ? 'Pasar turno'
+                            : pending?.action === 'prioritize'
+                              ? 'Confirmar'
+                              : 'Confirmar'}
+                </Button>
+
+              </>
+            )}
+          </>}>
+          <div className="space-y-6">
+          <SheetHeader className="gap-2 p-0">
+            <SheetTitle className="pr-8 text-2xl font-medium leading-[1.4] text-[#374151]">
               {automaticConflict
                 ? 'Turno ya procesado'
                 : olderAssignmentWarning && pending?.action === 'call'
@@ -346,7 +400,7 @@ export function QueueTurnSheets({
                           ? queueActionLabels[pending.action]
                           : ''}
             </SheetTitle>
-            <SheetDescription className={showingOlderWarning ? "text-sm leading-5 text-[#6b7280]" : undefined}>
+            <SheetDescription className={automaticConflict || showingOlderWarning || ['prioritize', 'pass', 'skip'].includes(pending?.action ?? '') || (['cancel', 'complete'].includes(pending?.action ?? '') && pendingEntry?.automationCycle?.state === 'active') ? "text-sm leading-5 text-[#6b7280]" : "sr-only"}>
               {automaticConflict === 'processed'
                 ? 'El sistema ya ha asignado este turno y ha avisado al siguiente cliente. La cola se actualizará automáticamente.'
                 : automaticConflict === 'assigned'
@@ -358,12 +412,10 @@ export function QueueTurnSheets({
                       : pending?.action === 'pass'
                         ? 'Se pasará este turno y se ofrecerá al siguiente turno compatible.'
                         : pending?.action === 'cancel'
-                          ? 'Se registrará la cancelación con tu identidad.'
+                          ? null
                           : pending?.action === 'skip'
                             ? 'El turno se moverá al final de la lista.'
-                            : pending
-                              ? 'Se registrará esta acción con tu identidad.'
-                              : null}
+                            : pending?.action === 'call' ? queueActionLabels[pending.action] : null}
               {!automaticConflict && pending?.action === 'cancel' &&
                 pendingEntry?.automationCycle?.state === 'active' &&
                 ' La cancelación manual pausará únicamente este ciclo automático y no avisará al siguiente. Para reanudarlo, asigna otro turno manualmente.'}
@@ -373,32 +425,7 @@ export function QueueTurnSheets({
             </SheetDescription>
           </SheetHeader>
 
-          {!showingOlderWarning && <div className="space-y-2 pb-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xl">
-                {pendingEntry?.displayName ||
-                  (pendingEntry ? `Turno ${pendingEntry.code}` : 'Turno')}
-              </p>
-              <p className="text-sm">
-                <span className="text-muted-foreground">Turno: </span>
-                {pendingEntry?.code}
-              </p>
-            </div>
-            {pendingQueue?.config.type === 'restaurant' && pendingEntry && (
-              <p className="flex items-center gap-1 text-xs text-muted-foreground">
-                <UsersIcon className="size-4" aria-hidden="true" />
-                Grupo de {pendingEntry.partySize}{' '}
-                {pendingEntry.partySize === 1 ? 'persona' : 'personas'}
-                {pendingEntry.space ? ` · ${pendingEntry.space.name}` : ''}
-              </p>
-            )}
-            {pendingQueue?.config.type === 'reception' &&
-              pendingEntry?.receptionService && (
-                <p className="text-xs text-muted-foreground">
-                  {receptionLabels[pendingEntry.receptionService]}
-                </p>
-              )}
-          </div>}
+          {!showingOlderWarning && pendingEntry && <TurnIdentity entry={pendingEntry} queue={pending?.action === 'call' && !restaurantAssignment ? undefined : pendingQueue} />}
 
           {!automaticConflict && olderAssignmentWarning &&
             pending?.action === 'call' &&
@@ -448,25 +475,8 @@ export function QueueTurnSheets({
                 'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.'}
             </p>
           )}
-          {!automaticConflict && !showingOlderWarning && pending?.action === 'call' && (
+          {!automaticConflict && !showingOlderWarning && pending?.action === 'call' && restaurantAssignment && (
             <div className="space-y-4">
-              {pendingQueue?.config.automaticAssignmentEnabled &&
-              automationSnapshot?.effective &&
-              arrivalMode === 'notify' ? (
-                <p className="text-sm text-muted-foreground">
-                  {restaurantAssignment
-                    ? seating?.mode === 'confirmed'
-                      ? `Si vence el plazo, cancelaremos este turno y avisaremos automáticamente a un grupo compatible: primero del mismo tamaño (${pendingEntry?.partySize} personas) y después grupos más pequeños hasta una persona; nunca uno mayor. Si no quedan candidatos compatibles, el ciclo quedará pausado y tendrás que iniciar otro con una nueva asignación manual. Confirmar la llegada o cancelar manualmente pausa solo este ciclo.`
-                      : 'Sin espacio y capacidad confirmados, tendrás que asignar el siguiente turno manualmente.'
-                    : 'Si vence el plazo, cancelaremos este turno y avisaremos automáticamente al siguiente candidato compatible. Confirmar la llegada o cancelar manualmente pausa solo este ciclo.'}
-                </p>
-              ) : (
-                <p>
-                  Al asignar confirmas que puedes atender este turno.
-                  {arrivalMode === 'notify' &&
-                    ' El cliente tendrá el plazo configurado para presentarse.'}
-                </p>
-              )}
               {restaurantAssignment && pendingQueue && pendingEntry && (
                 <AssignmentOptions
                   config={pendingQueue.config}
@@ -476,92 +486,12 @@ export function QueueTurnSheets({
                   disabled={busy || commandUncertain}
                 />
               )}
-              <div role="group" aria-label="Cliente" className="space-y-1">
-                <p className="text-sm font-medium">Cliente</p>
-                <div className="flex flex-wrap gap-1">
-                  {(['notify', 'present'] as const).map((mode) => (
-                    <Button
-                      key={mode}
-                      type="button"
-                      className="min-h-11 min-w-11 rounded-full"
-                      variant={arrivalMode === mode ? 'default' : 'ghost'}
-                      aria-pressed={arrivalMode === mode}
-                      disabled={busy || commandUncertain}
-                      onClick={() => onArrivalModeChange(mode)}
-                    >
-                      {mode === 'notify' ? 'Avisar al cliente' : 'Ya está presente'}
-                    </Button>
-                  ))}
-                </div>
-              </div>
+
             </div>
           )}
 
           </div>
-          <SheetFooter className={showingOlderWarning ? "shrink-0 gap-4 bg-background px-4 pt-11 pb-[max(1.5rem,env(safe-area-inset-bottom))]" : "gap-3 px-0"}>
-            {automaticConflict ? (
-              <Button className="h-12 w-full" onClick={onDismissAutomaticConflict}>
-                Entendido
-              </Button>
-            ) : (
-              <>
-                <Button
-                  className={`h-12 w-full ${showingOlderWarning ? 'rounded-lg text-sm font-medium' : ''} ${
-                    pending?.action === 'cancel'
-                      ? 'border-destructive text-destructive hover:text-destructive'
-                      : ''
-                  }`}
-                  variant={pending?.action === 'cancel' ? 'outline' : 'default'}
-                  disabled={
-                    busy ||
-                    (!commandUncertain &&
-                      (commandStale ||
-                        pendingActionUnavailable ||
-                        !validSeating ||
-                        (pending?.action === 'call' &&
-                          pendingEntry?.assignment?.available === false)))
-                  }
-                  onClick={onConfirm}
-                >
-                  {busy
-                    ? 'Guardando…'
-                    : pending?.action === 'cancel'
-                      ? 'Cancelar turno'
-                      : pending?.action === 'call'
-                        ? olderAssignmentWarning
-                          ? 'Confirmar'
-                          : restaurantAssignment &&
-                              !seatingOptions.length &&
-                              !commandUncertain
-                            ? 'Asignar sin especificar mesa'
-                            : 'Asignar turno'
-                        : pending?.action === 'complete'
-                          ? 'Confirmar llegada'
-                          : pending?.action === 'pass'
-                            ? 'Pasar turno'
-                            : pending?.action === 'prioritize'
-                              ? 'Confirmar'
-                              : 'Confirmar'}
-                </Button>
-                <Button
-                  className={`h-12 w-full ${showingOlderWarning ? 'gap-2 rounded-lg text-sm font-medium' : ''}`}
-                  variant="outline"
-                  disabled={busy}
-                  onClick={onBack}
-                >
-                  {showingOlderWarning && <img src={backIcon} alt="" aria-hidden="true" className="shrink-0" />}
-                  {pending?.action === 'cancel' ? '← Volver' : 'Volver'}
-                </Button>
-              </>
-            )}
-          </SheetFooter>
-          {showingOlderWarning && !busy && (
-            <SheetClose render={<Button variant="ghost" className="absolute top-6 right-4 size-6 rounded-none border-0 p-0" />}>
-              <img src={closeIcon} alt="" aria-hidden="true" className="shrink-0" />
-              <span className="sr-only">Cerrar</span>
-            </SheetClose>
-          )}
-        </SheetContent>
+        </TurnSheetFrame>
       </Sheet>
     </>
   )

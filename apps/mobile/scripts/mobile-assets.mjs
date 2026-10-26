@@ -89,14 +89,38 @@ async function compositeMark(svg, width, height, options) {
   const background = await makeCanvas(width, height, options.background);
   const mark = await renderMark(svg, options.color, options.markWidth, options.markHeight);
   const markInfo = await sharp(mark).metadata();
+  const left = Math.max(0, Math.round((width - markInfo.width) / 2));
+  const top = Math.max(0, Math.round((height - markInfo.height) / 2));
+  if (options.background !== 'transparent') return compositeOpaqueMark(background, mark, left, top);
   return sharp(background)
     .composite([{
       input: mark,
-      left: Math.max(0, Math.round((width - markInfo.width) / 2)),
-      top: Math.max(0, Math.round((height - markInfo.height) / 2)),
+      left,
+      top,
     }])
     .png(PNG_OPTIONS)
     .toBuffer();
+}
+
+// Native floating-point source-over differs by one color level on ARM/macOS
+// and x64/Linux. Integer arithmetic keeps checked-in opaque assets byte-exact
+// across both platforms, without tolerances or changing the vector sources.
+export async function compositeOpaqueMark(background, mark, left, top) {
+  const base = await sharp(background).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const foreground = await sharp(mark).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  for (let i = 3; i < base.data.length; i += 4) {
+    if (base.data[i] !== 255) throw new Error('Opaque composition requires an opaque background');
+  }
+  for (let y = 0; y < foreground.info.height; y++) for (let x = 0; x < foreground.info.width; x++) {
+    const source = (y * foreground.info.width + x) * 4;
+    const target = ((top + y) * base.info.width + left + x) * 4;
+    const alpha = foreground.data[source + 3];
+    for (let channel = 0; channel < 3; channel++) {
+      base.data[target + channel] = Math.floor((foreground.data[source + channel] * alpha +
+        base.data[target + channel] * (255 - alpha) + 127) / 255);
+    }
+  }
+  return sharp(base.data, { raw: { width: base.info.width, height: base.info.height, channels: 4 } }).png(PNG_OPTIONS).toBuffer();
 }
 
 function toAndroidAdaptiveXml(includeMonochrome) {

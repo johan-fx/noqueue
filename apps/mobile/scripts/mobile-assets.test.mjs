@@ -5,7 +5,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import sharp from 'sharp';
-import { buildAssetOutputs } from './mobile-assets.mjs';
+import { buildAssetOutputs, compositeOpaqueMark } from './mobile-assets.mjs';
 
 const APP_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const { outputs, staleFiles } = await buildAssetOutputs();
@@ -107,6 +107,16 @@ test('notification mark is a white alpha mask and launch-only styling preserves 
   assert.match(styles, /<style name=\"AppTheme.NoActionBar\"/);
   assert.match(styles, /<item name=\"android:windowBackground\">#FFFFFF<\/item>/, 'regular app surface remains unchanged');
   assert.match(styles, /<style name=\"AppTheme.NoActionBarLaunch\"/);
+});
+
+test('opaque composition uses exact integer source-over with transparent, partial and opaque pixels', async () => {
+  const background = await sharp({ create: { width: 5, height: 1, channels: 4, background: { r: 200, g: 150, b: 100, alpha: 1 } } }).png().toBuffer();
+  const mark = await sharp(Buffer.from([10, 20, 30, 0, 10, 20, 30, 128, 10, 20, 30, 255]), { raw: { width: 3, height: 1, channels: 4 } }).png().toBuffer();
+  const result = await compositeOpaqueMark(background, mark, 1, 0);
+  assert.deepEqual([...await sharp(result).raw().toBuffer()], [
+    200, 150, 100, 255, 200, 150, 100, 255, 105, 85, 65, 255, 10, 20, 30, 255, 200, 150, 100, 255,
+  ]);
+  await assert.rejects(compositeOpaqueMark(mark, mark, 0, 0), /opaque background/);
 });
 
 test('generator is deterministic and obsolete splash/logo resources are absent', async () => {

@@ -17,6 +17,11 @@ export function wranglerConfigs(api, landing, profile, directory) {
   // This binding is installed as a secret during cutover, never an empty var override.
   delete worker.env.production.vars.D360DIALOG_PHONE_NUMBER_ID
   worker.main = resolve(root, 'apps/api', worker.main)
+  // Wrangler resolves file aliases relative to the copied config, not main.
+  // Rebase only relative files; package and node: aliases keep their semantics.
+  if (worker.alias) worker.alias = Object.fromEntries(Object.entries(worker.alias).map(([name, target]) => [
+    name, target.startsWith('./') || target.startsWith('../') ? resolve(root, 'apps/api', target) : target,
+  ]))
   worker.assets.directory = resolve(directory, 'web')
   for (const env of [worker, ...Object.values(worker.env)])
     for (const db of env.d1_databases ?? []) db.migrations_dir = resolve(root, 'apps/api', db.migrations_dir)

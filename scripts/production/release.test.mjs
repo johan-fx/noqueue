@@ -34,6 +34,26 @@ test('profiles default OFF and reject ambiguous enablement or path input', () =>
   for (const whatsapp of ['true', '', 'staging']) assert.throws(() => releaseProfile({ whatsapp }))
   for (const id of ['', '../valid-release', '/tmp/release', 'x/../../release']) assert.throws(() => releaseDirectory(id))
 })
+test('relocated Worker config rebases file aliases without changing package aliases or source config', async () => {
+  const source = structuredClone(config)
+  source.alias = {
+    ...source.alias,
+    'parent-file': '../shared/runtime.ts',
+    'absolute-file': resolve(root, 'apps/api/src/auth/async-hooks.workerd.ts'),
+    'package-alias': 'replacement-package',
+    'builtin-alias': 'node:async_hooks',
+  }
+  const before = structuredClone(source)
+  const { worker } = wranglerConfigs(source, landing, releaseProfile(), '/tmp/noqueue-relocated-release')
+  const authAlias = worker.alias['@better-auth/core/async_hooks']
+  assert.equal(authAlias, resolve(root, 'apps/api/src/auth/async-hooks.workerd.ts'))
+  assert.ok((await stat(authAlias)).isFile())
+  assert.equal(worker.alias['parent-file'], resolve(root, 'apps/shared/runtime.ts'))
+  assert.equal(worker.alias['absolute-file'], source.alias['absolute-file'])
+  assert.equal(worker.alias['package-alias'], 'replacement-package')
+  assert.equal(worker.alias['builtin-alias'], 'node:async_hooks')
+  assert.deepEqual(source, before)
+})
 test('landing guard rejects domain, account, preview and executable-code drift', () => {
   assertLandingConfig(landing)
   for (const change of [{ workers_dev: true }, { preview_urls: true }, { name: 'other' }, { account_id: 'other' }, { main: 'unreviewed.js' }, { routes: [] }])

@@ -18,6 +18,11 @@ delete config.env
 delete config.triggers
 config.name = 'noqueue-e2e-local-only'
 config.main = path.join(root, 'test/e2e-worker.ts')
+// The generated config lives under .wrangler/e2e-runs, not the API root.
+// Keep local module aliases rooted at the original config (package aliases stay as-is).
+config.alias = Object.fromEntries(Object.entries(config.alias ?? {}).map(
+  ([name, target]) => [name, target.startsWith('.') ? path.resolve(root, target) : target],
+))
 config.assets.directory = path.resolve(root, config.assets.directory)
 config.d1_databases[0].migrations_dir = path.join(root, 'migrations')
 config.vars = {

@@ -9,7 +9,7 @@ import {
   waitFor,
 } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import type { QueueSummary, StaffRole } from '@noqueue/contracts/staff'
+import type { QueueSummary, StaffEntry, StaffRole } from '@noqueue/contracts/staff'
 import { Dashboard } from './Dashboard'
 import { api, ApiError } from './api'
 
@@ -2516,7 +2516,7 @@ it('confirms a larger table and changed space through buttons, and resets on reo
     within(sheet).queryByRole('button', { name: 'Avisar al cliente' }),
   ).not.toBeInTheDocument()
 })
-it('requires a space choice for an ambiguous no-preference party', async () => {
+it('preselects the best fit for a no-preference party without blocking submission', async () => {
   vi.mocked(api).mockImplementation(async (path) =>
     path.endsWith('/queues')
       ? [seatingService]
@@ -2524,10 +2524,71 @@ it('requires a space choice for an ambiguous no-preference party', async () => {
   )
   const sheet = await openSeatingDashboard()
   const submit = within(sheet).getByRole('button', { name: 'Asignar turno' })
-  expect(submit).toBeDisabled()
+  expect(submit).toBeEnabled()
+  expect(within(sheet).getByRole('button', { name: 'Interior' })).toHaveAttribute('aria-pressed', 'true')
+  expect(within(sheet).getByRole('button', { name: 'Mesa para 3 personas' })).toHaveAttribute('aria-pressed', 'true')
   fireEvent.click(within(sheet).getByRole('button', { name: 'Terraza' }))
   expect(submit).toBeEnabled()
 })
+describe('older restaurant warning with automatic seating', () => {
+  for (const automatic of [false, true]) {
+    it.each([4, 1, 3])(`confirms only the chosen party of %s (automatic=${automatic})`, async (partySize) => {
+      const queue: QueueSummary = {
+        ...seatingService,
+        config: {
+          ...seatingService.config,
+          automaticAssignmentEnabled: automatic,
+          spaces: [
+            { id: 'inside', name: 'Interior', tables: 1, tableTypes: [{ seats: 6, count: 1 }] },
+            { id: 'outside', name: 'Terraza', tables: 3, tableTypes: [1, 3, 4].map((seats) => ({ seats, count: 1 })) },
+          ],
+        },
+      }
+      const entries: StaffEntry[] = [1, 3, 4].map((size, index) => ({
+        id: `party-${size}`, code: `P${size}`, displayName: `Grupo de ${size}`,
+        partySize: size, status: 'waiting', sequence: index + 1, version: 0,
+        calledAt: null, preferredSpaceId: 'fastest', waitingSince: 1000 + index,
+        assignment: { available: true, token: `token-${size}`, priorityRequired: false, spaceName: null },
+      }))
+      const commands: unknown[] = []
+      vi.mocked(api).mockImplementation(async (path, _method, body) => {
+        if (path.endsWith('/queues')) return [queue]
+        if (path.endsWith('/entries')) return entries
+        if (path.includes('/automation')) return { configured: automatic, effective: automatic, activeCycles: 0, serverNow: Date.now(), events: [] }
+        if (path.endsWith('/commands')) { commands.push(body); return { ok: true } }
+        return []
+      })
+      render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Empresa', role: 'queue_staff' }} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Gestionar turno P4' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Asignar próximo turno' }))
+      let sheet = await screen.findByRole('dialog', { name: 'Hay turnos esperando desde antes' })
+      expect(within(sheet).getByText('Terraza · Mesa para 4')).toBeVisible()
+      expect(within(sheet).queryByRole('group', { name: 'Espacio' })).not.toBeInTheDocument()
+      expect(within(sheet).queryByRole('group', { name: 'Mesa para' })).not.toBeInTheDocument()
+      expect(within(sheet).getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+      if (partySize !== 4) {
+        const row = within(sheet).getByText(`Grupo de ${partySize}`).closest('li')!
+        fireEvent.click(within(row).getByRole('button', { name: 'Asignar' }))
+        sheet = await screen.findByRole('dialog', { name: partySize === 1 ? 'Asignar turno' : 'Hay turnos esperando desde antes' })
+        if (partySize === 3) expect(within(sheet).getByText('Terraza · Mesa para 3')).toBeVisible()
+      }
+      expect(commands).toHaveLength(0)
+      const confirm = within(sheet).getByRole('button', { name: partySize === 1 ? 'Asignar turno' : 'Confirmar' })
+      expect(confirm).toBeEnabled()
+      fireEvent.click(confirm)
+      await waitFor(() => expect(commands).toHaveLength(1))
+      expect(commands[0]).toMatchObject({
+        action: 'call', entryId: `party-${partySize}`, version: 0,
+        assignmentToken: `token-${partySize}`, arrivalMode: 'notify',
+        seating: { mode: 'confirmed', spaceId: 'outside', seats: partySize },
+      })
+      await waitFor(() => expect(sheet).not.toBeInTheDocument())
+      expect(commands).toHaveLength(1)
+    })
+  }
+})
+
 it('freezes and retries the exact confirmed selection after an uncertain result even if the catalogue changes', async () => {
   let updated = false
   const commands: { body: unknown; key: unknown }[] = []

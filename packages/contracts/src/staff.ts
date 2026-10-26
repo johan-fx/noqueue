@@ -561,9 +561,13 @@ export function defaultAssignmentSeating(
 ): AssignmentSeating | null {
   const options = assignmentTableOptions(config, party.partySize)
   if (!options.length) return { mode: 'unspecified' }
+  // Prefer the customer's compatible space. Otherwise choose the smallest
+  // fitting capacity across spaces, preserving catalogue order on ties.
   const space =
     options.find((option) => option.spaceId === party.preferredSpaceId) ??
-    (options.length === 1 ? options[0] : undefined)
+    options.reduce((best, option) =>
+      option.seats[0]! < best.seats[0]! ? option : best,
+    )
   return space
     ? { mode: 'confirmed', spaceId: space.spaceId, seats: space.seats[0]! }
     : null

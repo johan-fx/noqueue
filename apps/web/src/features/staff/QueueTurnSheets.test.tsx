@@ -13,7 +13,7 @@ function props(overrides: Partial<ComponentProps<typeof QueueTurnSheets>> = {}):
   return { queue, automationSnapshot: null, managedOpen: false, managedActions: [], managedIsNext: false, pending: { queueId: 'q', entryId: entry.id, action: 'call', key: 'intent' }, pendingQueue: queue, pendingEntry: entry, busy: false, commandUncertain: false, commandStale: false, pendingActionUnavailable: false, validSeating: true, olderAssignmentWarning: true, olderCompatibleCandidates: [candidate], automaticConflict: null, commandError: '', restaurantAssignment: true, seatingOptions: [{ spaceId: 'i', name: 'Interior', seats: [4, 6] }], seating: { mode: 'confirmed', spaceId: 'i', seats: 4 }, returnFocus: () => null, onManagedOpenChange: vi.fn(), onPendingOpenChange: vi.fn(), onAction: vi.fn(), onConfirm: vi.fn(), onDismissAutomaticConflict: vi.fn(), onSelectCandidate: vi.fn(), onSeatingChange: vi.fn(), ...overrides }
 }
 describe('compact older assignment warning', () => {
-  it('uses shadcn Alert, separates candidates and hides duplicated identity/options', () => {
+  it('uses shadcn Alert, separates candidates and summarizes seating without selectors', () => {
     render(<QueueTurnSheets {...props()} />)
     const alert = screen.getByRole('alert')
     expect(alert).toHaveAttribute('data-slot', 'alert')
@@ -23,6 +23,9 @@ describe('compact older assignment warning', () => {
     expect(screen.queryByText('María García')).not.toBeInTheDocument()
     expect(screen.queryByText('A024')).not.toBeInTheDocument()
     expect(screen.queryByRole('group', { name: 'Mesa para' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Espacio' })).not.toBeInTheDocument()
+    expect(screen.getByText('Interior · Mesa para 4')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
     expect(screen.queryByRole('group', { name: 'Cliente' })).not.toBeInTheDocument()
     expect(screen.queryByText(/Si vence el plazo/)).not.toBeInTheDocument()
     expect(screen.getByText('4 personas')).toHaveClass('font-semibold')
@@ -56,11 +59,45 @@ describe('compact older assignment warning', () => {
     expect(screen.getByRole('button', { name: 'Confirmar' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Cerrar' })).toBeEnabled()
   })
+  it('offers explicit automatic reselection if the pending seating needs review', () => {
+    const p = props({ validSeating: false, seating: null })
+    render(<QueueTurnSheets {...p} />)
+    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeDisabled()
+    expect(p.onSeatingChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar asignación' }))
+    expect(p.onSeatingChange).toHaveBeenCalledWith({ mode: 'confirmed', spaceId: 'i', seats: 4 })
+    expect(p.onConfirm).not.toHaveBeenCalled()
+  })
   it('keeps uncertain retries enabled and candidate changes disabled', () => {
     render(<QueueTurnSheets {...props({ commandUncertain: true, commandStale: true, commandError: 'Reintenta la misma acción.' })} />)
     expect(screen.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
     expect(screen.getByRole('button', { name: 'Asignar' })).toBeDisabled()
     expect(screen.getByText('Reintenta la misma acción.')).toBeVisible()
+  })
+  it('never replaces seating during an uncertain retry, even after catalogue changes', () => {
+    const p = props({ commandUncertain: true, validSeating: false, seatingOptions: [], commandError: 'Reintenta la misma acción.' })
+    render(<QueueTurnSheets {...p} />)
+    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Asignar' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Revisar asignación' })).not.toBeInTheDocument()
+    expect(p.onSeatingChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Confirmar' }))
+    expect(p.onConfirm).toHaveBeenCalledOnce()
+  })
+  it('can explicitly reselect from a changed catalogue without showing selectors', () => {
+    const updated = { ...queue, config: { ...queue.config, spaces: [{ id: 'new', name: 'Terraza', tables: 1, tableTypes: [{ seats: 6, count: 1 }] }] } }
+    const p = props({ pendingQueue: updated, validSeating: false, seatingOptions: [{ spaceId: 'new', name: 'Terraza', seats: [6] }] })
+    const view = render(<QueueTurnSheets {...p} />)
+    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeDisabled()
+    expect(p.onSeatingChange).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Revisar asignación' }))
+    expect(p.onSeatingChange).toHaveBeenCalledWith({ mode: 'confirmed', spaceId: 'new', seats: 6 })
+    view.rerender(<QueueTurnSheets {...p} validSeating={true} seating={{ mode: 'confirmed', spaceId: 'new', seats: 6 }} />)
+    expect(screen.getByText('Terraza · Mesa para 6')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Confirmar' })).toBeEnabled()
+    expect(screen.queryByRole('group', { name: 'Espacio' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('group', { name: 'Mesa para' })).not.toBeInTheDocument()
+    expect(p.onConfirm).not.toHaveBeenCalled()
   })
   it('keeps ordinary assignment identity and selectors', () => {
     render(<QueueTurnSheets {...props({ olderAssignmentWarning: false })} />)

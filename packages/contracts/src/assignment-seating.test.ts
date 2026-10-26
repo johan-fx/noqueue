@@ -32,7 +32,7 @@ describe('assignment catalogue context', () => {
     expect(assignmentTableOptions(config, 4)[0]?.seats).toEqual([4])
     expect(assignmentTableOptions(config, 5)).toEqual([])
   })
-  it('defaults to preference, only unambiguous space or explicit exception', () => {
+  it('defaults to a compatible preference, best fit or explicit exception', () => {
     expect(
       defaultAssignmentSeating(config, {
         partySize: 2,
@@ -42,7 +42,7 @@ describe('assignment catalogue context', () => {
     for (const preferredSpaceId of [undefined, 'fastest', 'removed'])
       expect(
         defaultAssignmentSeating(config, { partySize: 2, preferredSpaceId }),
-      ).toBeNull()
+      ).toEqual({ mode: 'confirmed', spaceId: 'room', seats: 3 })
     expect(
       defaultAssignmentSeating(
         { ...config, spaces: config.spaces.slice(0, 1) },
@@ -58,6 +58,27 @@ describe('assignment catalogue context', () => {
         { partySize: 2 },
       ),
     ).toEqual({ mode: 'unspecified' })
+  })
+  it('prefers the smallest fitting capacity globally and keeps catalogue order on ties', () => {
+    const largerFirst = {
+      ...config,
+      spaces: [
+        { ...config.spaces[0]!, tableTypes: [{ seats: 6, count: 1 }] },
+        config.spaces[1]!,
+      ],
+    }
+    expect(defaultAssignmentSeating(largerFirst, { partySize: 4 })).toEqual({
+      mode: 'confirmed', spaceId: 'terrace', seats: 4,
+    })
+    expect(defaultAssignmentSeating(largerFirst, { partySize: 4, preferredSpaceId: 'room' })).toEqual({
+      mode: 'confirmed', spaceId: 'room', seats: 6,
+    })
+    expect(defaultAssignmentSeating(config, { partySize: 4 })).toEqual({
+      mode: 'confirmed', spaceId: 'room', seats: 4,
+    })
+    expect(defaultAssignmentSeating({ ...config, spaces: [...config.spaces].reverse() }, { partySize: 4 })).toEqual({
+      mode: 'confirmed', spaceId: 'terrace', seats: 4,
+    })
   })
   it('accepts old calls but rejects incomplete, ambiguous and non-call seating', () => {
     const command = {

@@ -6,7 +6,7 @@ import type {
   QueueSummary,
   StaffEntry,
 } from '@noqueue/contracts/staff'
-import { assignmentTableOptions } from '@noqueue/contracts/staff'
+import { assignmentTableOptions, defaultAssignmentSeating } from '@noqueue/contracts/staff'
 import { UsersIcon } from 'lucide-react'
 import { QueueCycleDetails } from './QueueCycleDetails'
 import { AssignmentOptions } from './AssignmentOptions'
@@ -442,30 +442,36 @@ export function QueueTurnSheets({
                 </Alert>
                 <ul aria-label="Turnos compatibles anteriores" className="space-y-6">
                   {olderCompatibleCandidates.map((candidate) => (
-                    <li key={candidate.id} className="min-w-0">
-                      <p className="truncate text-sm font-medium leading-5 text-[#111827]">
-                        {candidate.displayName || `Turno ${candidate.code}`}
-                      </p>
-                      <div className="flex flex-wrap items-center justify-between gap-x-2">
-                        <div className="flex min-w-0 items-center gap-1 text-xs font-medium leading-none text-[#9ca3af]">
-                          <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
-                          <span className="px-1" aria-label={`${candidate.partySize} personas`}>{candidate.partySize}</span>
-                          <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
-                          <span className="max-w-24 truncate px-1">{candidate.assignment?.spaceName || candidate.space?.name || 'Espacio compatible'}</span>
-                          <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
-                          <span className="px-1">
-                            <WaitingAge since={candidate.waitingSince} clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0} />
+                    <li key={candidate.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+                      <div className="min-w-0">
+                        <p className="break-words text-sm font-medium leading-5 text-[#111827]">
+                          {candidate.displayName || `Turno ${candidate.code}`}
+                        </p>
+                        <div className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-xs font-medium leading-4 text-[#9ca3af]">
+                          <span className="inline-flex shrink-0 items-center gap-1">
+                            <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
+                            <span className="px-1" aria-label={`${candidate.partySize} personas`}>{candidate.partySize}</span>
+                          </span>
+                          <span className="inline-flex min-w-0 items-center gap-1">
+                            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+                            <span className="min-w-0 break-words px-1">{candidate.assignment?.spaceName || candidate.space?.name || 'Espacio compatible'}</span>
+                          </span>
+                          <span className="inline-flex items-center gap-1">
+                            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+                            <span className="break-words px-1">
+                              <WaitingAge since={candidate.waitingSince} clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0} />
+                            </span>
                           </span>
                         </div>
-                        <Button
-                          className="h-9 shrink-0 gap-2 rounded-lg px-4 text-sm font-medium"
-                          variant="ghost"
-                          disabled={busy || commandUncertain}
-                          onClick={() => onSelectCandidate(candidate)}
-                        >
-                          Asignar <img src={assignIcon} alt="" aria-hidden="true" className="shrink-0" />
-                        </Button>
                       </div>
+                      <Button
+                        className="h-9 shrink-0 gap-2 self-center whitespace-nowrap rounded-lg px-4 text-sm font-medium"
+                        variant="ghost"
+                        disabled={busy || commandUncertain}
+                        onClick={() => onSelectCandidate(candidate)}
+                      >
+                        Asignar <img src={assignIcon} alt="" aria-hidden="true" className="shrink-0" />
+                      </Button>
                     </li>
                   ))}
                 </ul>
@@ -478,9 +484,35 @@ export function QueueTurnSheets({
                 'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.'}
             </p>
           )}
-          {!automaticConflict && !showingOlderWarning && pending?.action === 'call' && restaurantAssignment && (
+          {!automaticConflict && pending?.action === 'call' && restaurantAssignment && (
             <div className="space-y-4">
               {restaurantAssignment && pendingQueue && pendingEntry && (
+                showingOlderWarning ? (
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">Asignación seleccionada</p>
+                    <p className="text-sm text-muted-foreground">
+                      {seating?.mode === 'confirmed'
+                        ? `${seatingOptions.find((space) => space.spaceId === seating.spaceId)?.name ?? 'Espacio no disponible'} · Mesa para ${seating.seats}`
+                        : !seatingOptions.length
+                          ? 'Sin especificar mesa'
+                          : 'Pendiente de revisar la asignación'}
+                    </p>
+                    {!validSeating && !commandUncertain && (
+                      <>
+                        <p role="alert" className="text-sm text-destructive">
+                          Las opciones han cambiado. Revisa la asignación antes de confirmar.
+                        </p>
+                        <Button
+                          variant="outline"
+                          disabled={busy}
+                          onClick={() => onSeatingChange(defaultAssignmentSeating(pendingQueue.config, pendingEntry))}
+                        >
+                          Revisar asignación
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                ) : (
                 <AssignmentOptions
                   config={pendingQueue.config}
                   party={pendingEntry}
@@ -488,6 +520,7 @@ export function QueueTurnSheets({
                   onChange={onSeatingChange}
                   disabled={busy || commandUncertain}
                 />
+                )
               )}
 
             </div>

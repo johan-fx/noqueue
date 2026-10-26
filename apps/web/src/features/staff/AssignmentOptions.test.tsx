@@ -86,12 +86,11 @@ it('uses single-choice accessible buttons and separates table size from party si
     screen.getByRole('button', { name: 'Mesa para 4 personas' }),
   ).toHaveAttribute('aria-pressed', 'true')
 })
-it('requires a space when ambiguous and proposes a fitting capacity on explicit space change', () => {
+it('starts with the best fit and still allows an explicit space change outside the warning', () => {
   render(<Harness party={{ partySize: 2 }} />)
   expect(
-    screen.getByText('Elige el espacio para ver las capacidades.'),
-  ).toBeVisible()
-  fireEvent.click(screen.getByRole('button', { name: 'Interior' }))
+    screen.getByRole('button', { name: 'Interior' }),
+  ).toHaveAttribute('aria-pressed', 'true')
   expect(
     screen.getByRole('button', { name: 'Mesa para 3 personas' }),
   ).toHaveAttribute('aria-pressed', 'true')

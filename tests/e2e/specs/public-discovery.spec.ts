@@ -105,7 +105,7 @@ async function catalogue(request: APIRequestContext, origin: string) {
   ).toBeTruthy()
   return { venueId, queues, suffix }
 }
-test('anonymous home, exact service discovery, location consent, filtered return and responsive visuals', async ({
+test('anonymous home, exact service discovery, location consent, return home and responsive visuals', async ({
   page,
   request,
   baseURL,
@@ -252,8 +252,8 @@ test('anonymous home, exact service discovery, location consent, filtered return
     animations: 'disabled',
   })
   const searchUrl = page.url()
-  // Keep this small fixture scrollable to verify restoration without extra services.
-  const scrollFixtureStyle = await page.addStyleTag({
+  // Leave from a scrolled search to exercise the explicit home return.
+  await page.addStyleTag({
     content: 'main { padding-bottom: 1000px !important; }',
   })
   await page.evaluate(() => window.scrollTo({ top: 160, behavior: 'instant' }))
@@ -261,11 +261,11 @@ test('anonymous home, exact service discovery, location consent, filtered return
   await page.getByRole('link', { name: /Restaurante Miramar Playa/ }).click()
   await expect(page).toHaveURL(/\/q\//)
   await page.getByRole('link', { name: 'Volver' }).click()
-  await expect(page).toHaveURL(searchUrl)
-  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(160)
-  await scrollFixtureStyle.evaluate((element) =>
-    element.parentNode?.removeChild(element),
-  )
+  await expect(page).toHaveURL(`${baseURL}/?lang=es`)
+  await expect(page.getByRole('heading', { name: '¿Dónde quieres unirte a la lista de espera?' })).toBeVisible()
+  // Back intentionally goes home, not to the prior filtered search. The search
+  // URL still restores its explicit filters when opened again.
+  await page.goto(searchUrl)
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await expect(
     page.getByRole('button', { name: 'Restaurantes' }),

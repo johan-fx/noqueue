@@ -25,7 +25,7 @@ async function assertWhatsAppConsentGate(page: Page) {
   await expect(joinButton).toBeEnabled()
 }
 
-test('customer joins from the venue, recovers, edits, yields and cancels against the real API', async ({
+test('customer follows a legacy venue link, joins directly, recovers, edits, yields and cancels against the real API', async ({
   page,
   request,
   browser,
@@ -78,11 +78,12 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
       )
       expect(response.ok()).toBeTruthy()
     }
-    await client.goto(`/v/${t.venueId}`)
-    await expect(
-      client.getByText('4 turnos en lista de espera'),
-    ).toBeVisible()
-    await client.getByRole('link', { name: /Restaurant/ }).click()
+    await client.goto(`/v/${t.venueId}?lang=es`)
+    await expect(client).toHaveURL(`${baseURL}/?lang=es`)
+    await expect(client.getByRole('heading', { name: '¿Dónde quieres unirte a la lista de espera?' })).toBeVisible()
+    const publicService = await (await guest.request.get(`/api/v1/public/services/${t.queue}`)).json()
+    expect(publicService).toMatchObject({ waitingTurns: 4, waitingPeople: 16 })
+    await client.goto(`/q/${t.queue}?lang=es`)
     await client.getByLabel('Nombre', { exact: true }).fill('María Cliente')
     await assertWhatsAppConsentGate(client)
     await client.getByRole('button', { name: 'Ponerme en lista' }).click()
@@ -166,12 +167,12 @@ test('customer joins from the venue, recovers, edits, yields and cancels against
     ).json()) as Entry
     expect(snapshot.status).toBe('cancelled')
     await client
-      .getByRole('link', { name: 'Seleccionar lista de espera' })
+      .getByRole('link', { name: 'Volver al inicio' })
       .click()
-    await expect(client).toHaveURL(new RegExp(`/v/${t.venueId}`))
+    await expect(client).toHaveURL(`${baseURL}/?lang=es`)
     await selectCustomerLanguage(client, 'en')
     await expect(
-      client.getByRole('heading', { name: /Welcome to/ }),
+      client.getByRole('heading', { name: 'Where would you like to join the waiting list?' }),
     ).toBeVisible()
   } finally {
     await guest.close()
@@ -290,38 +291,6 @@ test.describe('visual customer states', () => {
       },
       {
         method: 'GET',
-        path: '/api/v1/public/venues/venue/services',
-        expectedHits: { min: 1 },
-        respond: () => ({
-          json: {
-          id: 'venue',
-          name: 'Hotel Miramar',
-          services: [
-            { ...service, waitingPeople: 6, waitingTurns: 2, averageWaitMinutes: 30 },
-            {
-              ...service,
-              id: 'reception',
-              name: 'Recepción',
-              type: 'reception',
-              waitingPeople: 4,
-              waitingTurns: 2,
-              averageWaitMinutes: 8,
-            },
-            {
-              ...service,
-              id: 'pool',
-              name: 'Bar Piscina',
-              type: 'pool',
-              waitingPeople: 5,
-              waitingTurns: 5,
-              averageWaitMinutes: 20,
-            },
-          ],
-          },
-        }),
-      },
-      {
-        method: 'GET',
         path: `/api/v1/public/entries/${token}`,
         expectedHits: { min: 1 },
         respond: () =>
@@ -381,9 +350,11 @@ test.describe('visual customer states', () => {
         contentType: 'image/png',
       })
     }
-    await page.goto('/v/venue')
-    await expect(page.getByText('2 turnos en lista de espera')).toHaveCount(2)
-    await capture('selector')
+    await page.goto('/v/venue?lang=es')
+    await expect(page).toHaveURL(/\/\?lang=es$/)
+    await expect(page.getByRole('heading', { name: '¿Dónde quieres unirte a la lista de espera?' })).toBeVisible()
+    await expect(page.getByTestId('public-waiting-turns')).toHaveCount(0)
+    await capture('legacy-venue-redirect')
     await page.goto('/q/restaurant')
     await page.getByLabel('Nombre', { exact: true }).fill('María López')
     for (let i = 0; i < 3; i++)

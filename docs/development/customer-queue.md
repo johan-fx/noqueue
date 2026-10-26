@@ -1,6 +1,6 @@
 # Public restaurant waiting list
 
-Guests use `/v/:venueId` to choose a real service, `/q/:queueId` to join, and a private `/t/:recoveryToken` link to recover their turn. Restaurant forms and turn states live in the customer feature; reception, pool, and demo flows keep their existing forms.
+Guests discover services at `/` or `/search`, use `/q/:queueId` to join, and a private `/t/:recoveryToken` link to recover their turn. Legacy `/v/:venueId` URLs redirect to discovery home while preserving a valid language. Back from joining or a finished turn also goes home, not to the deprecated venue selector or the previous search. The legacy venue API and `PublicVenue` component remain covered separately; end-to-end tests exercise the active routes. Restaurant forms and turn states live in the customer feature; reception, pool, and demo flows keep their existing forms.
 
 ## Confirmed staff seating (current queue-only model)
 

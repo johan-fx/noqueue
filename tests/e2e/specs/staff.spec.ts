@@ -627,6 +627,9 @@ test('owner can assign from the queue without releasing inventory and arrival fi
   browser,
   baseURL,
 }, testInfo) => {
+  // Two real polling intervals, provisioning, both clients and teardown can
+  // exceed 30s on Linux WebKit even when every assertion succeeds.
+  test.setTimeout(60000)
   const { queue, venueId } = await setupQueue(page, request, baseURL!, 'restaurant')
   const initialContextResponse = await page.request.get(
     '/api/v1/staff/queues/' + queue + '/opening-context',

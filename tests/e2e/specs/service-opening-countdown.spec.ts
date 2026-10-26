@@ -3,7 +3,7 @@ import { fixture, type QueueOpeningContext } from '../demo/fixtures.js'
 import type { PublicService } from '../../../packages/contracts/src/queue.js'
 
 test.use({ serviceWorkers: 'block' })
-test('scheduled closed countdown appears only in venue selection and refreshes from real admission', async ({
+test('scheduled closed metadata survives legacy venue redirects and discovery refreshes from real admission', async ({
   page,
   request,
   browser,
@@ -98,33 +98,17 @@ test('scheduled closed countdown appears only in venue selection and refreshes f
       await expect(client.getByTestId('closed-service-card')).toHaveCount(0)
     }
     await client.goto(`/v/${f.venueId}?lang=es`)
-    const card = client.getByRole('article', { name: 'Restaurante' })
-    await expect(card).toBeVisible()
-    await expect(card).toHaveAttribute('aria-disabled', 'true')
-    await expect(
-      card.getByText(`Abre a las ${detail.nextOpening!.localTime}h`),
-    ).toBeVisible()
-    await expect(
-      card.getByText(/Podrás apuntarte en \d{2,}:\d{2}:\d{2}/),
-    ).toBeVisible()
-    const countdown = card.getByText(/Podrás apuntarte en/)
-    const initialCountdown = await countdown.textContent()
-    await expect.poll(() => countdown.textContent()).not.toBe(initialCountdown)
-    await expect(
-      card.locator('a, .lucide-arrow-right, .lucide-ticket'),
-    ).toHaveCount(0)
-    expect((await card.boundingBox())?.width).toBe(358)
-    expect((await card.boundingBox())?.height).toBe(108)
-    expect((await card.locator('.lucide-clock').boundingBox())?.width).toBe(16)
-    await client.screenshot({
-      path: info.outputPath('closed-countdown-selection.png'),
-      fullPage: true,
-    })
-    await card.screenshot({
-      path: info.outputPath('closed-countdown-card.png'),
-    })
+    // The scheduled-opening projection remains available to legacy API clients,
+    // but /v no longer renders the deprecated venue selector/countdown card.
+    await expect(client).toHaveURL(`${baseURL}/?lang=es`)
+    await expect(client.getByTestId('closed-service-card')).toHaveCount(0)
+    await expect(client.getByText('No hay servicios disponibles.', { exact: true })).toBeVisible()
+    await client.screenshot({ path: info.outputPath('closed-legacy-redirect.png'), fullPage: true })
     await configure(false)
-    await expect(card).toHaveCount(0)
+    await expect.poll(async () => {
+      const current = await (await guest.request.get(`/api/v1/public/venues/${f.venueId}/services`)).json()
+      return current.services.length
+    }).toBe(0)
     await expect(
       client.getByText('No hay servicios disponibles.', { exact: true }),
     ).toBeVisible()
@@ -143,9 +127,11 @@ test('scheduled closed countdown appears only in venue selection and refreshes f
     await expect(
       client.getByRole('link', { name: /Restaurante/ }),
     ).toBeVisible()
-    await expect(client.getByTestId('public-waiting-turns')).toHaveText(
-      '1 turno en lista de espera',
-    )
+    await expect(client.getByTestId('public-waiting-turns')).toHaveCount(0)
+    await expect(client.getByTestId('closed-service-card')).toHaveCount(0)
+    const opened = await (await guest.request.get(`/api/v1/public/services/${f.queue}`)).json()
+    expect(opened).toMatchObject({ serviceOpen: true, queueState: 'active', canJoin: true, waitingTurns: 0 })
+    expect(opened.nextOpening).toBeNull()
     await client.screenshot({
       path: info.outputPath('opened-active-selection.png'),
       fullPage: true,

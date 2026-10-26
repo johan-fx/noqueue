@@ -18,6 +18,7 @@ export type FieldIssue = { path: string; message: string }
 
 function translated(path: string, message: string) {
   if (copy[message]) return copy[message]
+  if (message.includes('received NaN')) return 'Introduce un número válido'
   if (path === 'name') return 'Escribe un nombre de al menos 2 caracteres'
   return message
 }

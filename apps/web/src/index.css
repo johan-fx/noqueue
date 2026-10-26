@@ -34,6 +34,19 @@ html[data-android-status-bar='true']::view-transition-old(noqueue-status-bar) {
   html[data-native-viewport='true'] :is(input, textarea, select) {
     font-size: max(16px, 1em) !important;
   }
+
+  /* Safari on iOS also zooms browser forms below 16px. Do not disable
+     user scaling in the viewport: keep pinch zoom available. */
+  @supports (-webkit-touch-callout: none) {
+    :is(input, textarea, select) {
+      font-size: max(16px, 1em) !important;
+    }
+    /* iOS native time appearance miscalculates padded 100% widths.
+       Only normalize the field box; retain the native picker and indicator. */
+    input[type='time'][data-slot='input'] {
+      appearance: none;
+    }
+  }
 }
 
 html {

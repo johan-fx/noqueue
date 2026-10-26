@@ -13,6 +13,7 @@ import {
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { NumberInput } from '@/components/ui/number-input'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { receptionLabels } from './queue-labels'
@@ -100,14 +101,13 @@ export function QueueEntryForm({
             <FieldLabel htmlFor={`${id}-size`}>
               {locale === 'es' ? 'Número de personas' : 'Number of guests'}
             </FieldLabel>
-            <Input
+            <NumberInput
               id={`${id}-size`}
-              type="number"
               min={1}
               max={20}
               required
               value={partySize}
-              onChange={(event) => setPartySize(event.target.valueAsNumber)}
+              onValueChange={setPartySize}
             />
           </Field>
         )}

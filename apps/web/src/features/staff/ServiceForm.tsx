@@ -8,6 +8,7 @@ import {
 } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
+import { TimeInput } from '@/components/shadcn-studio/date-picker/date-picker-09'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel, FieldError } from '@/components/ui/field'
 import {
@@ -216,16 +217,23 @@ export function ServiceForm({
                     />
                   )}
                 />
-                <Input
-                  aria-label={`Desde ${i + 1}`}
-                  type="time"
-                  {...form.register(`schedules.${i}.from`)}
-                />
-                <Input
-                  aria-label={`Hasta ${i + 1}`}
-                  type="time"
-                  {...form.register(`schedules.${i}.to`)}
-                />
+                {(['from', 'to'] as const).map((edge) => (
+                  <Controller
+                    key={edge}
+                    control={form.control}
+                    name={`schedules.${i}.${edge}`}
+                    render={({ field }) => (
+                      <TimeInput
+                        {...field}
+                        id={`${prefix}schedule-${i}-${edge}`}
+                        label={`${edge === 'from' ? 'Desde' : 'Hasta'} ${i + 1}`}
+                        value={field.value ?? ''}
+                        hideLabel
+                        showClock={false}
+                      />
+                    )}
+                  />
+                ))}
                 <Button
                   type="button"
                   variant="outline"

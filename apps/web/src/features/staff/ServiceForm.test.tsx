@@ -57,3 +57,15 @@ describe('service forms use RHF + Zod', () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledOnce())
   })
 })
+
+it('keeps RHF bindings when editing shared time inputs', async () => {
+  const onSave = vi.fn()
+  render(<ServiceForm onSave={onSave} />)
+  fireEvent.change(screen.getByLabelText('Nombre del servicio'), { target: { value: 'Snack bar' } })
+  fireEvent.change(screen.getByLabelText('Desde 1'), { target: { value: '13:15' } })
+  fireEvent.change(screen.getByLabelText('Hasta 1'), { target: { value: '22:30' } })
+  fireEvent.blur(screen.getByLabelText('Hasta 1'))
+  fireEvent.click(screen.getByRole('button', { name: 'Añadir servicio' }))
+  await waitFor(() => expect(onSave).toHaveBeenCalled())
+  expect(onSave.mock.calls[0]?.[0].schedules[0]).toMatchObject({ from: '13:15', to: '22:30' })
+})

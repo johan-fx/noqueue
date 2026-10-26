@@ -20,7 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Field, FieldLabel } from '@/components/ui/field'
-import { Input } from '@/components/ui/input'
+import { TimeInput } from '@/components/shadcn-studio/date-picker/date-picker-09'
 import { Switch } from '@/components/ui/switch'
 import { api, errorMessage } from './api'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
@@ -449,41 +449,26 @@ function ReminderDrawer({
             <>
               {calendar.allDayDays.length > 0 && (
                 <Field>
-                  <FieldLabel htmlFor="reminder-daily">Hora diaria</FieldLabel>
-                  <Input
+                  <TimeInput
+                    label="Hora diaria"
                     id="reminder-daily"
-                    type="time"
                     disabled={busy}
                     value={dailyAt}
-                    onChange={(e) => setDailyAt(e.target.value)}
+                    onChange={setDailyAt}
                   />
                 </Field>
               )}
               {schedules.map((s, i) => (
                 <Field key={`${s.day}:${s.from}:${s.to}`}>
-                  <FieldLabel htmlFor={`reminder-${i}`}>
-                    {
-                      [
-                        'Domingo',
-                        'Lunes',
-                        'Martes',
-                        'Miércoles',
-                        'Jueves',
-                        'Viernes',
-                        'Sábado',
-                      ][s.day]
-                    }{' '}
-                    · {s.from}–{s.to}
-                  </FieldLabel>
-                  <Input
+                  <TimeInput
+                    label={`${['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'][s.day]} · ${s.from}–${s.to}`}
                     id={`reminder-${i}`}
-                    type="time"
                     disabled={busy}
                     value={times[i] ?? ''}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setTimes(
                         times.map((time, j) =>
-                          j === i ? e.target.value : time,
+                          j === i ? value : time,
                         ),
                       )
                     }

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { DrawerFooter } from '@/components/ui/drawer'
 import { PhoneInput } from '@/components/ui/phone-input'
+import { NumberInput } from '@/components/ui/number-input'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Switch } from '@/components/ui/switch'
@@ -180,20 +181,19 @@ export function ManualQueueEntryForm({
                     className="size-11 rounded-xl"
                     disabled={partySize <= 1}
                     aria-label={copy.fewer}
-                    onClick={() => setPartySize((size) => size - 1)}
+                    onClick={() => setPartySize((size) => Number.isFinite(size) ? Math.max(1, size - 1) : 1)}
                   >
                     <Minus aria-hidden="true" />
                   </Button>
-                  <Input
+                  <NumberInput
                     id={`${id}-size`}
                     aria-label={copy.dinerCount}
-                    type="number"
                     min={1}
                     max={20}
                     required
                     value={partySize}
                     className="h-11 w-12 appearance-none bg-transparent px-0 text-center font-medium [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                    onChange={(e) => setPartySize(e.target.valueAsNumber)}
+                    onValueChange={setPartySize}
                   />
                   <Button
                     type="button"
@@ -201,7 +201,7 @@ export function ManualQueueEntryForm({
                     className="size-11 rounded-xl"
                     disabled={partySize >= 20}
                     aria-label={copy.more}
-                    onClick={() => setPartySize((size) => size + 1)}
+                    onClick={() => setPartySize((size) => Number.isFinite(size) ? Math.min(20, size + 1) : 1)}
                   >
                     <Plus aria-hidden="true" />
                   </Button>

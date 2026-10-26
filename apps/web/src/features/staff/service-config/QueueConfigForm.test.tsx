@@ -261,3 +261,18 @@ it('leaves automatic assignment to the queue step', () => {
     expect.not.objectContaining({ automaticAssignmentEnabled: false }),
   )
 })
+
+it('keeps cleared group minutes blank and rejects saving the empty draft', () => {
+  const confirm = vi.fn()
+  render(<QueueConfigForm spaces={[{ id: 'main', name: 'Interior', tables: 1, tableTypes: [{ seats: 4, count: 1, averageMinutes: 30 }] }]} averageMinutes={30} saved={undefined} onConfirm={confirm} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Mesas de 4' }))
+  const input = screen.getByLabelText('Interior · 4 plazas (min)')
+  fireEvent.change(input, { target: { value: '' } })
+  fireEvent.blur(input)
+  expect(input).toHaveValue(null)
+  fireEvent.submit(input.closest('form')!)
+  expect(confirm).not.toHaveBeenCalled()
+  fireEvent.change(input, { target: { value: '45' } })
+  fireEvent.submit(input.closest('form')!)
+  expect(confirm).toHaveBeenCalledWith(expect.arrayContaining([expect.objectContaining({ tableTypes: [expect.objectContaining({ averageMinutes: 45 })] })]), expect.any(Object))
+})

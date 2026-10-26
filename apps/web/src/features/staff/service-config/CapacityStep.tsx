@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { DrawerTrigger } from '@/components/ui/drawer'
+import { NumberInput } from '@/components/ui/number-input'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import { seatLabel } from './model'
@@ -84,15 +85,14 @@ export function CapacityStep({
             <FieldLabel htmlFor={`tables-${index}`}>
               Nº total de {seats} disponibles
             </FieldLabel>
-            <Input
+            <NumberInput
               id={`tables-${index}`}
-              type="number"
               min={1}
               value={space.tables}
-              onChange={(event) => {
+              onValueChange={(tables) => {
                 const spaces = form.getValues('spaces')
                 // A hand-edited total no longer matches the saved breakdown.
-                const next = { ...spaces[index]!, tables: Number(event.target.value) }
+                const next = { ...spaces[index]!, tables }
                 delete next.tableTypes
                 spaces[index] = next
                 form.setValue('spaces', spaces, { shouldValidate: true })

@@ -4,6 +4,7 @@ import {
   defaultGraceMinutes,
   type ServiceInput,
 } from '@noqueue/contracts/staff'
+import { NumberInput } from '@/components/ui/number-input'
 import { Input } from '@/components/ui/input'
 import { Field, FieldError, FieldLabel } from '@/components/ui/field'
 import {
@@ -247,18 +248,17 @@ export function QueueConfigForm({
                         >
                           Intervalo inicial estimado entre turnos (min)
                         </FieldLabel>
-                        <Input
+                        <NumberInput
                           id={`group-time-${index}-${group.seats}`}
                           aria-label={`${space.name} · ${group.seats} plazas (min)`}
-                          type="number"
                           required
                           min={1}
                           max={1440}
                           value={group.averageMinutes}
-                          onChange={(event) =>
+                          onValueChange={(minutes) =>
                             form.setValue(
                               `spaces.${index}.tableTypes.${groupIndex}.averageMinutes`,
-                              Number(event.target.value),
+                              minutes,
                             )
                           }
                         />

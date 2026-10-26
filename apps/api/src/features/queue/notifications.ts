@@ -1,3 +1,4 @@
+import { whatsappEligibleSql } from './whatsapp-suppression'
 import { deliveryTraceStatement, purgeDeliveryTrace } from './delivery-trace'
 import { confirmEntry, confirmationExperimentEnabled } from './confirmation'
 import { queueCoordinator, openExperimentRecipientAllowed } from './experiment'
@@ -120,9 +121,8 @@ export async function dispatchNotificationSerialized(
   env: CloudflareBindings,
   id: string,
 ) {
-  if (env.WHATSAPP_ENABLED !== 'true') return
   const pendingJoin = await env.DB.prepare(
-    'SELECT n.status,n.kind,n.payload_version,n.payload_snapshot,e.queue_id FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE n.id=?',
+    'SELECT n.status,n.kind,n.payload_version,n.payload_snapshot,e.queue_id,e.whatsapp_suppressed FROM notification_outbox n JOIN queue_entry e ON e.id=n.entry_id WHERE n.id=?',
   )
     .bind(id)
     .first<{
@@ -131,7 +131,15 @@ export async function dispatchNotificationSerialized(
       payload_version: number
       payload_snapshot: string | null
       queue_id: string
+      whatsapp_suppressed: number
     }>()
+  // Durable suppression survives flag changes. Never rewrite accepted/uncertain outcomes.
+  if (pendingJoin?.whatsapp_suppressed === 1) {
+    await env.DB.prepare("UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE id=? AND status='pending'")
+      .bind(Date.now(), id).run()
+    return
+  }
+  if (env.WHATSAPP_ENABLED !== 'true') return
   if (
     pendingJoin?.status === 'pending' &&
     pendingJoin.kind === 'queue_joined' &&
@@ -610,7 +618,7 @@ export async function dispatchNotificationSerialized(
   const now = Date.now()
   const claim = actionResult
     ? await env.DB.prepare(
-        `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=?
+        `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=? AND ${whatsappEligibleSql('notification_outbox.entry_id')}
          AND EXISTS(SELECT 1 FROM webhook_event w JOIN notification_outbox n ON n.provider_id=w.context_id
            WHERE w.id=? AND w.kind='action' AND w.context_id=? AND w.phone_hash=?
              AND w.occurred_at=? AND w.processed_at IS NOT NULL
@@ -632,7 +640,7 @@ export async function dispatchNotificationSerialized(
         )
         .run()
     : await env.DB.prepare(
-        `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=?
+        `UPDATE notification_outbox SET status='sending',attempts=attempts+1,updated_at=? WHERE id=? AND status='pending' AND attempts<3 AND next_attempt_at<=? AND ${whatsappEligibleSql('notification_outbox.entry_id')}
     AND EXISTS(SELECT 1 FROM consent WHERE entry_id=notification_outbox.entry_id AND revoked_at IS NULL AND purpose=CASE notification_outbox.kind WHEN 'confirmation' THEN 'confirmation_contact' ELSE 'queue_updates' END)
     AND NOT EXISTS(SELECT 1 FROM queue_entry e JOIN queue_entry_contact p ON p.entry_id=e.id JOIN whatsapp_contact_state w ON w.phone_hash=p.phone_hash WHERE e.id=notification_outbox.entry_id AND e.queue_id='confirmation-experiment' AND w.stopped_at IS NOT NULL)
     AND (notification_outbox.kind!='position_update' OR EXISTS(SELECT 1 FROM queue_entry_contact p JOIN whatsapp_contact_state w ON w.phone_hash=p.phone_hash WHERE p.entry_id=notification_outbox.entry_id AND w.stopped_at IS NULL AND w.last_inbound_at>?))
@@ -961,6 +969,8 @@ export async function reconcile(env: CloudflareBindings) {
   const now = Date.now()
   await purgeDeliveryTrace(env, now)
   await env.DB.batch([
+    env.DB.prepare(`UPDATE notification_outbox SET status='cancelled',updated_at=? WHERE status='pending' AND EXISTS(SELECT 1 FROM queue_entry e WHERE e.id=notification_outbox.entry_id AND e.whatsapp_suppressed=1)`)
+      .bind(now),
     env.DB.prepare(
       "INSERT OR IGNORE INTO notification_trace(id,notification_id,event,attempt,recorded_at) SELECT id || ':unknown:' || attempts,id,'unknown',attempts,? FROM notification_outbox WHERE status='sending' AND updated_at<?",
     ).bind(now, now - 120000),
@@ -969,7 +979,7 @@ export async function reconcile(env: CloudflareBindings) {
     ).bind(now, now - 120000),
   ])
   const notifications = await env.DB.prepare(
-    "SELECT id FROM notification_outbox WHERE status='pending' AND next_attempt_at<=? ORDER BY updated_at LIMIT 100",
+    `SELECT id FROM notification_outbox WHERE status='pending' AND next_attempt_at<=? AND ${whatsappEligibleSql('notification_outbox.entry_id')} ORDER BY updated_at LIMIT 100`,
   )
     .bind(now)
     .all<{ id: string }>()

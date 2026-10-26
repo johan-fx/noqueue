@@ -1,3 +1,4 @@
+import { stagingSilentAdmission } from './whatsapp-suppression'
 import { mobileActiveConflict, isMobileActiveConstraint } from '../mobile/active-turn'
 import { configuredCustomerWork, customerEstimate } from './customer-estimate'
 import {
@@ -267,6 +268,7 @@ export function publicWhatsappAdmissionError(
   if (!contact.consent) return 'whatsapp_consent_required'
   if (contact.version !== publicServiceConsentVersion)
     return 'whatsapp_consent_version_required'
+  if (stagingSilentAdmission(env)) return null
   if (!whatsappAdmissionReady(env, locale)) return 'whatsapp_unavailable'
   if (!recipientAllowed(env, contact.phone)) return 'recipient_not_allowed'
   return null
@@ -283,6 +285,7 @@ export async function joinQueue(
   installationHash?: string,
 ) {
   const mobile = source === 'mobile-app'
+  const whatsappSuppressed = !experiment && stagingSilentAdmission(env)
   if (mobile && (actor || experiment || input.whatsapp.consent || !installationHash || !/^[a-f0-9]{64}$/.test(installationHash)))
     return { status: 400, body: { error: 'invalid_mobile_join' } }
   // No collision/replay across web, staff or anonymous installations.
@@ -354,9 +357,9 @@ export async function joinQueue(
   if (actor && manualJoinRequiresWhatsapp(env)) {
     if (!input.whatsapp.consent)
       return { status: 400, body: { error: 'whatsapp_consent_required' } }
-    if (env.WHATSAPP_ENABLED !== 'true')
+    if (!whatsappSuppressed && env.WHATSAPP_ENABLED !== 'true')
       return { status: 503, body: { error: 'whatsapp_unavailable' } }
-    if ((isOpenStagingV4(env) || env.APP_ENV === 'production') && !whatsappAdmissionReady(env, input.locale))
+    if (!whatsappSuppressed && (isOpenStagingV4(env) || env.APP_ENV === 'production') && !whatsappAdmissionReady(env, input.locale))
       return { status: 503, body: { error: 'whatsapp_unavailable' } }
   }
   if (
@@ -413,6 +416,7 @@ export async function joinQueue(
   if (!queue) return { status: 404, body: { error: 'queue_not_found' } }
   if (
     !experiment &&
+    !whatsappSuppressed &&
     input.whatsapp.consent &&
     selectedCopyVersion !== 2 &&
     !queue.config &&
@@ -540,7 +544,7 @@ export async function joinQueue(
   ).join('')
   const statements = [
     env.DB.prepare(
-      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,display_name_cipher,reception_service,preferred_space_id,service_window_id,service_ends_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      `INSERT INTO queue_entry(id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,created_at,sequence,display_name_cipher,reception_service,preferred_space_id,service_window_id,service_ends_at,whatsapp_suppressed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
     ).bind(
       id,
       queueId,
@@ -559,6 +563,7 @@ export async function joinQueue(
       input.preferredSpaceId ?? null,
       snapshot?.windowId ?? null,
       snapshot?.endsAt ?? null,
+      Number(whatsappSuppressed),
     ),
     env.DB.prepare('INSERT INTO queue_event VALUES (?,?,?,?)').bind(
       crypto.randomUUID(),
@@ -597,6 +602,8 @@ export async function joinQueue(
         experiment ? 'confirmation-experiment-v1' : input.whatsapp.version,
         now,
       ),
+    )
+    if (!whatsappSuppressed) statements.push(
       !experiment && selectedCopyVersion !== 2 && !queue.config
         ? unavailableCopyStatement(
             env,
@@ -695,7 +702,7 @@ export async function joinQueue(
   // Maintenance can become due while admission commits; run it before the response.
   await maintainQueue(env, queueId)
   // Publishing is best-effort only after the durable transaction. The scheduled sweep repairs this gap.
-  if (input.whatsapp.consent && env.WHATSAPP_ENABLED === 'true') {
+  if (!whatsappSuppressed && input.whatsapp.consent && env.WHATSAPP_ENABLED === 'true') {
     try {
       await env.NOTIFICATIONS.send({
         kind: 'dispatch-notification',

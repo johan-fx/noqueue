@@ -1,4 +1,5 @@
 interface CloudflareBindings {
+  STAGING_ALLOW_JOIN_WITHOUT_WHATSAPP?: string
   MOBILE_PUSH_ENABLED?: string
   MOBILE_PUSH_TOKEN_KEY?: string
   APNS_KEY_ID?: string

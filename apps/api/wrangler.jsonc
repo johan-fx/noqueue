@@ -176,6 +176,7 @@
         "QUEUE_AUTO_REPLACEMENT_ENABLED": "false",
         "WHATSAPP_MODE": "cloud",
         "WHATSAPP_ENABLED": "false",
+        "STAGING_ALLOW_JOIN_WITHOUT_WHATSAPP": "true",
         "CONFIRMATION_EXPERIMENT_ENABLED": "false",
         "STAGING_EXPERIMENT_APPROVED": "false",
         "STAGING_EXPERIMENT_OPEN_RECIPIENTS": "false",

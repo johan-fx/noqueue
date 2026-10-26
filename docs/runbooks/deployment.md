@@ -1,5 +1,10 @@
 # Deploy the current application to staging
 
+For backend-only testing while staging has no 360Dialog service, use the separate
+[silent-admission rollout](staging-silent-admission.md). That opt-in mode keeps
+WhatsApp off and requires its additive migration; it does not activate this
+runbook's real-WhatsApp rollout or change the frontend.
+
 Deploy the web assets and API together with **cloud V4 enabled** at `https://staging.noqueue-app.com`. Staging accepts valid consenting test recipients without an allowlist or an internal template-approval toggle. The operator checks provider approval before creating new turns; approval does not require another deploy. This runbook is a procedure, not evidence that the current source has been deployed or delivered messages.
 
 ## Current rollout

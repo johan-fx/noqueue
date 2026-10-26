@@ -1,3 +1,4 @@
+import { whatsappEligibleSql } from './whatsapp-suppression'
 import { copyVersion } from '../../integrations/whatsapp-copy-v3'
 import type { LifecycleV4Variant } from '../../integrations/whatsapp-copy-v4'
 import type { WhatsAppActionPhase } from './whatsapp-actions'
@@ -183,7 +184,7 @@ export function unavailableCopyStatement(
     selected === null ? 'invalid_copy_profile' : 'configured_service_required'
   console.warn({ event: 'whatsapp_copy_profile_unavailable', reason })
   return env.DB.prepare(
-    "INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,status,updated_at,payload_version,payload_snapshot,revision,call_cycle) SELECT ?,?,?,?,'failed',?,2,?,?,? WHERE EXISTS(SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL)",
+    `INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,status,updated_at,payload_version,payload_snapshot,revision,call_cycle) SELECT ?,?,?,?,'failed',?,2,?,?,? WHERE EXISTS(SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL AND ${whatsappEligibleSql('consent.entry_id')})`,
   ).bind(
     id,
     entryId,
@@ -231,7 +232,7 @@ export function noticeStatement(
     )
   if (snapshot)
     return env.DB.prepare(
-      "INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at,payload_version,payload_snapshot,revision,call_cycle) SELECT ?,?,?,?,?,2,?,?,? WHERE EXISTS(SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL)",
+      `INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at,payload_version,payload_snapshot,revision,call_cycle) SELECT ?,?,?,?,?,2,?,?,? WHERE EXISTS(SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL AND ${whatsappEligibleSql('consent.entry_id')})`,
     ).bind(
       crypto.randomUUID(),
       entryId,
@@ -252,11 +253,11 @@ export function noticeStatement(
     return unavailableCopyStatement(env, entryId, kind, now, idempotencyKey)
   if (kind === 'approaching')
     return env.DB.prepare(
-      "INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL)",
+      `INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at) SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM consent WHERE entry_id=? AND purpose='queue_updates' AND revoked_at IS NULL AND ${whatsappEligibleSql('consent.entry_id')})`,
     ).bind(crypto.randomUUID(), entryId, idempotencyKey, kind, now, entryId)
   return env.DB.prepare(
-    'INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at) VALUES (?,?,?,?,?)',
-  ).bind(crypto.randomUUID(), entryId, idempotencyKey, kind, now)
+    `INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,kind,updated_at) SELECT ?,?,?,?,? WHERE ${whatsappEligibleSql('?')}`,
+  ).bind(crypto.randomUUID(), entryId, idempotencyKey, kind, now, entryId)
 }
 
 /** Both channels commit with the domain change; each keeps its own eligibility. */
@@ -278,7 +279,7 @@ export async function publishNotice(
 ) {
   try {
     const rows = await env.DB.prepare(
-      "SELECT id FROM notification_outbox WHERE entry_id=? AND kind=? AND status='pending' ORDER BY revision DESC,updated_at DESC",
+      `SELECT id FROM notification_outbox WHERE entry_id=? AND kind=? AND status='pending' AND ${whatsappEligibleSql('notification_outbox.entry_id')} ORDER BY revision DESC,updated_at DESC`,
     )
       .bind(entryId, kind)
       .all<{ id: string }>()

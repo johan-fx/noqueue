@@ -1,3 +1,4 @@
+import { whatsappEligibleSql } from './whatsapp-suppression'
 import { selectAutomationSuccessor, stopAutomation } from './automation'
 import {
   prepareCall,
@@ -519,7 +520,7 @@ export async function runCustomerCommand(
     if (origin.replyWithinServiceWindow)
       statements.push(
         env.DB.prepare(
-          "INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot) VALUES (?,?,?,'pending',?,'action_result',0,?)",
+          `INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot) SELECT ?,?,?,'pending',?,'action_result',0,? WHERE ${whatsappEligibleSql('?')}`,
         ).bind(
           crypto.randomUUID(),
           entry.id,
@@ -538,6 +539,7 @@ export async function runCustomerCommand(
             providerContextId: origin.providerContextId,
             occurredAt: origin.occurredAt,
           }),
+          entry.id,
         ),
       )
     statements.push(
@@ -700,7 +702,7 @@ export async function runWhatsAppAction(
     if (origin.replyWithinServiceWindow)
       statements.push(
         env.DB.prepare(
-          "INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot) VALUES (?,?,?,'pending',?,'action_result',0,?)",
+          `INSERT OR IGNORE INTO notification_outbox(id,entry_id,idempotency_key,status,updated_at,kind,payload_version,payload_snapshot) SELECT ?,?,?,'pending',?,'action_result',0,? WHERE ${whatsappEligibleSql('?')}`,
         ).bind(
           crypto.randomUUID(),
           notice.entry_id,
@@ -715,6 +717,7 @@ export async function runWhatsAppAction(
             providerContextId: event.context_id,
             occurredAt: event.occurred_at,
           }),
+          notice.entry_id,
         ),
       )
     statements.push(

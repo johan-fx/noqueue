@@ -1398,7 +1398,7 @@ function DashboardContent(props: DashboardProps) {
           </CardContent>
         </Card>
       </section>
-      {error && (
+      {error && drawer !== 'queue' && (
         <div className="space-y-2">
           <p role="alert" className="text-destructive">
             {error}

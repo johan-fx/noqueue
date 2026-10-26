@@ -557,6 +557,22 @@ function DashboardContent(props: DashboardProps) {
           ),
           timeout,
         ])
+        if (!live || controller !== request || request.signal.aborted ||
+          sequence !== refreshSequence.current || selectedRef.current !== queueId) return
+        // Publish authoritative rows immediately. Optional cycle/event reads
+        // must not keep a successful staff action looking uncommitted.
+        clearTimeout(deadline)
+        setWaitingCounts(waitingCountsFor(summaries, queueId, rows))
+        commitEntries(rows)
+        setLastSync(new Date().toLocaleTimeString())
+        setError('')
+        setLoading(false)
+        const automationTimeout = new Promise<never>((_, reject) => {
+          deadline = setTimeout(() => {
+            reject(new Error('automation_read_timeout'))
+            request.abort()
+          }, 5_000)
+        })
         // Cycle count is authoritative server state, distinct from the legacy
         // runtime kill switch on the queue summary. Failure here must not hide
         // an otherwise readable queue; fail closed for the footer instead.
@@ -591,13 +607,13 @@ function DashboardContent(props: DashboardProps) {
           // the drawer is closed, but never replay that history as a toast.
           for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
             const query = after == null ? '' : `?after=${after}`
-            const page = await api<QueueAutomation>(
+            const page = await Promise.race([api<QueueAutomation>(
               `/queues/${queueId}/automation${query}`,
               'GET',
               undefined,
               undefined,
               request.signal,
-            )
+            ), automationTimeout])
             automation = page
             automationFeedSucceeded = true
             if (cursorState == null) {
@@ -632,8 +648,6 @@ function DashboardContent(props: DashboardProps) {
             typeof automation.effective === 'boolean' &&
             Number.isFinite(automation.activeCycles) &&
             Number.isFinite(automation.serverNow)
-          setWaitingCounts(waitingCountsFor(summaries, queueId, rows))
-          commitEntries(rows)
           const currentSession = queueToastSession.current
           const anotherVisibleSession =
             queueDrawerVisible.current &&
@@ -684,8 +698,6 @@ function DashboardContent(props: DashboardProps) {
             automationEvents.forEach((event) =>
               announceAutomationEvent(event, queueId, automationSessionId),
             )
-          setLastSync(new Date().toLocaleTimeString())
-          setError('')
         }
       } catch (error) {
         if (

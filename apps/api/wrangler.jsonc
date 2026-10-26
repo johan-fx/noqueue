@@ -3,6 +3,9 @@
   "name": "noqueue-api",
   "main": "src/index.ts",
   "compatibility_date": "2026-09-10",
+  "alias": {
+    "@better-auth/core/async_hooks": "./src/auth/async-hooks.workerd.ts"
+  },
   "compatibility_flags": [
     "nodejs_compat"
   ],
@@ -173,7 +176,7 @@
       "workers_dev": false,
       "preview_urls": false,
       "vars": {
-        "QUEUE_AUTO_REPLACEMENT_ENABLED": "false",
+        "QUEUE_AUTO_REPLACEMENT_ENABLED": "true",
         "WHATSAPP_MODE": "cloud",
         "WHATSAPP_ENABLED": "false",
         "STAGING_ALLOW_JOIN_WITHOUT_WHATSAPP": "true",

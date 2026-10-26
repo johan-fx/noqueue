@@ -3,6 +3,9 @@
   "name": "noqueue-test-only",
   "main": "../src/index.ts",
   "compatibility_date": "2026-09-10",
+  "alias": {
+    "@better-auth/core/async_hooks": "../src/auth/async-hooks.workerd.ts"
+  },
   "compatibility_flags": [
     "nodejs_compat"
   ],

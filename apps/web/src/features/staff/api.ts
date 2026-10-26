@@ -140,6 +140,39 @@ export async function api<T>(
   key?: string,
   signal?: AbortSignal,
 ): Promise<T> {
+  // Bound all reads (including catalogue refreshes outside polling). Never retry
+  // writes or interpret a transport timeout as an expired session.
+  if (method !== 'GET') return request<T>(path, method, body, key, signal)
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let cancel: (() => void) | undefined
+  const deadline = new Promise<never>((_, reject) => {
+    cancel = () => {
+      controller.abort()
+      reject(new DOMException('Read canceled', 'AbortError'))
+    }
+    signal?.addEventListener('abort', cancel, { once: true })
+    if (signal?.aborted) cancel()
+    timer = setTimeout(() => {
+      reject(new ApiError(503, messages.temporarily_unavailable!, 0, 'temporarily_unavailable'))
+      controller.abort()
+    }, 15_000)
+  })
+  try {
+    return await Promise.race([request<T>(path, method, body, key, controller.signal), deadline])
+  } finally {
+    clearTimeout(timer)
+    if (cancel) signal?.removeEventListener('abort', cancel)
+  }
+}
+
+async function request<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  key?: string,
+  signal?: AbortSignal,
+): Promise<T> {
   const isFormData =
     typeof FormData !== 'undefined' && body instanceof FormData
   const response = await fetch(`/api/v1/staff${path}`, {

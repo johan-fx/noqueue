@@ -13,7 +13,7 @@ import {
 import { setupNetwork } from '../test/fake-network'
 import { http, HttpResponse } from 'msw'
 import { app } from './app'
-import { createAuth } from './auth/server'
+import { createAuth, readyAuth, readAuthSession } from './auth/server'
 import { provisionSchema, type ProvisionInput, type QueueConfigurationContext } from '@noqueue/contracts/staff'
 import { provision } from './features/staff/provision'
 import { profileD1 } from '../test/d1-profile'
@@ -3131,6 +3131,86 @@ it('keeps staff summary refreshes read-only at 10x queue count and counts 501 wa
 })
 
 describe('auth initialization reuse without cached authorization', () => {
+  it('protects warm reads and evicts an adapter whose session connection never releases', async () => {
+    const user = await identity()
+    let stall = false, queries = 0
+    const DB = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === 'prepare') return (sql: string) => {
+          if (stall && /select.*[" ]session[" ]/i.test(sql)) {
+            queries++
+            const statement = { bind: () => statement, all: () => new Promise(() => undefined) }
+            return statement
+          }
+          return target.prepare(sql)
+        }
+        const value = Reflect.get(target, key)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const bindings = { ...env, DB }, headers = new Headers({ Cookie: user.cookie })
+    const original = await readyAuth(bindings)
+    expect((await readAuthSession(bindings, headers))?.user.id).toBe(user.id)
+    stall = true
+    const held: Promise<unknown>[] = []
+    const context = { waitUntil: (p: Promise<unknown>) => { held.push(p) } }
+    const results = await Promise.allSettled([
+      readAuthSession(bindings, headers, context),
+      readAuthSession(bindings, headers, context),
+    ])
+    expect(results.every(r => r.status === 'rejected' && r.reason.message === 'temporarily_unavailable')).toBe(true)
+    // One stuck query owns the adapter mutex; the second never reaches D1.
+    expect(queries).toBe(1)
+    expect(held).toHaveLength(4) // two ready + two entire session reads
+    await Promise.all(held)
+    stall = false
+    expect(await readyAuth(bindings)).not.toBe(original)
+    expect((await readAuthSession(bindings, headers))?.user.id).toBe(user.id)
+  }, 25_000)
+
+  it('evicts a never-settling cold schema initialization and recovers without retrying the request', async () => {
+    const user = await identity()
+    let stall = true
+    let stalled = 0
+    const DB = new Proxy(env.DB, {
+      get(target, key) {
+        if (key === 'prepare') return (sql: string) => {
+          if (stall && /sqlite_master/i.test(sql)) {
+            stalled++
+            const statement = { bind: () => statement, all: () => new Promise(() => undefined) }
+            return statement
+          }
+          return target.prepare(sql)
+        }
+        const value = Reflect.get(target, key)
+        return typeof value === 'function' ? value.bind(target) : value
+      },
+    })
+    const bindings = { ...env, DB }
+    const original = createAuth(bindings)
+    const held: Promise<unknown>[] = []
+    const context = { waitUntil: (p: Promise<unknown>) => { held.push(p) } }
+    await expect(readyAuth(bindings, context)).rejects.toThrow('temporarily_unavailable')
+    expect(stalled).toBe(1)
+    expect(held).toHaveLength(1)
+    await Promise.all(held)
+    stall = false
+    const recovered = await readyAuth(bindings, context)
+    expect(recovered).not.toBe(original)
+    expect((await read(bindings, user.cookie)).status).toBe(200)
+    expect(stalled).toBe(1)
+  }, 20_000)
+
+  it('retains a healthy initialized instance after idle and still reads current authorization', async () => {
+    const measured = profileD1(env)
+    const first = await readyAuth(measured.env)
+    try {
+      vi.useFakeTimers({ toFake: ['Date'] })
+      vi.setSystemTime(Date.now() + 60_000)
+      expect(await readyAuth(measured.env)).toBe(first)
+    } finally { vi.useRealTimers() }
+  })
+
   const schemaReads = (costs: Array<{ sql: string }>) =>
     costs.filter(({ sql }) => /sqlite_master|pragma_table_info/i.test(sql))
   const sessionReads = (costs: Array<{ sql: string }>) =>

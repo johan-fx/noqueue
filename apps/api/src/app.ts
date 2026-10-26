@@ -4,7 +4,8 @@ import { discoveryRoutes } from './features/discovery/routes'
 import { localVenueLogo } from './features/staff/logo'
 import { customerRoutes } from './features/queue/customer-routes'
 import { publicServices } from './features/staff/public'
-import { createAuth } from './auth/server'
+import { authResponse } from './auth/server'
+import { ReadDeadlineError } from './lib/deadline'
 import { readLocalMail } from './auth/mail'
 import { staffRoutes } from './features/staff/routes'
 import { bodyLimit } from 'hono/body-limit'
@@ -82,7 +83,12 @@ app.all('/auth/*', async (c) => {
     if (!c.env.AUTH_EMAIL_API_KEY || !c.env.AUTH_EMAIL_FROM)
       return c.json({ error: 'email_delivery_unavailable' }, 503)
   }
-  return createAuth(c.env).handler(c.req.raw)
+  let context: ExecutionContext | undefined
+  try { context = c.executionCtx as ExecutionContext } catch { /* test adapter */ }
+  try { return await authResponse(c.env, c.req.raw, context) } catch (error) {
+    if (error instanceof ReadDeadlineError) return c.json({ error: 'temporarily_unavailable' }, 503)
+    throw error
+  }
 })
 app.route('/mobile', mobileRoutes)
 app.route('/staff', staffRoutes)

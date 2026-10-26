@@ -1,6 +1,23 @@
 import { afterEach, expect, it, vi } from 'vitest'
 import { api, ApiError } from './api'
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers() })
+it('bounds stalled reads, aborts transport and never retries', async () => {
+  vi.useFakeTimers()
+  const fetcher = vi.fn(() => new Promise<Response>(() => undefined))
+  vi.stubGlobal('fetch', fetcher)
+  const result = expect(api('/me')).rejects.toMatchObject({ status: 503, code: 'temporarily_unavailable' })
+  await vi.advanceTimersByTimeAsync(15_000)
+  await result
+  expect(fetcher).toHaveBeenCalledTimes(1)
+  expect((fetcher.mock.calls[0] as unknown as [string, RequestInit])[1].signal?.aborted).toBe(true)
+})
+it('rejects superseded reads even if transport ignores abort', async () => {
+  vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => undefined)))
+  const controller = new AbortController()
+  const result = expect(api('/me', 'GET', undefined, undefined, controller.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  controller.abort()
+  await result
+})
 it('classifies HTML 503 without exposing HTML or parser errors and recovers', async () => {
   vi.stubGlobal(
     'fetch',

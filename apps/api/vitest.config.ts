@@ -1,7 +1,9 @@
 import { cloudflareTest } from '@cloudflare/vitest-plugin'
 import { readD1Migrations } from '@cloudflare/vitest-plugin'
 import { defineConfig } from 'vitest/config'
+import { fileURLToPath } from 'node:url'
 export default defineConfig({
+  resolve: { alias: { '@better-auth/core/async_hooks': fileURLToPath(new URL('./src/auth/async-hooks.workerd.ts', import.meta.url)) } },
   plugins: [
     cloudflareTest({
       remoteBindings: false,

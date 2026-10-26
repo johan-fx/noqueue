@@ -49,6 +49,31 @@ const service: QueueSummary = {
   },
 }
 
+it('publishes fresh entries before a stalled automation feed and recovers without replaying the read', async () => {
+  vi.useFakeTimers()
+  let feedReads = 0
+  vi.mocked(api).mockImplementation(async (path) => {
+    if (path.endsWith('/queues')) return [{ ...service, waitingCount: 1 }]
+    if (path.endsWith('/entries')) return [{ id: 'fresh', code: 'FRESH', partySize: 1, status: 'waiting', version: 0, sequence: 1, calledAt: null }]
+    if (path.includes('/automation')) {
+      feedReads++
+      if (feedReads === 1) return new Promise(() => undefined)
+      return { configured: true, effective: true, activeCycles: 0, serverNow: Date.now(), events: [], cursor: 0 }
+    }
+    return []
+  })
+  render(<Dashboard venue={{ id: 'hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Org', role: 'viewer' }} />)
+  await act(async () => { await Promise.resolve(); await Promise.resolve() })
+  fireEvent.click(screen.getByRole('button', { name: 'Ver lista' }))
+  expect(screen.getByText('FRESH')).toBeVisible()
+  expect(feedReads).toBe(1)
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+  expect(screen.getByText('FRESH')).toBeVisible()
+  await act(() => vi.advanceTimersByTimeAsync(5_000))
+  expect(feedReads).toBe(2)
+  expect(screen.getByText('FRESH')).toBeVisible()
+})
+
 it('refreshes a stale quick assignment without retrying or assigning the new head', async () => {
   const commands: unknown[] = []
   let conflicted = false

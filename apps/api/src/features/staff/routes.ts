@@ -45,7 +45,8 @@ import {
   storedServiceSchema,
   type StaffMember,
 } from '@noqueue/contracts/staff'
-import { createAuth } from '../../auth/server'
+import { readAuthSession } from '../../auth/server'
+import { StaffReadTrace, staffReadRoute } from './read-trace'
 import { isCommercial, permits } from '../../auth/permissions'
 import {
   audit,
@@ -65,13 +66,17 @@ type StaffEnv = {
   Bindings: CloudflareBindings
   Variables: {
     actor: { id: string; email: string; username: string; role: string }
+    readTrace: StaffReadTrace
   }
 }
 export const staffRoutes = new Hono<StaffEnv>()
 staffRoutes.use('*', async (c, next) => {
   c.header('Cache-Control', 'no-store')
   c.header('Referrer-Policy', 'no-referrer')
-  await next()
+  const route = staffReadRoute(c.req.path)
+  const trace = new StaffReadTrace(c.env.APP_ENV === 'staging' && c.req.method === 'GET' && route !== null, route ?? 'other')
+  c.set('readTrace', trace)
+  try { await next() } finally { trace.finish(c.res.status) }
 })
 staffRoutes.use('*', (c, next) => {
   const upload = c.req.method === 'PUT' && /\/venues\/[^/]+\/logo$/.test(c.req.path)
@@ -98,10 +103,14 @@ staffRoutes.use('*', async (c, next) => {
     c.req.header('Origin') !== c.env.PUBLIC_APP_ORIGIN
   )
     throw new HTTPException(403, { message: 'origin_not_allowed' })
-  const session = await createAuth(c.env).api.getSession({
-    headers: c.req.raw.headers,
-  })
+  const trace = c.get('readTrace')
+  trace.phase('auth_init')
+  let context: ExecutionContext | undefined
+  // app.request unit tests have no execution context; real Workers always do.
+  try { context = c.executionCtx as ExecutionContext } catch { /* test adapter */ }
+  const session = await readAuthSession(c.env, c.req.raw.headers, context, () => trace.phase('session'))
   if (!session) throw new HTTPException(401, { message: 'unauthorized' })
+  trace.phase('user_d1')
   // Authoritative row on every request; stale session role caches never authorize platform actions.
   const user = await c.env.DB.prepare(
     'SELECT id,email,username,role,emailVerified,banned FROM user WHERE id=?',
@@ -140,6 +149,7 @@ staffRoutes.use('*', async (c, next) => {
       throw new HTTPException(429, { message: 'rate_limited' })
     }
   }
+  trace.phase('handler_d1')
   await next()
 })
 const commercial = (role: string) => {
@@ -656,6 +666,7 @@ staffRoutes.get('/queues/:id/automation', async (c) => {
   const raw = c.req.query('after')
   if (raw !== undefined && (!/^\d+$/.test(raw) || !Number.isSafeInteger(Number(raw))))
     throw new HTTPException(400, { message: 'invalid_feedback_cursor' })
+  c.get('readTrace').phase('coordinator')
   return c.json(await coordinator(c.env, c.req.param('id')).automation(c.req.param('id'), raw === undefined ? undefined : Number(raw)))
 })
 staffRoutes.get('/queues/:id/replacement-decisions', async (c) => {
@@ -669,7 +680,9 @@ staffRoutes.get('/queues/:id/entries', async (c) => {
     c.req.param('id'),
     'queue.read',
   )
+  c.get('readTrace').phase('coordinator')
   await coordinator(c.env, c.req.param('id')).refresh(c.req.param('id'))
+  c.get('readTrace').phase('entries_d1')
   const rows = await c.env.DB.prepare(
     `SELECT e.id,e.code,e.party_size AS partySize,e.status,e.sequence,e.version,
       e.priority_rank AS priorityRank,e.created_at AS waitingSince,

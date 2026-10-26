@@ -3,6 +3,7 @@ import { admin, username, organization } from 'better-auth/plugins'
 import { createAccessControl } from 'better-auth/plugins/access'
 import { ac, roles } from './permissions'
 import { sendMail } from './mail'
+import { readDeadline, ReadDeadlineError } from '../lib/deadline'
 const platformAC = createAccessControl({
   user: ['create'],
   session: ['revoke'],
@@ -20,16 +21,21 @@ type AuthConfiguration = Pick<
 >
 // Binding-only deployments can reuse an isolate. Keep one latest context per
 // weak DB owner, and compare every auth/mail input rather than env identity.
-const authInstances = new WeakMap<
-  D1Database,
-  { configuration: AuthConfiguration; auth: ReturnType<typeof initializeAuth> }
->()
+type AuthInstance = {
+  configuration: AuthConfiguration
+  auth: ReturnType<typeof initializeAuth>
+  startedAt: number
+  initialized: boolean
+  ready?: Promise<void>
+}
+const authInstances = new WeakMap<D1Database, AuthInstance>()
 export function createAuth(env: CloudflareBindings) {
   if (!env.BETTER_AUTH_SECRET || env.BETTER_AUTH_SECRET.length < 32)
     throw new Error('auth_not_configured')
   const existing = authInstances.get(env.DB)
   if (
     existing &&
+    (existing.initialized || Date.now() - existing.startedAt < 10_000) &&
     authConfigurationKeys.every(
       (key) => existing.configuration[key] === env[key],
     )
@@ -41,8 +47,75 @@ export function createAuth(env: CloudflareBindings) {
   const auth = initializeAuth(snapshot)
   // betterAuth owns the shared initialization/schema-check promise, not us.
   // Session and permission results are deliberately never stored here.
-  authInstances.set(env.DB, { configuration: snapshot, auth })
+  authInstances.set(env.DB, { configuration: snapshot, auth, startedAt: Date.now(), initialized: false })
   return auth
+}
+
+// Protect only initialization, never a staff mutation, after client disconnect.
+// A failed/stalled initialization is evicted; the next request may initialize
+// again, but this request is not retried. Authorization/session data stays live.
+export async function readyAuth(
+  env: CloudflareBindings,
+  context?: { waitUntil(promise: Promise<unknown>): void },
+) {
+  const auth = createAuth(env)
+  const entry = authInstances.get(env.DB)!
+  if (!entry.ready) {
+    entry.ready = readDeadline(auth.$context.then(async (ctx) => {
+      await ctx.checkSchema?.()
+    }), 8_000).then(() => {
+      entry.initialized = true
+    }).catch((error) => {
+      if (authInstances.get(env.DB) === entry) authInstances.delete(env.DB)
+      throw error
+    })
+  }
+  context?.waitUntil(entry.ready.catch(() => undefined))
+  await entry.ready
+  return auth
+}
+
+function evictAuth(env: CloudflareBindings, auth: ReturnType<typeof initializeAuth>) {
+  if (authInstances.get(env.DB)?.auth === auth) authInstances.delete(env.DB)
+}
+
+export async function readAuthSession(
+  env: CloudflareBindings,
+  headers: Headers,
+  context?: { waitUntil(promise: Promise<unknown>): void },
+  onReady?: () => void,
+) {
+  const started = Date.now()
+  const auth = await readyAuth(env, context)
+  onReady?.()
+  // The cached Kysely SQLite adapter also owns a connection mutex. Protect warm
+  // reads, not just cold initialization: canceling their request must not strand
+  // a borrowed connection and block every subsequent session read in this isolate.
+  const operation = readDeadline(auth.api.getSession({ headers }), Math.max(1, 10_000 - (Date.now() - started)))
+    .catch((error) => {
+      if (error instanceof ReadDeadlineError) {
+        evictAuth(env, auth)
+        if (env.APP_ENV === 'staging') console.warn({ event: 'auth_session_timeout', evicted: true })
+      }
+      throw error
+    })
+  context?.waitUntil(operation.catch(() => undefined))
+  return operation
+}
+
+export async function authResponse(
+  env: CloudflareBindings,
+  request: Request,
+  context?: { waitUntil(promise: Promise<unknown>): void },
+) {
+  const auth = await readyAuth(env, context)
+  const operation = auth.handler(request)
+  // Auth HTTP endpoints share the same adapter. Preserve its release/finally
+  // after disconnect too; never retry an auth write or replace its result.
+  context?.waitUntil(readDeadline(operation, 25_000).catch((error) => {
+    if (error instanceof ReadDeadlineError) evictAuth(env, auth)
+  }))
+  return operation
 }
 function initializeAuth(env: CloudflareBindings) {
   return betterAuth({

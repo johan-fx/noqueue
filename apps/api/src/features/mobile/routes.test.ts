@@ -107,8 +107,14 @@ it('retains reception/pool constraints and rejects closed services', async () =>
   const row = await env.DB.prepare('SELECT config FROM queue WHERE id=?').bind(queue).first<{ config: string }>()
   await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify({ ...JSON.parse(row!.config), type: 'pool', receptionServices: [] }), queue).run()
   expect((await join(queue, crypto.randomUUID(), { displayName: 'Guest', locale: 'es', partySize: 2 })).status).toBe(400)
-  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify({ ...JSON.parse(row!.config), twentyFourHours: false, schedules: [{ day: (new Date().getUTCDay() + 1) % 7, from: '00:00', to: '01:00' }] }), queue).run()
-  expect((await join(queue, crypto.randomUUID(), input)).status).toBe(409)
+  // UTC tomorrow can already be today in the fixture's Europe/Madrid timezone
+  // (00:00–01:00 local). Three days ahead stays closed across day/DST boundaries.
+  const closedDay = (new Date().getUTCDay() + 3) % 7
+  await env.DB.prepare('UPDATE queue SET config=? WHERE id=?').bind(JSON.stringify({ ...JSON.parse(row!.config), twentyFourHours: false, schedules: [{ day: closedDay, from: '00:00', to: '01:00' }] }), queue).run()
+  const closed = await join(queue, crypto.randomUUID(), input)
+  expect(closed.status).toBe(409)
+  expect(await closed.json()).toMatchObject({ error: 'queue_unavailable' })
+  expect(await env.DB.prepare('SELECT id FROM queue_entry WHERE queue_id=?').bind(queue).first()).toBeNull()
 })
 it('limits enrollment by IP even if anonymous secrets rotate', async () => {
   const { queue } = await fixture()

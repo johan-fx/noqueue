@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { QueueCommand, ServiceInput } from '@noqueue/contracts/staff'
 import { configureQueue, runQueueCommand } from '../staff/commands'
+import { openingContext, runLifecycleCommand } from '../staff/opening'
 import { serviceWindow } from '../staff/availability'
 import { expireArrivals, runCustomerCommand } from './customer'
 import { readAutomation } from './automation'
@@ -524,4 +525,121 @@ it('exposes actual cycle attempts, waiting age and retained action restrictions'
       ;(instance as unknown as { env: CloudflareBindings }).env.QUEUE_AUTO_REPLACEMENT_ENABLED = 'false'
     })
   }
+})
+
+it('Snack bar: expiry of Pepe (2) leaves Alberto (4) waiting and creates one durable intervention, independent of toast baselines', async () => {
+  const f = await fixture({ type: 'restaurant', sizes: [2, 4], tableSeats: 4 })
+  // Reference seats and capacity are separate: even on a four-seat table this cycle remains two.
+  await f.call(0)
+  await f.expire(3)
+  expect(await f.row(0)).toMatchObject({ status: 'expired' })
+  expect(await f.row(1)).toMatchObject({ status: 'waiting', call_cycle: 0 })
+  expect(await f.policy(f.ids[0]!)).toMatchObject({ result: 'no_candidate' })
+  expect(await f.link(f.ids[0]!)).toMatchObject({ successor_entry_id: null })
+  const first = await f.automation()
+  expect(first).toMatchObject({ activeCycles: 0, events: [], attention: [{ capacity: 2, spaceId: 'inside', entry: { id: f.ids[0] } }] })
+  const attention = first.attention![0]!
+  await f.expire(4)
+  expect((await readAutomation(enabled, f.queue, 0)).attention).toEqual(first.attention)
+  expect((await f.automation()).attention).toEqual(first.attention)
+  // Selecting/reopening is read-only; the manual call resolves exactly this incident in the same transaction.
+  const alberto = (await f.row(1))!
+  const input: QueueCommand = { action: 'call', entryId: alberto.id, version: alberto.version,
+    seating: { mode: 'confirmed', spaceId: 'inside', seats: 4 }, attentionId: attention.id }
+  const key = crypto.randomUUID()
+  await runQueueCommand(enabled, f.actor, f.queue, key, input, f.at(4))
+  await runQueueCommand(enabled, f.actor, f.queue, key, input, f.at(4))
+  expect(await f.row(1)).toMatchObject({ status: 'called', call_cycle: 1 })
+  expect(await f.cycleFor(alberto.id)).toMatchObject({ capacity: 4, state: 'active' })
+  expect(await f.cycleFor(f.ids[0]!)).toMatchObject({ capacity: 2, state: 'stopped', reason: 'no_candidate' })
+  expect((await f.automation()).attention).toEqual([])
+  expect(await env.DB.prepare('SELECT resolution,resolved_entry_id FROM queue_automation_attention WHERE cycle_id=?').bind(attention.id).first())
+    .toEqual({ resolution: 'assigned', resolved_entry_id: alberto.id })
+})
+
+it('does not create an intervention for an empty queue or a successful compatible replacement', async () => {
+  const empty = await fixture({ type: 'restaurant', sizes: [2] })
+  await empty.call(0); await empty.expire(3)
+  expect((await empty.automation()).attention).toEqual([])
+  const compatible = await fixture({ type: 'restaurant', sizes: [2, 2] })
+  await compatible.call(0); await compatible.expire(3)
+  expect((await compatible.automation()).attention).toEqual([])
+  expect(await compatible.row(1)).toMatchObject({ status: 'called' })
+})
+
+it('keeps unrelated cycles active and rejects a second operator resolving the same intervention', async () => {
+  const f = await fixture({ type: 'restaurant', sizes: [2, 2, 4, 4] })
+  await f.call(0)
+  await f.call(1, 1)
+  await f.expire(3)
+  const incident = (await f.automation()).attention![0]!
+  expect((await f.automation()).activeCycles).toBe(1)
+  const secondOperator = await fixture({ type: 'restaurant', sizes: [] })
+  const first = (await f.row(2))!, second = (await f.row(3))!
+  await runQueueCommand(enabled, f.actor, f.queue, crypto.randomUUID(), {
+    action: 'call', entryId: first.id, version: first.version, attentionId: incident.id,
+    seating: { mode: 'confirmed', spaceId: 'inside', seats: 6 },
+  }, f.at(3))
+  await expect(runQueueCommand(enabled, secondOperator.actor, f.queue, crypto.randomUUID(), {
+    action: 'call', entryId: second.id, version: second.version, attentionId: incident.id,
+    seating: { mode: 'confirmed', spaceId: 'inside', seats: 6 },
+  }, f.at(3))).rejects.toMatchObject({ status: 409, message: 'automation_attention_resolved' })
+  expect(await f.row(3)).toMatchObject({ status: 'waiting', call_cycle: 0 })
+  expect(await f.cycleFor(f.ids[1]!)).toMatchObject({ state: 'active' })
+})
+
+it('cannot resolve another queue incident or clear it through an invalid assignment', async () => {
+  const f = await fixture({ type: 'restaurant', sizes: [2, 4] })
+  await f.call(0); await f.expire(3)
+  const incident = (await f.automation()).attention![0]!
+  const other = await fixture({ type: 'restaurant', sizes: [4] })
+  await expect(runQueueCommand(enabled, f.actor, other.queue, crypto.randomUUID(), {
+    action: 'call', entryId: other.ids[0]!, version: (await other.row(0))!.version, attentionId: incident.id,
+    seating: { mode: 'confirmed', spaceId: 'inside', seats: 6 },
+  })).rejects.toMatchObject({ status: 409 })
+  await expect(runQueueCommand(enabled, f.actor, f.queue, crypto.randomUUID(), {
+    action: 'call', entryId: f.ids[1]!, version: (await f.row(1))!.version, attentionId: incident.id,
+    seating: { mode: 'confirmed', spaceId: 'missing', seats: 4 },
+  })).rejects.toMatchObject({ status: 409 })
+  expect((await f.automation()).attention).toHaveLength(1)
+})
+
+it('clears an intervention permanently when the last waiting party cancels, without reviving on a new join', async () => {
+  const f = await fixture({ type: 'restaurant', sizes: [2, 4] })
+  await f.call(0); await f.expire(3)
+  expect((await f.automation()).attention).toHaveLength(1)
+  await runQueueCommand(enabled, f.actor, f.queue, crypto.randomUUID(), {
+    action: 'cancel', entryId: f.ids[1]!, version: (await f.row(1))!.version,
+  }, f.at(3))
+  expect((await f.automation()).attention).toEqual([])
+  await f.add(4)
+  await recalculateQueue(enabled, f.queue, f.at(4))
+  expect((await f.automation()).attention).toEqual([])
+  expect(await env.DB.prepare('SELECT resolution FROM queue_automation_attention WHERE queue_id=?').bind(f.queue).first()).toEqual({ resolution: 'empty' })
+})
+
+it('clears an intervention at the physical service end, while retaining waiting entries', async () => {
+  const f = await fixture({ type: 'restaurant', sizes: [2, 4] })
+  await f.call(0); await f.expire(3)
+  const incident = (await f.automation()).attention![0]!
+  await env.DB.prepare('UPDATE queue_automation_cycle SET service_ends_at=? WHERE id=?').bind(f.at(4), incident.id).run()
+  await recalculateQueue(enabled, f.queue, f.at(4))
+  expect((await f.automation()).attention).toEqual([])
+  expect(await f.row(1)).toMatchObject({ status: 'waiting' })
+  expect(await env.DB.prepare('SELECT resolution FROM queue_automation_attention WHERE cycle_id=?').bind(incident.id).first()).toEqual({ resolution: 'service_ended' })
+})
+
+it('clears a pending intervention on explicit close and does not revive it when reopened', async () => {
+  const f = await fixture({ type: 'restaurant', sizes: [2, 4] })
+  await f.call(0); await f.expire(3)
+  const incident = (await f.automation()).attention![0]!
+  await runLifecycleCommand(enabled, f.actor, f.queue, crypto.randomUUID(), {
+    action: 'close', contextToken: (await openingContext(enabled, f.queue)).contextToken,
+  })
+  expect((await f.automation()).attention).toEqual([])
+  expect(await env.DB.prepare('SELECT resolution FROM queue_automation_attention WHERE cycle_id=?').bind(incident.id).first()).toEqual({ resolution: 'service_ended' })
+  await runLifecycleCommand(enabled, f.actor, f.queue, crypto.randomUUID(), {
+    action: 'open', contextToken: (await openingContext(enabled, f.queue)).contextToken,
+  })
+  expect((await f.automation()).attention).toEqual([])
 })

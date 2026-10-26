@@ -58,13 +58,46 @@ automáticamente a un grupo mayor que la capacidad inicial. Una sustitución men
 no reduce esa capacidad raíz para los siguientes intentos del mismo ciclo. Se
 mantienen los requisitos de contexto confirmado y compatibilidad de zona/catálogo
 que ya restringen la asignación de Restaurante.
-No hay una hoja para elegir manualmente un candidato tras la expiración: si
-existe una alternativa compatible, el sistema la llama automáticamente.
+Si existe una alternativa compatible tras la expiración, el sistema la llama
+automáticamente, sin pedir una elección manual.
 
 Si no hay candidato compatible, el ciclo se detiene y el maître debe iniciar uno
 nuevo con una asignación manual. No se reserva capacidad ni queda una búsqueda
 latente para nuevas altas. El mismo criterio de parada se aplica si falta el
 contexto de mesa confirmado o el servicio ya no permite mantener el ciclo.
+
+### Aviso de asignación manual pendiente (Restaurante)
+
+Cuando un plazo vence con resultado `no_candidate` y quedan turnos vigentes en
+espera, la transición guarda una incidencia por ciclo en
+`queue_automation_attention` (migración aditiva `0040`, sin backfill). No se crea
+para una cola vacía, un reemplazo exitoso ni un ciclo deshabilitado. El snapshot
+`automation.attention` la devuelve también sin cursor: no depende del feed de
+toasts ni desaparece al reconectar. No guarda nombres en claro.
+
+El sheet «No hay un turno compatible» reutiliza el marco, alert ámbar y filas de
+asignación existentes. Muestra el turno cuyo plazo venció, la referencia y los
+turnos pendientes para una **nueva** asignación, no sustitutos del ciclo anterior.
+Solo se abre cuando la lista está visible y no hay otra hoja/operación en curso;
+varias incidencias se agrupan en una hoja con selección de la referencia.
+«Ahora no» conserva la incidencia y deja «Asignación manual pendiente · Revisar»;
+la card del servicio indica «Requiere revisión». El navegador recuerda qué
+incidencias presentó para evitar reaperturas en cada polling/recarga. Ese estado
+local no resuelve la incidencia del servidor.
+
+«Asignar» prepara el flujo manual; solo «Confirmar» ejecuta `call` con el
+`attentionId` de la incidencia. La resolución y la nueva llamada se confirman en
+la misma transacción, con los controles de versión, idempotencia, permisos,
+cola y seating existentes. Una incidencia ya atendida por otro operador rechaza
+una segunda asignación vinculada con `automation_attention_resolved`. El ciclo
+original permanece parado; el nuevo toma la capacidad del nuevo grupo. Los demás
+ciclos continúan sin cambios.
+
+La incidencia también se resuelve permanentemente si deja de haber demanda
+vigente, termina su ventana física o se cierra explícitamente el servicio. Una
+nueva alta no la resucita. El cierre de la hoja nunca asigna, notifica al cliente
+ni cambia capacidad. La migración debe aplicarse antes de desplegar API/web; este
+cambio no implica ejecutar ningún despliegue.
 
 ### Recepción y Bar/Piscina
 
@@ -289,7 +322,7 @@ nuevas deben validarse con `pnpm test:production` antes del rollout.
 
 ## Rollout y rollback
 
-Aplicar primero las migraciones aditivas 0036, 0037 y 0038 y desplegar después API y web compatibles,
+Aplicar primero las migraciones aditivas 0036, 0037, 0038 y 0040 y desplegar después API y web compatibles,
 manteniendo apagado el kill switch global. En staging, habilitar el ajuste en un
 servicio de prueba y verificar el inicio manual, varios ciclos simultáneos,
 expiración, cancelación, llegada, no-candidatos y avisos/outbox. Confirmar que un
@@ -302,6 +335,27 @@ conflictos de versión, fallos del outbox y el número de ciclos activos. Ante u
 incidente, apagar el kill switch global; no borrar historiales ni revertir la
 migración. No se ejecutan despliegues, migraciones remotas, activación de flags ni
 mensajes reales como parte de las pruebas locales.
+
+### Verificación remota del sheet en staging (26/10/2026)
+
+Despliegue autorizado **solo en staging**, Worker
+`e44a67d3-8948-4585-bc77-39c2a4aa42b1`, tras aplicar únicamente la migración
+pendiente `0040_automation_attention.sql`. Salud, rutas SPA, hashes de assets y
+claves foráneas comprobados. Todos los bindings previos se conservaron, con
+automatización global activa y WhatsApp apagado; no se modificó producción.
+
+En un servicio QA separado de Snack bar se reprodujo el plazo real de un minuto:
+Pepe QA (2) expiró, Alberto QA (4) quedó esperando y el sheet apareció sin
+intervención. «Ahora no» y la recarga conservaron la incidencia sin reabrirla;
+«Revisar» la recuperó. «Asignar» no llamó al cliente antes de «Confirmar». La
+confirmación resolvió la incidencia y creó un ciclo nuevo de capacidad 4,
+conservando el original de capacidad 2 detenido por `no_candidate`.
+
+Los dos turnos sintéticos tenían `whatsapp_suppressed=1` y generaron cero
+notificaciones en el outbox. Al terminar, el turno de Alberto quedó completado,
+sin ciclos ni incidencias pendientes y con la lista QA pausada. No se borraron
+historiales ni se alteró el servicio real Snack bar. Esta comprobación web no
+sustituye una validación nativa ni autoriza un despliegue a producción.
 
 ## Referencias visuales de Producto
 

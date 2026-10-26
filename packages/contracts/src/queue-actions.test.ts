@@ -133,3 +133,13 @@ for (const action of ['pass', 'prioritize'] as const) {
     expect(entryCommandSchema.safeParse({...command, entryId: undefined}).success).toBe(false)
   })
 }
+
+it('accepts durable attention only on a manual call, preserving legacy commands', () => {
+  const entryId = '11111111-1111-4111-8111-111111111111'
+  const attentionId = '22222222-2222-4222-8222-222222222222'
+  const command = { action: 'call', entryId, version: 0, attentionId }
+  expect(queueCommandSchema.parse(command)).toMatchObject({ attentionId })
+  expect(queueCommandSchema.safeParse({ ...command, action: 'cancel' }).success).toBe(false)
+  expect(queueCommandSchema.safeParse({ ...command, attentionId: 'invalid' }).success).toBe(false)
+  expect(queueCommandSchema.safeParse({ action: 'call', entryId, version: 0 }).success).toBe(true)
+})

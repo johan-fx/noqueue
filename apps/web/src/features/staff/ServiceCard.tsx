@@ -203,6 +203,9 @@ export function ServiceCard({
               ? 'Lista pausada'
               : 'Lista inactiva'}
           </Badge>
+          {canOperate && (service.manualAttentionCount ?? 0) > 0 && (
+            <Badge variant="secondary" className="bg-amber-50 text-amber-800">Requiere revisión</Badge>
+          )}
           {service.config.automaticAssignmentEnabled && (
             <AutomaticAssignmentBadge variant="card" />
           )}

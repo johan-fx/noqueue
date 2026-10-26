@@ -1,3 +1,4 @@
+import { readAutomationAttention } from './automation-attention'
 import type { CallReplacementResult, QueueAutomation } from '@noqueue/contracts/staff'
 import type { QueueState } from './projection'
 import type { EstimateContext } from './adaptive-model'
@@ -26,8 +27,9 @@ export function stopQueueAutomation(env: CloudflareBindings, queueId: string, re
 }
 export async function readAutomation(env: CloudflareBindings, queueId: string, after?: number): Promise<QueueAutomation> {
   const row = await env.DB.prepare(`SELECT config FROM queue WHERE id=?`).bind(queueId).first<{config: string | null}>()
+  let config: import('@noqueue/contracts/staff').ServiceInput | null = null
   let configured = false
-  try { configured = JSON.parse(row?.config ?? '{}').automaticAssignmentEnabled === true } catch { /* fail closed */ }
+  try { config = JSON.parse(row?.config ?? 'null'); configured = config?.automaticAssignmentEnabled === true } catch { /* fail closed */ }
   const effective = configured && env.QUEUE_AUTO_REPLACEMENT_ENABLED === 'true'
   const count = await env.DB.prepare(`SELECT COUNT(*) AS total FROM queue_automation_cycle WHERE queue_id=? AND state='active'`).bind(queueId).first<{total: number}>()
   const now = Date.now()
@@ -36,6 +38,7 @@ export async function readAutomation(env: CloudflareBindings, queueId: string, a
     ORDER BY priority_rank IS NULL,priority_rank,sequence,id LIMIT 1`)
     .bind(queueId, now).first<{ id: string; version: number }>()
   return { configured, effective, activeCycles: count?.total ?? 0, serverNow: now, nextEntry,
+    attention: await readAutomationAttention(env, queueId, config, now),
     ...await readQueueFeedback(env, queueId, after) }
 }
 

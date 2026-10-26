@@ -36,6 +36,7 @@ type PendingCommand = {
   entryId: string
   action: EntryCommand['action']
   key: string
+  attentionId?: string
 } | null
 
 type AutomationSnapshot = QueueAutomation & { observedAt: number }
@@ -75,7 +76,7 @@ type QueueTurnSheetsProps = {
 
 // The action, not the automation setting, owns the sheet presentation.
 // Keep the reviewed F01/G03 frame shared so both assignment modes evolve together.
-function TurnSheetFrame({ children, footer, busy, returnFocus, warning = false, hasFooter = true }: {
+export function TurnSheetFrame({ children, footer, busy, returnFocus, warning = false, hasFooter = true }: {
   children: ReactNode
   footer: ReactNode
   busy: boolean
@@ -161,6 +162,47 @@ function WaitingAge({
     Math.floor((now + clockOffsetMs - since) / 60000),
   )
   return <>{elapsedMinutes < 1 ? 'Menos de 1' : elapsedMinutes} min esperando</>
+}
+
+export function QueueAssignmentCandidate({ candidate, clockOffsetMs, disabled, onSelect }: {
+  candidate: StaffEntry
+  clockOffsetMs: number
+  disabled: boolean
+  onSelect: (candidate: StaffEntry) => void
+}) {
+  return (
+    <li className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
+      <div className="min-w-0">
+        <p className="break-words text-sm font-medium leading-5 text-[#111827]">
+          {candidate.displayName || `Turno ${candidate.code}`}
+        </p>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-xs font-medium leading-4 text-[#9ca3af]">
+          <span className="inline-flex shrink-0 items-center gap-1">
+            <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
+            <span className="px-1" aria-label={`${candidate.partySize} personas`}>{candidate.partySize}</span>
+          </span>
+          <span className="inline-flex min-w-0 items-center gap-1">
+            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+            <span className="min-w-0 break-words px-1">{candidate.assignment?.spaceName || candidate.space?.name || 'Espacio compatible'}</span>
+          </span>
+          <span className="inline-flex items-center gap-1">
+            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
+            <span className="break-words px-1">
+              <WaitingAge since={candidate.waitingSince} clockOffsetMs={clockOffsetMs} />
+            </span>
+          </span>
+        </div>
+      </div>
+      <Button
+        className="h-9 shrink-0 gap-2 self-center whitespace-nowrap rounded-lg px-4 text-sm font-medium"
+        variant="ghost"
+        disabled={disabled}
+        onClick={() => onSelect(candidate)}
+      >
+        Asignar <img src={assignIcon} alt="" aria-hidden="true" className="shrink-0" />
+      </Button>
+    </li>
+  )
 }
 
 export function QueueTurnSheets({
@@ -367,7 +409,7 @@ export function QueueTurnSheets({
                     : pending?.action === 'cancel'
                       ? 'Cancelar turno'
                       : pending?.action === 'call'
-                        ? olderAssignmentWarning
+                        ? olderAssignmentWarning || pending.attentionId
                           ? 'Confirmar'
                           : restaurantAssignment &&
                               !seatingOptions.length &&
@@ -442,37 +484,9 @@ export function QueueTurnSheets({
                 </Alert>
                 <ul aria-label="Turnos compatibles anteriores" className="space-y-6">
                   {olderCompatibleCandidates.map((candidate) => (
-                    <li key={candidate.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2">
-                      <div className="min-w-0">
-                        <p className="break-words text-sm font-medium leading-5 text-[#111827]">
-                          {candidate.displayName || `Turno ${candidate.code}`}
-                        </p>
-                        <div className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-1 text-xs font-medium leading-4 text-[#9ca3af]">
-                          <span className="inline-flex shrink-0 items-center gap-1">
-                            <img src={usersIcon} alt="" aria-hidden="true" className="shrink-0" />
-                            <span className="px-1" aria-label={`${candidate.partySize} personas`}>{candidate.partySize}</span>
-                          </span>
-                          <span className="inline-flex min-w-0 items-center gap-1">
-                            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
-                            <span className="min-w-0 break-words px-1">{candidate.assignment?.spaceName || candidate.space?.name || 'Espacio compatible'}</span>
-                          </span>
-                          <span className="inline-flex items-center gap-1">
-                            <img src={dotIcon} alt="" aria-hidden="true" className="shrink-0" />
-                            <span className="break-words px-1">
-                              <WaitingAge since={candidate.waitingSince} clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0} />
-                            </span>
-                          </span>
-                        </div>
-                      </div>
-                      <Button
-                        className="h-9 shrink-0 gap-2 self-center whitespace-nowrap rounded-lg px-4 text-sm font-medium"
-                        variant="ghost"
-                        disabled={busy || commandUncertain}
-                        onClick={() => onSelectCandidate(candidate)}
-                      >
-                        Asignar <img src={assignIcon} alt="" aria-hidden="true" className="shrink-0" />
-                      </Button>
-                    </li>
+                    <QueueAssignmentCandidate key={candidate.id} candidate={candidate}
+                      clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0}
+                      disabled={busy || commandUncertain} onSelect={onSelectCandidate} />
                   ))}
                 </ul>
               </div>

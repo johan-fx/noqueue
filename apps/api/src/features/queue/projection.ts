@@ -1,3 +1,4 @@
+import { clearObsoleteAutomationAttention } from './automation-attention'
 import { pushProjectionStatements } from '../mobile/push/lifecycle'
 import { captureGapStatement } from '../metrics/reconcile'
 import { loadAdaptiveState, type AssignmentObservation } from './adaptive-state'
@@ -205,6 +206,7 @@ export async function maintainQueue(
 ) {
   await maintainServiceEntries(env, queueId, now)
   await expireArrivals(env, queueId, now)
+  await clearObsoleteAutomationAttention(env, queueId, now).run()
 }
 /** Reads coalesce only after authoritative maintenance; missing projections never satisfy freshness. */
 export async function refreshQueue(
@@ -283,6 +285,7 @@ export async function commitQueueTransition(
         (kind='called' AND e.status='called') OR (kind='expired' AND e.status='expired') OR
         (kind IN ('cancelled','service_ended') AND e.status='cancelled')))` ).bind(queueId),
   )
+  statements.push(clearObsoleteAutomationAttention(env, queueId, now))
   if (statements.length) {
     // Context and journal triggers participate in the same atomic D1 transaction.
     // No operational history scan, and no capture from unrelated maintenance SQL.

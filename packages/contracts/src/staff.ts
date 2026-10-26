@@ -592,6 +592,11 @@ export const entryCommandSchema = z
     arrivalMode: z.enum(['notify', 'present']).optional(),
     assignmentToken: z.string().optional(),
     seating: assignmentSeatingSchema.optional(),
+    attentionId: z.string().uuid().optional(),
+  })
+  .refine((input) => !input.attentionId || input.action === 'call', {
+    message: 'Attention can only be resolved with a manual assignment',
+    path: ['attentionId'],
   })
   .refine((input) => !input.seating || input.action === 'call', {
     message: 'Seating is only allowed when assigning a turn',
@@ -696,6 +701,8 @@ export type QueueConfigurationContext = Pick<
 
 export type QueueSummary = Partial<AdmissionStatus> & {
   autoReplacementEnabled?: boolean
+  /** Pending manual interventions, independent of active cycles and the selected queue. */
+  manualAttentionCount?: number
   /** Real waiting turns, independent of the paginated staff entry list. */
   waitingCount?: number
   reminderDue?: boolean
@@ -735,7 +742,17 @@ export type QueueCommandResult = {
     mode: 'called' | 'present' | 'waiting_swap' | 'called_handoff' | 'returned_to_waiting' | 'prioritized' | 'already_prioritized' | 'cancelled' | 'completed'
   }
 }
+export type QueueAutomationAttention = {
+  id: string
+  createdAt: number
+  entry: QueueFeedbackEntry
+  capacity: number
+  spaceId: string
+  spaceName: string
+}
 export type QueueAutomation = {
+  /** Durable pending interventions, independent of the ephemeral feedback cursor. */
+  attention?: QueueAutomationAttention[]
   configured: boolean
   effective: boolean
   activeCycles: number

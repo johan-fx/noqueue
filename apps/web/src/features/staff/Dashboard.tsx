@@ -1,3 +1,4 @@
+import { QueueAutomationAttentionSheet } from './QueueAutomationAttentionSheet'
 import { QueueAdvancedDrawer } from './QueueAdvancedDrawer'
 import { ServiceCard } from './ServiceCard'
 import { VenueLocationEditor } from './VenueLocationEditor'
@@ -5,7 +6,7 @@ import { VenueLogoEditor } from './VenueLogoEditor'
 import { AddQueueEntryDrawer } from './AddQueueEntryDrawer'
 import { entryActions } from './queue-labels'
 import { QueueLifecycleSheet } from './QueueLifecycleSheet'
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import { Toast } from '@base-ui/react/toast'
 import type {
   Capability,
@@ -231,7 +232,8 @@ function DashboardContent(props: DashboardProps) {
       !lifecycle &&
       !pending &&
       !adding &&
-      !advanced
+      !advanced &&
+      !attentionSheetId
     ) {
       endQueueToastSession()
       setDrawer(null)
@@ -241,6 +243,9 @@ function DashboardContent(props: DashboardProps) {
   const [automationSnapshot, setAutomationSnapshot] = useState<
     (QueueAutomation & { observedAt: number }) | null
   >(null)
+  const [attentionSheetId, setAttentionSheetId] = useState<string | null>(null)
+  const attentionTrigger = useRef<HTMLElement | null>(null)
+  const seenAttention = useRef(new Set<string>())
   const automationCursor = useRef<{ queueId: string; cursor: number } | null>(null)
   const seenAutomationEventIds = useRef(new Set<number>())
   const automationCursorGeneration = useRef(0)
@@ -312,6 +317,7 @@ function DashboardContent(props: DashboardProps) {
     entryId: string
     action: EntryCommand['action']
     key: string
+    attentionId?: string
   } | null>(null)
   const queuesRef = useRef<QueueSummary[]>([])
   const entriesRef = useRef<StaffEntry[]>([])
@@ -326,6 +332,49 @@ function DashboardContent(props: DashboardProps) {
   const queueLabel =
     props.mode === 'commercial' ? 'Ver lista' : 'Gestionar lista'
   const queue = queues.find((q) => q.id === selected)
+
+  const attention = useMemo(() => automationSnapshot?.attention ?? [], [automationSnapshot])
+  const attentionCandidates = entries.filter(entry => entry.status === 'waiting' && !entry.manualOnly)
+  const attentionCanOpen = drawer === 'queue' && permissions.includes('queue.operate') &&
+    !busy && !saving && !pending && !managedEntryId && !adding && !advanced && !lifecycle &&
+    !loading && !loadingConfiguration && !!automationSnapshot
+  // Persist presentation, not resolution. The authoritative pending incident
+  // comes from the server even after reconnect or a cursor-less baseline.
+  const rememberAttention = useCallback((ids: string[]) => {
+    for (const id of ids) seenAttention.current.add(id)
+    try {
+      const key = `noqueue:attention-seen:${venue.id}:${selected}`
+      const stored = JSON.parse(localStorage.getItem(key) ?? '[]') as unknown
+      const previous = Array.isArray(stored) ? stored.filter(id => typeof id === 'string') : []
+      localStorage.setItem(key, JSON.stringify([...new Set([...previous, ...ids])].slice(-100)))
+    } catch { /* In-memory dedupe still works when storage is unavailable. */ }
+  }, [venue.id, selected])
+  function openAttention(id: string, trigger: HTMLElement | null) {
+    if (!attentionCanOpen) return
+    attentionTrigger.current = trigger
+    rememberAttention(attention.map(item => item.id))
+    setAttentionSheetId(id)
+  }
+  useEffect(() => {
+    // Wait for the parent sheet to close and restore focus before opening another.
+    const timer = window.setTimeout(() => {
+      if (attentionSheetId && automationSnapshot && !attention.some(item => item.id === attentionSheetId)) {
+        setAttentionSheetId(null)
+        return
+      }
+      if (!attentionCanOpen || document.visibilityState === 'hidden' || !navigator.onLine || attentionSheetId) return
+      let stored: unknown = []
+      try { stored = JSON.parse(localStorage.getItem(`noqueue:attention-seen:${venue.id}:${selected}`) ?? '[]') } catch { /* optional storage */ }
+      const seen = new Set(Array.isArray(stored) ? stored : [])
+      const unseen = attention.find(item => !seen.has(item.id) && !seenAttention.current.has(item.id))
+      if (unseen) {
+        attentionTrigger.current = menuTrigger.current
+        rememberAttention(attention.map(item => item.id))
+        setAttentionSheetId(unseen.id)
+      }
+    })
+    return () => window.clearTimeout(timer)
+  }, [attentionSheetId, automationSnapshot, attention, attentionCanOpen, rememberAttention, venue.id, selected])
 
   const pendingQueue = pending
     ? queues.find((item) => item.id === pending.queueId)
@@ -375,7 +424,7 @@ function DashboardContent(props: DashboardProps) {
       entryActions(pendingEntry.status, pendingQueue?.config.type)
     ).includes(pending.action)
   const pendingActionUnavailable =
-    !!pending && (!pendingEntry || !pendingActionAllowed)
+    !!pending && (!pendingEntry || !pendingActionAllowed || (!!pending.attentionId && !!automationSnapshot && !attention.some(item => item.id === pending.attentionId)))
   const commitEntries = useCallback((rows: StaffEntry[]) => {
     entriesRef.current = rows
     setEntries(rows)
@@ -392,6 +441,7 @@ function DashboardContent(props: DashboardProps) {
         setAutomationSnapshot(null)
         setLastSync('')
       }
+      setAttentionSheetId(null)
       setPending(null)
       setOverrideReason('')
       setArrivalMode('notify')
@@ -881,14 +931,18 @@ function DashboardContent(props: DashboardProps) {
       setLoadingConfiguration(false)
     }
   }
-  function selectCommand(entry: StaffEntry, action: EntryCommand['action']) {
+  function selectCommand(entry: StaffEntry, action: EntryCommand['action'], attentionId?: string) {
     if (!queue || commandLock.current || selectedRef.current !== queue.id)
       return
     const trigger = document.activeElement as HTMLElement
+    if (attentionId) {
+      const card = Array.from(document.querySelectorAll<HTMLElement>('[data-entry-id]')).find(row => row.dataset.entryId === entry.id)
+      commandTrigger.current = card?.querySelector<HTMLElement>('[data-manage-entry]') ?? menuTrigger.current
+    }
     // Commands launched from the management sheet should return to the card
     // button that opened it, not to a sheet button that is about to unmount.
     // Swipe/reveal actions use the same persistent card trigger.
-    const launchedFromManagedSheet = managedEntryId === entry.id
+    const launchedFromManagedSheet = managedEntryId === entry.id || !!attentionId
     if (!launchedFromManagedSheet) {
       const card = Array.from(
         document.querySelectorAll<HTMLElement>('[data-entry-id]'),
@@ -929,6 +983,7 @@ function DashboardContent(props: DashboardProps) {
       entryId: entry.id,
       action,
       key: crypto.randomUUID(),
+      ...(attentionId ? { attentionId } : {}),
     }
     if (immediateCall) {
       // Quick services have no assignment choices. Send the selected entry's
@@ -1163,6 +1218,7 @@ function DashboardContent(props: DashboardProps) {
       ...(snapshot.action === 'call'
         ? {
             arrivalMode: callArrivalMode,
+            ...(snapshot.attentionId ? { attentionId: snapshot.attentionId } : {}),
             assignmentToken: currentEntry?.assignment?.token,
             ...(selectedSeating ? { seating: selectedSeating } : {}),
           }
@@ -1179,6 +1235,7 @@ function DashboardContent(props: DashboardProps) {
       ...(snapshot.action === 'call'
         ? {
             arrivalMode: callArrivalMode,
+            ...(snapshot.attentionId ? { attentionId: snapshot.attentionId } : {}),
             ...(selectedSeating ? { seating: selectedSeating } : {}),
           }
         : {}),
@@ -1253,7 +1310,7 @@ function DashboardContent(props: DashboardProps) {
           const entry = entriesRef.current.find(
             (row) => row.id === snapshot.entryId,
           )
-          if (!automaticResult &&
+          if (!automaticResult && e.code !== 'automation_attention_resolved' &&
             entry &&
             allowsEntryAction(entry, snapshot.queueId, snapshot.action)
           ) {
@@ -1263,6 +1320,9 @@ function DashboardContent(props: DashboardProps) {
                 e,
               )} Datos actualizados; revisa el turno y confirma de nuevo.`,
             )
+          } else if (e.code === 'automation_attention_resolved') {
+            setCommandStale(true)
+            setCommandError(errorMessage(e))
           } else if (!automaticResult)
             setCommandError(
               'El turno ya no permite esta acción. Cierra esta ventana y revisa la lista.',
@@ -1543,6 +1603,13 @@ function DashboardContent(props: DashboardProps) {
                 {drawerError}
               </p>
             )}
+            {drawer === 'queue' && attention.length > 0 && permissions.includes('queue.operate') && (
+              <Button variant="outline" className="mb-4 w-full justify-between border-amber-200 bg-amber-50 text-amber-800"
+                disabled={!attentionCanOpen} onClick={event => openAttention(attention[0]!.id, event.currentTarget)}>
+                Asignación manual pendiente{attention.length > 1 ? ` (${attention.length})` : ''}
+                <span>Revisar</span>
+              </Button>
+            )}
             {drawer === 'queue' && queue && (
               <QueueView
                 key={queue.id}
@@ -1625,6 +1692,19 @@ function DashboardContent(props: DashboardProps) {
               onSaved={refresh}
             />
           )}
+          <QueueAutomationAttentionSheet
+            attention={attention} selectedId={attentionCanOpen ? attentionSheetId : null}
+            candidates={attentionCandidates}
+            clockOffsetMs={automationSnapshot ? automationSnapshot.serverNow - automationSnapshot.observedAt : 0}
+            onSelectAttention={setAttentionSheetId}
+            onClose={() => { rememberAttention(attention.map(item => item.id)); setAttentionSheetId(null) }}
+            returnFocus={() => attentionTrigger.current?.isConnected ? attentionTrigger.current : menuTrigger.current}
+            onSelectCandidate={(entry, attentionId) => {
+              rememberAttention(attention.map(item => item.id))
+              setAttentionSheetId(null)
+              selectCommand(entry, 'call', attentionId)
+            }}
+          />
           <QueueTurnSheets
             queue={queue}
             canOperate={permissions.includes('queue.operate')}

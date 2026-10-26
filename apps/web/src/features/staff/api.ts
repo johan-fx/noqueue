@@ -10,6 +10,7 @@ export class ApiError extends Error {
   }
 }
 const messages: Record<string, string> = {
+  automation_attention_resolved: 'Esta incidencia ya se ha resuelto o ha dejado de estar vigente. Cierra esta ventana y revisa la lista.',
   replacement_changed: 'La lista ha cambiado. Revisa las opciones antes de asignar.',
   replacement_unavailable: 'Asigna el siguiente turno manualmente desde la lista.',
   assignment_precondition_required: 'Actualiza la aplicación para asignar turnos.',

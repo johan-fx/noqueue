@@ -637,7 +637,7 @@ staffRoutes.get('/venues/:id/queues', async (c) => {
     .bind(c.req.param('id'))
     .first<{ timezone: string }>()
   const rows = await c.env.DB.prepare(
-    "SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config,(SELECT COUNT(*) FROM queue_entry e WHERE e.queue_id=queue.id AND e.status='waiting') AS waitingCount FROM queue WHERE venue_id=? AND (? != 'queue_staff' OR EXISTS (SELECT 1 FROM staff_queue_assignment a WHERE a.queue_id=queue.id AND a.venue_id=queue.venue_id AND a.user_id=?))",
+    "SELECT id,name,venue_id AS venueId,capacity,average_minutes AS averageMinutes,open,version,config,(SELECT COUNT(*) FROM queue_entry e WHERE e.queue_id=queue.id AND e.status='waiting') AS waitingCount,(SELECT COUNT(*) FROM queue_automation_attention a JOIN queue_automation_cycle c ON c.id=a.cycle_id WHERE a.queue_id=queue.id AND a.resolved_at IS NULL AND (c.service_ends_at IS NULL OR c.service_ends_at>unixepoch('now')*1000) AND EXISTS(SELECT 1 FROM queue_entry e WHERE e.queue_id=a.queue_id AND e.status='waiting' AND e.manual_only=0 AND (e.service_ends_at IS NULL OR e.service_ends_at>unixepoch('now')*1000))) AS manualAttentionCount FROM queue WHERE venue_id=? AND (? != 'queue_staff' OR EXISTS (SELECT 1 FROM staff_queue_assignment a WHERE a.queue_id=queue.id AND a.venue_id=queue.venue_id AND a.user_id=?))",
   )
     .bind(c.req.param('id'), access.role, c.get('actor').id)
     .all<{ id: string; config: string }>()

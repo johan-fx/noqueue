@@ -649,6 +649,13 @@ export async function runQueueCommand(
       }
     }
   }
+  if (input.attentionId) {
+    const attention = await env.DB.prepare('SELECT 1 FROM queue_automation_attention WHERE cycle_id=? AND queue_id=? AND resolved_at IS NULL')
+      .bind(input.attentionId, queueId).first()
+    if (!attention) throw new HTTPException(409, { message: 'automation_attention_resolved' })
+    extra.push(env.DB.prepare(`UPDATE queue_automation_attention SET resolved_at=?,resolution='assigned',resolved_entry_id=?
+      WHERE cycle_id=? AND queue_id=? AND resolved_at IS NULL`).bind(now, input.entryId, input.attentionId, queueId))
+  }
   if (input.action === 'call') {
     const context = await assignmentContext(callState, input.entryId, now)
     if (input.assignmentToken && input.assignmentToken !== context.token)

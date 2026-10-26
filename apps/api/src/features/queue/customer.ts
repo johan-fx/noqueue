@@ -1,3 +1,4 @@
+import { createAutomationAttention } from './automation-attention'
 import { whatsappEligibleSql } from './whatsapp-suppression'
 import { selectAutomationSuccessor, stopAutomation } from './automation'
 import {
@@ -153,7 +154,11 @@ export async function expireArrivals(
       )
       result = 'replaced'
     }
-    if (!successor) statements.push(stopAutomation(env, entry.id, entry.call_cycle, result, now))
+    if (!successor) {
+      statements.push(stopAutomation(env, entry.id, entry.call_cycle, result, now))
+      if (result === 'no_candidate' && selection.cycle?.state === 'active' && selection.cycle.service_type === 'restaurant')
+        statements.push(createAutomationAttention(env, queueId, selection.cycle.id, entry.id, now))
+    }
     if (policy)
       statements.push(
         finishCallReplacement(

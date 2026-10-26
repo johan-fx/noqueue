@@ -202,13 +202,13 @@ test('snapshot query still fails closed above 95000 bytes instead of splitting r
  const db=source()
  try {
   const {schema,columns,sql}=snapshot(db)
-  // This identifier occurs four times (INSERT columns, typeof, hex, quote).
+  // The original identifier occurs twice (INSERT columns and aliased SELECT).
   // Test immediately on either side of the actual guard, not just a huge query.
-  const padding=Math.floor((95000-Buffer.byteLength(sql))/4)
+  const padding=Math.floor((95000-Buffer.byteLength(sql))/2)
   const padded=n=>columns.map(c=>c.tbl==='backup_edge'&&c.name==='real_value'?{...c,name:c.name+'_'.repeat(n)}:c)
   const bytes=Buffer.byteLength(snapshotSQL(schema,padded(padding)))
-  assert.equal(bytes,Buffer.byteLength(sql)+4*padding)
-  assert.ok(bytes<=95000&&bytes>94996)
+  assert.equal(bytes,Buffer.byteLength(sql)+2*padding)
+  assert.ok(bytes<=95000&&bytes>94998)
   assert.throws(()=>snapshotSQL(schema,padded(padding+1)),/Snapshot SQL exceeds bounded D1 query size; do not paginate/)
  } finally {db.close()}
 })
@@ -241,4 +241,24 @@ test('0038 permits privacy deletion after handoff and preserves surviving attemp
    }
   } finally {db.close();restored.close()}
  }
+})
+
+test('0040 durable attention survives backup restore and cascades with its expired entry',()=>{
+ const db=source(), restored=new DatabaseSync(':memory:')
+ try {
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM queue_automation_attention').get().n,0)
+  db.exec(`INSERT INTO queue_entry
+    (id,queue_id,idempotency_key,request_hash,recovery_hash,code,party_size,locale,status,created_at,sequence,call_cycle)
+    VALUES ('attention-root','demo-queue','attention-key','r','h','ATT1',2,'es','expired',100,1,1);
+    INSERT INTO queue_automation_cycle(id,queue_id,initial_entry_id,initial_call_cycle,current_entry_id,current_call_cycle,service_type,capacity,space_id,seats,state,reason,created_at,updated_at)
+    VALUES ('attention-cycle','demo-queue','attention-root',1,'attention-root',1,'restaurant',2,'inside',2,'stopped','no_candidate',100,160);
+    INSERT INTO queue_automation_attention(cycle_id,queue_id,entry_id,created_at) VALUES ('attention-cycle','demo-queue','attention-root',160);`)
+  const {captured}=snapshot(db)
+  restored.exec('PRAGMA foreign_keys=ON; BEGIN;'+restoreStatements(captured).join('\n')+'\nCOMMIT;')
+  assert.deepEqual(restored.prepare('SELECT * FROM queue_automation_attention').all(),db.prepare('SELECT * FROM queue_automation_attention').all())
+  assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[])
+  restored.exec("DELETE FROM queue_entry WHERE id='attention-root'")
+  assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM queue_automation_attention').get().n,0)
+  assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[])
+ } finally {db.close();restored.close()}
 })

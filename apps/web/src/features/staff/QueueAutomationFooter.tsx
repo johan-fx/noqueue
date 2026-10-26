@@ -47,11 +47,12 @@ export function QueueAutomationFooter({
           ? 'active'
           : 'paused'
   const active = state === 'active'
+  const needsAttention = (automation?.attention?.length ?? 0) > 0
   const label = {
     unknown: 'Estado automático sin confirmar',
     unavailable: 'Gestión automática no disponible',
     active: 'Gestión automática activa',
-    paused: 'Gestión automática pausada',
+    paused: needsAttention ? 'Asignación manual pendiente' : 'Gestión automática pausada',
   }[state]
 
   if (!configuredNow && (type === 'restaurant' || !canOperate)) return null
@@ -97,6 +98,8 @@ export function QueueAutomationFooter({
                 ? 'No se ha podido confirmar el estado de la gestión automática. Espera a la próxima actualización.'
                 : 'La automatización no está disponible para este servicio. Una asignación manual no la reactivará mientras siga deshabilitada.'}
             </p>
+          ) : needsAttention ? (
+            <p className="text-xs leading-4 text-muted-foreground">Un ciclo ha finalizado sin sustituto compatible. Revisa el aviso para iniciar una nueva asignación manual.</p>
           ) : (
             <p className="text-xs leading-4 text-muted-foreground">
               {type === 'restaurant' && (

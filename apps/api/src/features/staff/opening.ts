@@ -108,6 +108,9 @@ export async function runLifecycleCommand(
     holds: state.holds.map((h) => ({ ...h })),
   }
   const statements: D1PreparedStatement[] = []
+  if (input.action === 'close') statements.push(env.DB.prepare(
+    "UPDATE queue_automation_attention SET resolved_at=?,resolution='service_ended' WHERE queue_id=? AND resolved_at IS NULL",
+  ).bind(now, queueId))
   const activates = ['declare_full', 'resume', 'open'].includes(input.action)
   if (activates) after.demandActive = true
   if (input.action === 'pause' || input.action === 'close')

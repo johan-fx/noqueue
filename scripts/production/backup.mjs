@@ -48,8 +48,12 @@ export function snapshotSQL(schema, columns) {
     assert.ok(!cols.some(c => ['rowid','_rowid_','oid'].includes(c.name.toLowerCase())), 'Shadowed rowid unsupported')
     const names = ['_rowid_', ...cols.map(c => c.name)]
     const prefix = `INSERT INTO ${id(t.name)}(${names.map(id).join(',')}) VALUES (`
-    const expression = `${str(prefix)}||${names.map(literal).join("||','||")}||');'`
-    return `json_object('name',${str(t.name)},'rows',json((SELECT COALESCE(json_group_array(stmt),'[]') FROM (SELECT ${expression} AS stmt FROM ${id(t.name)} ORDER BY _rowid_))))`
+    // Short aliases avoid repeating long column names in every type/hex/quote
+    // branch. Keep one read snapshot and the unchanged 95 kB safety bound.
+    const aliases = names.map((_, index) => `c${index}`)
+    const selection = names.map((name, index) => `${id(name)} ${id(aliases[index])}`).join(',')
+    const expression = `${str(prefix)}||${aliases.map(literal).join("||','||")}||');'`
+    return `json_object('name',${str(t.name)},'rows',json((SELECT COALESCE(json_group_array(stmt),'[]') FROM (SELECT ${expression} AS stmt FROM (SELECT ${selection} FROM ${id(t.name)} ORDER BY _rowid_)))))`
   })
   // Single statement = one SQLite read snapshot. Include schema in that same read.
   const sql = `SELECT ${schemaJSON} AS schema_json,${groupedJSON(parts)} AS tables_json,(SELECT json_group_array(json_object('name',name,'seq',CAST(seq AS TEXT))) FROM sqlite_sequence WHERE name IN (${tables.map(t => str(t.name)).join(',')})) AS sequences_json`

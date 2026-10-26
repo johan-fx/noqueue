@@ -2981,3 +2981,73 @@ describe('direct assignment from quick-service management', () => {
     expect(sends).toHaveLength(1)
   })
 })
+
+describe('durable manual assignment attention', () => {
+  const incident = { id: 'attention-pepe', createdAt: 1, capacity: 2, spaceId: 'inside', spaceName: 'Interior', entry: { id: 'pepe', code: '9R8UW8', displayName: 'Pepe' } }
+  const alberto: StaffEntry = { id: 'alberto', code: 'JNXM87', displayName: 'Alberto', partySize: 4, status: 'waiting', version: 0, sequence: 2, calledAt: null, allowedActions: ['call', 'cancel'], waitingSince: Date.now() - 60000, preferredSpaceId: 'inside', space: { id: 'inside', name: 'Interior', source: 'preferred' } }
+  const venue = { id: 'attention-hotel', name: 'Hotel', organizationId: 'org', organizationName: 'Org', role: 'queue_staff' as const }
+  function setupAttention(initial = true) {
+    localStorage.clear()
+    let pending = initial
+    let assigned = false
+    const posts: unknown[] = []
+    vi.mocked(api).mockImplementation(async (path, _method, body) => {
+      if (path.endsWith('/commands')) { posts.push(body); pending = false; assigned = true; return { ok: true } }
+      if (path.endsWith('/queues')) return [{ ...service, name: 'Snack bar', open: 1, queueState: 'active', manualAttentionCount: pending ? 1 : 0,
+        config: { ...service.config, automaticAssignmentEnabled: true, spaces: [{ id: 'inside', name: 'Interior', tables: 2, tableTypes: [{ seats: 2, count: 1 }, { seats: 4, count: 1 }] }] } }]
+      if (path.includes('/automation')) return { configured: true, effective: true, activeCycles: 1, serverNow: Date.now(), cursor: 0, events: [], attention: pending ? [incident] : [] }
+      if (path.endsWith('/entries')) return [{ ...alberto, ...(assigned ? { status: 'called', allowedActions: ['complete', 'cancel'] } : {}) }]
+      return []
+    })
+    return { posts, setPending: (value: boolean) => { pending = value } }
+  }
+  it('opens from a baseline, keeps Ahora no pending across remount/focus, and assigns only on Confirmar', async () => {
+    const f = setupAttention()
+    const view = render(<Dashboard venue={venue} />)
+    expect(await screen.findByText('Requiere revisión')).toBeVisible()
+    fireEvent.click(screen.getByRole('button', { name: 'Ver lista' }))
+    let sheet = await screen.findByRole('dialog', { name: 'No hay un turno compatible' })
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Ahora no' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'No hay un turno compatible' })).not.toBeInTheDocument())
+    fireEvent(window, new Event('focus'))
+    expect(f.posts).toHaveLength(0)
+    expect(await screen.findByRole('button', { name: /Asignación manual pendiente.*Revisar/ })).toBeVisible()
+    view.unmount()
+    render(<Dashboard venue={venue} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+    const review = await screen.findByRole('button', { name: /Asignación manual pendiente.*Revisar/ })
+    expect(screen.queryByRole('dialog', { name: 'No hay un turno compatible' })).not.toBeInTheDocument()
+    fireEvent.click(review)
+    sheet = await screen.findByRole('dialog', { name: 'No hay un turno compatible' })
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Asignar' }))
+    const confirm = await screen.findByRole('button', { name: 'Confirmar' })
+    expect(f.posts).toHaveLength(0)
+    fireEvent.click(confirm)
+    await waitFor(() => expect(f.posts).toHaveLength(1))
+    expect(f.posts[0]).toMatchObject({ action: 'call', entryId: 'alberto', attentionId: 'attention-pepe', seating: { mode: 'confirmed', spaceId: 'inside', seats: 4 } })
+    await waitFor(() => expect(screen.queryByRole('button', { name: /Asignación manual pendiente.*Revisar/ })).not.toBeInTheDocument())
+    expect(screen.queryByRole('dialog', { name: 'No hay un turno compatible' })).not.toBeInTheDocument()
+  })
+  it('waits for an existing management sheet instead of interrupting it', async () => {
+    const f = setupAttention(false)
+    render(<Dashboard venue={venue} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Gestionar turno JNXM87' }))
+    const manage = await screen.findByRole('dialog', { name: 'Gestionar turno' })
+    f.setPending(true)
+    fireEvent(window, new Event('focus'))
+    await waitFor(() => expect(screen.getByRole('button', { name: /Asignación manual pendiente.*Revisar/, hidden: true })).toBeDisabled())
+    expect(screen.queryByRole('dialog', { name: 'No hay un turno compatible' })).not.toBeInTheDocument()
+    fireEvent.click(within(manage).getByRole('button', { name: 'Cerrar' }))
+    expect(await screen.findByRole('dialog', { name: 'No hay un turno compatible' })).toBeVisible()
+    expect(f.posts).toHaveLength(0)
+  })
+  it('does not expose the intervention sheet or its assignment actions to viewers', async () => {
+    setupAttention()
+    render(<Dashboard venue={{ ...venue, role: 'viewer' }} />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver lista' }))
+    await screen.findByText('Alberto')
+    expect(screen.queryByRole('dialog', { name: 'No hay un turno compatible' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Asignación manual pendiente.*Revisar/ })).not.toBeInTheDocument()
+  })
+})

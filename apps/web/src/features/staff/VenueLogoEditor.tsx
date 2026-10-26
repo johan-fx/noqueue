@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react'
 import { ImageIcon, Pencil } from 'lucide-react'
 import type { VenueLogoState } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Dialog,
   DialogContent,
@@ -199,7 +200,8 @@ export function VenueLogoEditor({
                 >
                   Cancelar
                 </Button>
-                <Button type="button" disabled={!canSave} onClick={() => void save()}>
+                <Button type="button" aria-busy={busy || undefined} disabled={!canSave} onClick={() => void save()}>
+                  {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
                   {busy ? 'Guardando…' : 'Guardar'}
                 </Button>
               </DialogFooter>

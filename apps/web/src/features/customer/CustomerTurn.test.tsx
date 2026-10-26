@@ -142,26 +142,21 @@ it.each([
   resource.data.customer!.phase = 'cancelled'
   resource.data.customer!.actions = []
   if (serviceEnded) resource.data.customer!.cancellationReason = 'service_ended'
-  const native = platform === 'native'
-  const destination = native ? `/?lang=${locale}` : `/v/venue?lang=${locale}`
+  const destination = `/?lang=${locale}`
   render(
     <MemoryRouter initialEntries={[`/t/token?lang=${locale}`]}>
       <Routes>
         <Route path="/t/:recoveryToken" element={<CustomerTurn />} />
         <Route path="/" element={<h1>Home destination</h1>} />
-        <Route path="/v/venue" element={<h1>Venue destination</h1>} />
       </Routes>
     </MemoryRouter>,
   )
   expect(screen.getByRole('link', { name: locale === 'es' ? 'Volver' : 'Back' }))
     .toHaveAttribute('href', destination)
-  const exit = screen.getByRole('link', { name: native
-    ? locale === 'es' ? 'Volver al inicio' : 'Back to home'
-    : locale === 'es' ? 'Seleccionar lista de espera' : 'Choose a waiting list' })
+  const exit = screen.getByRole('link', { name: locale === 'es' ? 'Volver al inicio' : 'Back to search' })
   expect(exit).toHaveAttribute('href', destination)
-  if (native) expect(screen.queryByRole('link', { name: /Seleccionar lista|Choose a waiting list/ })).not.toBeInTheDocument()
   fireEvent.click(exit)
-  expect(await screen.findByRole('heading', { name: native ? 'Home destination' : 'Venue destination' })).toBeVisible()
+  expect(await screen.findByRole('heading', { name: 'Home destination' })).toBeVisible()
 })
 
 it('still prevents native back navigation while a turn is active', () => {

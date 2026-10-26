@@ -11,6 +11,7 @@ import { ArrowRight, Clock } from 'lucide-react'
 import { isVisibleVenueService, publicVenueSchema } from '@noqueue/contracts/queue'
 import { CustomerShell, LoadError } from './shared'
 const parse = (value: unknown) => publicVenueSchema.parse(value)
+/** @deprecated Venue-level service selection is superseded by public discovery. */
 export function PublicVenue() {
   const { venueId } = useParams()
   const [locale, setLocale] = useLocale(),

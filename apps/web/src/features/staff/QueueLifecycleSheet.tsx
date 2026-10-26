@@ -13,6 +13,7 @@ import {
   SheetFooter,
 } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { api, ApiError, errorMessage } from './api'
 export function QueueLifecycleSheet({
   queueId,
@@ -130,6 +131,7 @@ export function QueueLifecycleSheet({
         </div>
         <SheetFooter>
           <Button
+            aria-busy={busy || undefined}
             disabled={busy || !context || !label}
             onClick={() => {
               if (context && label)
@@ -140,6 +142,7 @@ export function QueueLifecycleSheet({
                 } as QueueLifecycleCommand)
             }}
           >
+            {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
             {busy ? 'Guardando…' : label ?? 'Operación retirada'}
           </Button>
           <Button variant="outline" disabled={busy} onClick={onClose}>

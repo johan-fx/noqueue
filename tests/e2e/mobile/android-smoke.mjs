@@ -29,11 +29,11 @@ function api(route, options = {}) {
 let browser
 async function launch() {
   await browser?.close()
-  adb('shell', 'am', 'force-stop', 'com.noqueue.app')
-  adb('shell', 'am', 'start', '-n', 'com.noqueue.app/.MainActivity')
+  adb('shell', 'am', 'force-stop', 'com.noqueueapp.android')
+  adb('shell', 'am', 'start', '-n', 'com.noqueueapp.android/.MainActivity')
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const pid = adb('shell', 'pidof', 'com.noqueue.app')
+      const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
       if (!/^\d+$/.test(pid)) throw new Error('App not started')
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`)
       // Android WebView does not implement Browser.setDownloadBehavior.
@@ -93,7 +93,7 @@ try {
   }, { origin, token })
   assert.deepEqual(unauthorized, [404, 404, 401])
   pass('Another installation cannot read/cancel; missing identity returns 401')
-  const ciphertext = execFileSync('adb', ['-s', serial, 'exec-out', 'run-as', 'com.noqueue.app', 'cat', 'no_backup/noqueue-installation.v1'])
+  const ciphertext = execFileSync('adb', ['-s', serial, 'exec-out', 'run-as', 'com.noqueueapp.android', 'cat', 'no_backup/noqueue-installation.v1'])
   assert.ok(ciphertext.length > 28 && !ciphertext.includes(Buffer.from(identity)), 'Vault is plaintext')
   page = await launch()
   await expect(page.getByRole('link', { name: 'Abrir turno 1', exact: true })).toBeVisible()
@@ -157,19 +157,19 @@ try {
   for (const table of ['queue_entry_contact', 'consent', 'notification_outbox']) assert.equal(final.counts[table], 0)
   assert.deepEqual(final.statuses, [{ status: 'cancelled', n: 2 }])
   pass('D1 evidence: two cancelled mobile tickets, zero phone contacts/consents/WhatsApp outbox')
-  const logs = adb('logcat', '-d', '--pid', adb('shell', 'pidof', 'com.noqueue.app'))
+  const logs = adb('logcat', '-d', '--pid', adb('shell', 'pidof', 'com.noqueueapp.android'))
   assert.ok(!logs.includes(identity) && !logs.includes(token), 'Credential leaked into native logcat')
   pass('Current process native logs contain no installation secret or ticket capability')
   const vaultFile = 'no_backup/noqueue-installation.v1'
-  adb('shell', 'run-as', 'com.noqueue.app', 'cp', vaultFile, `${vaultFile}.smoke-copy`)
+  adb('shell', 'run-as', 'com.noqueueapp.android', 'cp', vaultFile, `${vaultFile}.smoke-copy`)
   try {
-    adb('shell', `run-as com.noqueue.app sh -c 'printf corrupt > ${vaultFile}'`)
+    adb('shell', `run-as com.noqueueapp.android sh -c 'printf corrupt > ${vaultFile}'`)
     page = await launch()
     await expect(page.getByRole('alert')).toContainText('No se pueden actualizar los datos')
     await assert.rejects(() => vault(page))
-    assert.equal(adb('shell', 'run-as', 'com.noqueue.app', 'cat', vaultFile), 'corrupt')
+    assert.equal(adb('shell', 'run-as', 'com.noqueueapp.android', 'cat', vaultFile), 'corrupt')
   } finally {
-    adb('shell', 'run-as', 'com.noqueue.app', 'mv', `${vaultFile}.smoke-copy`, vaultFile)
+    adb('shell', 'run-as', 'com.noqueueapp.android', 'mv', `${vaultFile}.smoke-copy`, vaultFile)
   }
   page = await launch()
   await expect(page.getByText(/No tienes turnos activos/)).toBeVisible()

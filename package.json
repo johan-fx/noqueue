@@ -29,7 +29,10 @@
     "test:production": "node --test scripts/production/*.test.mjs",
     "production:backup": "node scripts/production/backup-production.mjs",
     "production:deploy": "node scripts/production/deploy.mjs",
-    "demo:queue:automatic": "node scripts/queue-demo/automatic-video.mjs record"
+    "demo:queue:automatic": "node scripts/queue-demo/automatic-video.mjs record",
+    "mobile:assets": "pnpm --filter @noqueue/mobile assets",
+    "mobile:release:prepare": "node apps/mobile/scripts/mobile-release-prepare.mjs",
+    "mobile:release:verify": "node apps/mobile/scripts/mobile-release-verify.mjs"
   },
   "devDependencies": {
     "turbo": "2.10.12",

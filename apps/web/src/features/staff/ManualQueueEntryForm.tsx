@@ -7,6 +7,7 @@ import {
   type PublicService,
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { DrawerFooter } from '@/components/ui/drawer'
 import { PhoneInput } from '@/components/ui/phone-input'
 import { Input } from '@/components/ui/input'
@@ -334,7 +335,8 @@ export function ManualQueueEntryForm({
         )}
       </div>
       <DrawerFooter className="border-t bg-background p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
-        <Button className="h-12 w-full" type="submit" disabled={busy || !ready}>
+        <Button className="h-12 w-full" type="submit" aria-busy={busy || undefined} disabled={busy || !ready}>
+          {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
           {busy ? copy.saving : copy.add}
         </Button>
       </DrawerFooter>

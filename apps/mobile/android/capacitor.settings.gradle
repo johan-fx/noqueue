@@ -17,5 +17,8 @@ project(':capacitor-local-notifications').projectDir = new File('../../../node_m
 include ':capacitor-push-notifications'
 project(':capacitor-push-notifications').projectDir = new File('../../../node_modules/.pnpm/@capacitor+push-notifications@8.1.2_@capacitor+core@8.5.1/node_modules/@capacitor/push-notifications/android')
 
+include ':capacitor-splash-screen'
+project(':capacitor-splash-screen').projectDir = new File('../../../node_modules/.pnpm/@capacitor+splash-screen@8.0.2_@capacitor+core@8.5.1/node_modules/@capacitor/splash-screen/android')
+
 include ':capacitor-native-settings'
 project(':capacitor-native-settings').projectDir = new File('../../../node_modules/.pnpm/capacitor-native-settings@8.2.0_@capacitor+core@8.5.1/node_modules/capacitor-native-settings/android')

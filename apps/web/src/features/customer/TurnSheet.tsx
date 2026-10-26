@@ -2,6 +2,7 @@ import { useRef, useState } from 'react'
 import { Minus, Plus, Users, X } from 'lucide-react'
 import type { CustomerCommand, Entry } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Sheet,
   SheetClose,
@@ -380,6 +381,7 @@ export function TurnSheet({
                   ? 'border-red-600 text-red-600'
                   : ''
               }`}
+              aria-busy={busy || undefined}
               disabled={
                 busy ||
                 blocked ||
@@ -395,6 +397,7 @@ export function TurnSheet({
                 else void confirm()
               }}
             >
+              {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
               {busy
                 ? es
                   ? 'Guardando…'

@@ -33,11 +33,11 @@ function api(route, options = {}) {
 let browser
 async function launch() {
   await browser?.close()
-  adb('shell', 'am', 'force-stop', 'com.noqueue.app')
-  adb('shell', 'am', 'start', '-n', 'com.noqueue.app/.MainActivity')
+  adb('shell', 'am', 'force-stop', 'com.noqueueapp.android')
+  adb('shell', 'am', 'start', '-n', 'com.noqueueapp.android/.MainActivity')
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const pid = adb('shell', 'pidof', 'com.noqueue.app')
+      const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
       if (!/^\d+$/.test(pid)) throw new Error('App not started')
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`)
       // Android WebView does not implement Browser.setDownloadBehavior.
@@ -78,7 +78,7 @@ try {
       await lifecycleControl('expire')
     }
     const page = await launch()
-    const pid = adb('shell', 'pidof', 'com.noqueue.app')
+    const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
     assert.notEqual(pid, lastPID, 'Each phase requires a new app process')
     lastPID = pid
     const result = await page.evaluate(async ({ source, args }) => await (0, eval)(source)(args), {
@@ -101,7 +101,7 @@ try {
     assert.equal(counts.mobile_entry_installation, 4)
     for (const table of ['queue_entry_contact', 'consent', 'notification_outbox']) assert.equal(counts[table], 0)
     const native = await vault(page)
-    const ciphertext = execFileSync('adb', ['-s', serial, 'exec-out', 'run-as', 'com.noqueue.app', 'cat', 'no_backup/noqueue-installation.v1'])
+    const ciphertext = execFileSync('adb', ['-s', serial, 'exec-out', 'run-as', 'com.noqueueapp.android', 'cat', 'no_backup/noqueue-installation.v1'])
     assert.ok(ciphertext.length > 28 && !ciphertext.includes(Buffer.from(native.secret)), 'Vault must stay encrypted')
     await page.screenshot({ path: path.join(evidenceDir, `${lifecycleMode ? 'lifecycle' : 'services'}-${phase}.png`) })
     report.phases.push({ name: phase, pid: Number(pid), ...result })

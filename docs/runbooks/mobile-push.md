@@ -85,7 +85,7 @@ checkpoints ni logs. No añadir analytics ni medir lectura humana por aceptació
 
 ## Configuración y activación futura (consultar estado registrado abajo)
 
-1. IDs registrados: Android `com.noqueue.app`; iOS `com.noqueue-app.ios`. Team Apple `6VYYNUZPSH`.
+1. IDs actuales: Android `com.noqueueapp.android` (migrado el25/10/2026); iOS `com.noqueue-app.ios`. Team Apple `6VYYNUZPSH`.
 2. App Firebase iOS **registrada** en `nq-app-f3127`: ID
    `1:54689871019:ios:bf4f2ec894b1aa99bf73ee`, team `6VYYNUZPSH`.
    `GoogleService-Info.plist` descargado, validado e instalado en
@@ -100,8 +100,13 @@ checkpoints ni logs. No añadir analytics ni medir lectura humana por aceptació
    AppDelegate conserva callbacks, entitlement solo `iphoneos`, Debug development,
    Release production. Perfil Development y artefacto físico firmado auditados el21/10;
    firma de distribución/TestFlight y entrega real se validan por separado.
-4. Android conserva proyecto y `google-services.json`, canal `queue-updates` y
-   contrato actuales. No usa este puente iOS.
+4. Android conserva proyecto `nq-app-f3127`, sender `54689871019`, canal
+   `queue-updates` y contrato FCM, pero usa el nuevo registro Firebase
+   `1:54689871019:android:862772299ec67a4cbf73ee` para `com.noqueueapp.android`.
+   `google-services.json` se descargó de ese registro, no se renombró el anterior.
+   No usa el puente iOS. La app Firebase antigua se conserva para no romper
+   instalaciones de desarrollo existentes; el nuevo paquete es una instalación
+   independiente y no migra su almacenamiento o token automáticamente.
 5. Aplicar migraciones hasta0032 **solo al entorno autorizado** después de revisar
    compatibilidad y retirada de registros APNs. Aquí únicamente fixtures efímeros.
 6. Secretos servidor por entorno: `MOBILE_PUSH_TOKEN_KEY`32bytes hex,

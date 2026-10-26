@@ -125,7 +125,7 @@ function CameraPreview({
         autoPlay
         muted
         playsInline
-        className="aspect-square w-full rounded-lg bg-gray-100"
+        className="aspect-square w-full rounded-lg bg-black object-cover"
         aria-label={locale === 'es' ? 'Vista de la cámara' : 'Camera preview'}
       />
       {error && <p role="alert">{error}</p>}

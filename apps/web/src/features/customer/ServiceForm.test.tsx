@@ -147,3 +147,28 @@ it('pool has only name and preserves the same idempotency key after a lost respo
   await waitFor(() => expect(submit).toHaveBeenCalledTimes(2))
   expect(submit.mock.calls[1]![1]).toBe(submit.mock.calls[0]![1])
 })
+
+it('shows a compact leading spinner and busy semantics while admission is pending', async () => {
+  let finish!: () => void
+  const submit = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+  render(
+    <ServiceForm
+      service={{ ...service, type: 'pool' }}
+      locale="es"
+      channel="mobile"
+      onSubmit={vi.fn()}
+      onMobileSubmit={submit}
+    />,
+  )
+  fireEvent.change(screen.getByLabelText('Nombre'), { target: { value: 'María' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Ponerme en lista' }))
+
+  const button = await screen.findByRole('button', { name: 'Guardando…' })
+  expect(button).toBeDisabled()
+  expect(button).toHaveAttribute('aria-busy', 'true')
+  expect(button.querySelector('[data-icon="inline-start"]')).toHaveClass('animate-spin')
+  expect(button.querySelector('[data-icon="inline-start"]')).toHaveAttribute('aria-hidden', 'true')
+
+  finish()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Ponerme en lista' })).toBeEnabled())
+})

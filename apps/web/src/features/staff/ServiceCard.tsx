@@ -16,6 +16,7 @@ import {
 } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Switch } from '@/components/ui/switch'
 import {
   DropdownMenu,
@@ -314,6 +315,7 @@ export function ServiceCard({
               render={<button type="button" />}
               ref={control}
               aria-label={label}
+              aria-busy={busy || undefined}
               checked={active}
               className="data-[size=default]:h-5 data-[size=default]:w-9"
               disabled={locked || unavailable}
@@ -331,7 +333,10 @@ export function ServiceCard({
                   )
               }}
             />
-            <span>{busy ? 'Guardando…' : label}</span>
+            <span className="flex items-center gap-2" aria-live="polite">
+              {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
+              {busy ? 'Guardando…' : label}
+            </span>
           </div>
         ) : (
           <span />
@@ -395,9 +400,11 @@ export function ServiceCard({
             <Button
               variant="destructive"
               className="bg-red-600 text-white hover:bg-red-700"
+              aria-busy={busy || undefined}
               disabled={busy || locked}
               onClick={() => void operate('pause')}
             >
+              {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
               {busy ? 'Guardando…' : 'Cerrar lista'}
             </Button>
             <Button

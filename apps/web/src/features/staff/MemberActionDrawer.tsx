@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/drawer'
 import { Field, FieldLabel, FieldError } from '@/components/ui/field'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { ChevronLeft } from 'lucide-react'
 import {
@@ -342,8 +343,10 @@ export function MemberActionDrawer({
           <Button
             type="submit"
             form="member-action-form"
+            aria-busy={busy || undefined}
             disabled={busy || (needsQueues && unavailableCatalog)}
           >
+            {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
             {busy ? 'Guardando…' : submitLabel}
           </Button>
         </DrawerFooter>

@@ -31,11 +31,11 @@ function api(route, options = {}) {
 let browser
 async function launch() {
   await browser?.close()
-  adb('shell', 'am', 'force-stop', 'com.noqueue.app')
-  adb('shell', 'am', 'start', '-n', 'com.noqueue.app/.MainActivity')
+  adb('shell', 'am', 'force-stop', 'com.noqueueapp.android')
+  adb('shell', 'am', 'start', '-n', 'com.noqueueapp.android/.MainActivity')
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const pid = adb('shell', 'pidof', 'com.noqueue.app')
+      const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
       if (!/^\d+$/.test(pid)) throw new Error('App not started')
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`)
       // Android WebView does not implement Browser.setDownloadBehavior.
@@ -101,5 +101,5 @@ try {
   process.exitCode = 1
 } finally {
   await browser?.close()
-  try { adb('shell', 'am', 'force-stop', 'com.noqueue.app'); adb('forward', '--remove', 'tcp:9223'); adb('reverse', '--remove', 'tcp:8788') } catch { /* Local cleanup only. */ }
+  try { adb('shell', 'am', 'force-stop', 'com.noqueueapp.android'); adb('forward', '--remove', 'tcp:9223'); adb('reverse', '--remove', 'tcp:8788') } catch { /* Local cleanup only. */ }
 }

@@ -41,7 +41,7 @@ xcodebuild \
 ```
 
 The iOS bundle identifier is `com.noqueue-app.ios` (Apple team `6VYYNUZPSH`, LUMOSA).
-Android retains `com.noqueue.app`. Do not change these identifiers to work around signing errors.
+Android retains `com.noqueueapp.android`. Do not change these identifiers to work around signing errors.
 
 ## Not yet configured
 

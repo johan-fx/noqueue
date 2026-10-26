@@ -19,6 +19,7 @@ import assignIcon from '@/assets/queue-sheet/assign.svg'
 import arrivalClockIcon from '@/assets/queue-sheet/arrival-clock.svg'
 import closeIcon from '@/assets/queue-sheet/close.svg'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Sheet,
   SheetContent,
@@ -348,6 +349,7 @@ export function QueueTurnSheets({
                       : ''
                   }`}
                   variant={pending?.action === 'cancel' ? 'outline' : 'default'}
+                  aria-busy={busy || undefined}
                   disabled={
                     busy ||
                     (!commandUncertain &&
@@ -359,6 +361,7 @@ export function QueueTurnSheets({
                   }
                   onClick={onConfirm}
                 >
+                  {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
                   {busy
                     ? 'Guardando…'
                     : pending?.action === 'cancel'

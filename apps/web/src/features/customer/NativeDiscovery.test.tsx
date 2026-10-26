@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { createNativeRoutes } from '@/app/routes/native-routes'
-import { getDiscoveryCoordinates, nativeDiscoveryReturn, setDiscoveryCoordinates } from './discovery-state'
+import { getDiscoveryCoordinates, setDiscoveryCoordinates } from './discovery-state'
 
 vi.mock('@/app/bootstrap/runtime', () => ({ detectRuntime: () => 'native' }))
 vi.mock('@/platform/capacitor/installation', () => ({ installationSecret: async () => 'ab'.repeat(32) }))
@@ -42,7 +42,7 @@ it('uses the web home with QR, location and search, without tabs, extra catalog 
   expect(screen.queryByText(/Mis turnos|Servicios disponibles|Consultar mis turnos/)).not.toBeInTheDocument()
   expect(fetcher.mock.calls.every(([url]) => url.endsWith('/entries'))).toBe(true)
 })
-it('uses the same result row as web and opens the anonymous form directly', async () => {
+it('uses the same result row as web and returns its anonymous form to the discovery home', async () => {
   mount('/search?text=Sol&type=restaurant&lang=en')
   fireEvent.click(await screen.findByRole('link', { name: /Restaurante Sol/ }))
   expect(await screen.findByLabelText('Name')).toBeVisible()
@@ -50,18 +50,18 @@ it('uses the same result row as web and opens the anonymous form directly', asyn
   expect(screen.queryByRole('checkbox')).not.toBeInTheDocument()
   expect(screen.queryByText(/View venue:/)).not.toBeInTheDocument()
   fireEvent.click(screen.getByRole('link', { name: 'Back' }))
-  await waitFor(() => expect(router.state.location.pathname).toBe('/search'))
-  // Router state can settle before React replaces the admission form's textbox.
-  await waitFor(() => expect(screen.getByRole('textbox')).toHaveValue('Sol'))
-  expect(screen.getByRole('button', { name: 'Restaurants' })).toHaveAttribute('aria-pressed', 'true')
+  await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+  expect(router.state.location.search).toBe('?lang=en')
+  expect(await screen.findByRole('heading', { name: 'Where would you like to join the waiting list?' })).toBeVisible()
+  expect(screen.queryByLabelText('Name')).not.toBeInTheDocument()
 })
-it('opens the shared venue presentation, with no native navigation added', async () => {
+it('redirects a legacy venue-service link to discovery home', async () => {
   mount('/v/v?lang=es')
-  expect(await screen.findByRole('heading', { name: 'Te damos la bienvenida a Hotel Sol' })).toBeVisible()
+  expect(await screen.findByRole('button', { name: /Usar mi ubicación/ })).toBeVisible()
+  await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+  expect(router.state.location.search).toBe('?lang=es')
+  expect(screen.queryByRole('heading', { name: 'Te damos la bienvenida a Hotel Sol' })).not.toBeInTheDocument()
   expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
-  expect(screen.queryByRole('link', { name: 'Volver' })).not.toBeInTheDocument()
-  fireEvent.click(screen.getByRole('link', { name: /Restaurante Sol/ }))
-  expect(await screen.findByLabelText('Nombre')).toBeVisible()
 })
 it('preserves text while retrying discovery independently from installation recovery', async () => {
   searchFailure = true
@@ -103,10 +103,6 @@ it('search still uses authenticated native transport', async () => {
   expect(init.credentials).toBe('omit')
   expect(init.headers.get('Authorization')).toBe(`Bearer ${'ab'.repeat(32)}`)
 })
-it.each(['https://evil.example', '//evil.example', '/\\evil.example', '/staff', '/q/id', '/search#x', null])('rejects untrusted native return context %s', value => {
-  expect(nativeDiscoveryReturn(value)).toBeUndefined()
-})
-
 it('renders the preloaded destination without a duplicate initial resource request', async () => {
   mount('/q/q')
   await screen.findByLabelText('Nombre')
@@ -144,16 +140,16 @@ it('keeps the outgoing screen inert until the next authorized resource is prepar
   expect(screen.getByLabelText('Nombre').closest('[inert]')).toBeNull()
 })
 
-it('restores native search scroll before presenting the prepared return screen', async () => {
+it('returns from a filtered native service form to the localized discovery home', async () => {
   mount('/search?text=Sol&lang=es')
   const serviceLink = await screen.findByRole('link', { name: /Restaurante Sol/ })
-  vi.spyOn(window, 'scrollY', 'get').mockReturnValue(240)
   fireEvent.click(serviceLink)
   await screen.findByLabelText('Nombre')
   expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 0, left: 0, behavior: 'instant' })
   fireEvent.click(screen.getByRole('link', { name: 'Volver' }))
-  await waitFor(() => expect(router.state.location.pathname).toBe('/search'))
-  expect(window.scrollTo).toHaveBeenLastCalledWith({ top: 240, left: 0, behavior: 'instant' })
+  await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+  expect(router.state.location.search).toBe('?lang=es')
+  expect(await screen.findByRole('heading', { name: '¿Dónde quieres unirte a la lista de espera?' })).toBeVisible()
 })
 
 it('shows only a viewport-centered spinner during native startup', () => {

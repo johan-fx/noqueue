@@ -1,5 +1,5 @@
 import '@testing-library/jest-dom/vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { MemoryRouter, Route, Routes } from 'react-router'
 import { PublicQueue } from './PublicQueue'
@@ -37,6 +37,33 @@ it('records a verified direct service visit as an ID-only recent', async () => {
   expect(JSON.parse(localStorage.getItem('noqueue.recent-services')!)).toEqual([
     'direct-service',
   ])
+})
+it('always returns the join header to discovery home instead of venue services or prior search state', async () => {
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json({
+    id: 'q', name: 'Service', venueId: 'venue', venueName: 'Hotel', type: 'pool',
+    open: 1, serviceOpen: true, queueState: 'active', canJoin: true,
+    blockReason: null, waitingTurns: 0, waitingPeople: 0, spaces: [], receptionServices: [],
+  })))
+  render(
+    <MemoryRouter initialEntries={[{
+      pathname: '/q/q',
+      search: '?lang=es',
+      state: { discoveryReturn: '/v/venue?lang=es' },
+    }]}>
+      <Routes>
+        <Route path="/" element={<h1>Buscar establecimientos</h1>} />
+        <Route path="/v/:venueId" element={<h1>Servicios del establecimiento</h1>} />
+        <Route path="/search" element={<h1>Resultados de búsqueda</h1>} />
+        <Route path="/q/:queueId" element={<PublicQueue />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+
+  const back = await screen.findByRole('link', { name: 'Volver' })
+  expect(back).toHaveAttribute('href', '/?lang=es')
+  fireEvent.click(back)
+  expect(await screen.findByRole('heading', { name: 'Buscar establecimientos' })).toBeVisible()
+  expect(screen.queryByRole('heading', { name: 'Servicios del establecimiento' })).not.toBeInTheDocument()
 })
 it.each(['restaurant', 'reception', 'pool'] as const)(
   'shows the %s form without wait information',

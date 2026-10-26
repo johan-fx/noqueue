@@ -1,6 +1,6 @@
 import { DemoQueue } from '@/features/join-queue/web/DemoQueue'
 import { WebJoinQueueScreen } from '@/features/join-queue/web/WebJoinQueueScreen'
-import type { RouteObject } from 'react-router'
+import { redirect, type RouteObject } from 'react-router'
 import { WebShell } from '../shells/WebShell'
 
 export const webRoutes: RouteObject[] = [
@@ -47,9 +47,12 @@ export const webRoutes: RouteObject[] = [
   },
   {
     path: '/v/:venueId',
-    lazy: async () => ({
-      Component: (await import('@/features/customer/PublicVenue')).PublicVenue,
-    }),
+    // Venue-level service selection is deprecated. Keep the path as a
+    // compatibility redirect for old QR/deep links, but never surface it.
+    loader: ({ request }) => {
+      const lang = new URL(request.url).searchParams.get('lang')
+      return redirect(lang === 'es' || lang === 'en' ? `/?lang=${lang}` : '/')
+    },
   },
   {
     path: '/q/:queueId',

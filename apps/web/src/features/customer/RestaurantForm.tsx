@@ -7,6 +7,7 @@ import {
 } from '@noqueue/contracts/queue'
 import { Minus, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { CustomerFooter, type Locale } from './shared'
 import { SpaceSelector } from './SpaceSelector'
@@ -280,6 +281,7 @@ export function RestaurantForm({
         )}
         <Button
           type="submit"
+          aria-busy={busy || undefined}
           disabled={
             busy ||
             (!(kiosk && hasAttempt) &&
@@ -289,6 +291,7 @@ export function RestaurantForm({
                 (!initial && channel === 'web' && !validPublicWhatsAppConsent(phone, consent))))
           }
         >
+          {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
           {busy
             ? es
               ? 'Guardando…'

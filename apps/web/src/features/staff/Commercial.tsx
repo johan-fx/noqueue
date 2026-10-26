@@ -6,6 +6,7 @@ import type {
 } from '@noqueue/contracts/staff'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
@@ -483,10 +484,12 @@ export function Commercial({ logoUploadEnabled = true, metricsEnabled = true }: 
                   <Button
                     type="button"
                     variant="outline"
+                    aria-busy={logoUploading || undefined}
                     disabled={logoUploading}
                     aria-label="Reintentar subida del logotipo"
                     onClick={() => void uploadPendingLogo(pendingLogo)}
                   >
+                    {logoUploading && <Spinner data-icon="inline-start" aria-hidden="true" />}
                     {logoUploading ? 'Subiendo…' : 'Reintentar subida'}
                   </Button>
                 )}
@@ -756,7 +759,8 @@ export function Commercial({ logoUploadEnabled = true, metricsEnabled = true }: 
             <AlertDialogCancel disabled={statusSaving}>
               Cancelar
             </AlertDialogCancel>
-            <Button disabled={statusSaving} onClick={() => void changeStatus()}>
+            <Button aria-busy={statusSaving || undefined} disabled={statusSaving} onClick={() => void changeStatus()}>
+              {statusSaving && <Spinner data-icon="inline-start" aria-hidden="true" />}
               {statusSaving ? 'Guardando…' : action}
             </Button>
           </AlertDialogFooter>

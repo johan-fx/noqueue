@@ -9,7 +9,7 @@
 /* Begin PBXShellScriptBuildPhase section */
         F50000000000000000000001 /* Optional Firebase client configuration */ = {
             isa = PBXShellScriptBuildPhase; buildActionMask = 2147483647;
-            files = (); inputPaths = (); outputPaths = (); alwaysOutOfDate = 1;
+            files = (); inputPaths = ("$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",); outputPaths = (); alwaysOutOfDate = 1;
             name = "Optional Firebase client configuration";
             runOnlyForDeploymentPostprocessing = 0; shellPath = /bin/sh;
             shellScript = "\"$SRCROOT/../../scripts/copy-firebase-config.sh\"";
@@ -17,6 +17,7 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXBuildFile section */
+		E10000000000000000000001 /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = E10000000000000000000002 /* InfoPlist.strings */; };
 		F40000000000000000000001 = {isa = PBXBuildFile; fileRef = F40000000000000000000002; };
 		F30000000000000000000001 = {isa = PBXBuildFile; fileRef = F30000000000000000000002; };
 		A10000000000000000000001 /* TransitionSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10000000000000000000002 /* TransitionSmokeTests.swift */; };
@@ -36,6 +37,8 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		E10000000000000000000003 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/InfoPlist.strings; sourceTree = "<group>"; };
+		E10000000000000000000004 /* es */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = es; path = es.lproj/InfoPlist.strings; sourceTree = "<group>"; };
 		F40000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "discovery-scenarios.js"; sourceTree = "<group>"; };
 		F30000000000000000000002 = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "lifecycle-scenarios.js"; sourceTree = "<group>"; };
 		F20000000000000000000002 /* service-scenarios.js */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.javascript; path = "service-scenarios.js"; sourceTree = "<group>"; };
@@ -97,6 +100,7 @@
 				9582B6822FE993A50072D4E8 /* SceneDelegate.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				E10000000000000000000002 /* InfoPlist.strings */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -161,6 +165,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				es,
 				Base,
 			);
 			mainGroup = 504EC2FB1FED79650016851F;
@@ -189,6 +194,7 @@
 				50379B232058CBB4000EE86E /* capacitor.config.json in Resources */,
 				504EC30D1FED79650016851F /* Main.storyboard in Resources */,
 				2FAD9763203C412B000D30F8 /* config.xml in Resources */,
+				E10000000000000000000001 /* InfoPlist.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -209,6 +215,15 @@
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXVariantGroup section */
+		E10000000000000000000002 /* InfoPlist.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				E10000000000000000000003 /* en */,
+				E10000000000000000000004 /* es */,
+			);
+			name = InfoPlist.strings;
+			sourceTree = "<group>";
+		};
 		504EC30B1FED79650016851F /* Main.storyboard */ = {
 			isa = PBXVariantGroup;
 			children = (

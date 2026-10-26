@@ -14,11 +14,38 @@ test('native SDK is lazy, gated and contains neither Analytics/Auth nor token lo
   assert.match(source, /getBoolean\("enabled", false\)/)
   assert.match(source, /isAutoInitEnabled = false/)
   assert.match(source, /Messaging.messaging\(\).apnsToken = token/)
-  assert.match(read('../capacitor.config.ts'), /NoQueueFcm: \{ enabled: false \}/)
+  const capacitorConfig = read('../capacitor.config.ts')
+  assert.match(capacitorConfig, /NoQueueFcm: \{ enabled: releaseProfile\.fcmEnabled(?:, releaseProfile: releaseProfile\.profile)? \}/)
+  assert.match(capacitorConfig, /profile: 'default', fcmEnabled: false/)
   const plist = read('../ios/App/App/Info.plist')
   for (const key of ['FirebaseMessagingAutoInitEnabled', 'FirebaseAppDelegateProxyEnabled', 'FIREBASE_ANALYTICS_COLLECTION_ENABLED']) assert.match(plist, new RegExp(`<key>${key}</key>\\s*<false\\s*/>`))
   assert.match(plist, /FIREBASE_ANALYTICS_COLLECTION_DEACTIVATED<\/key>\s*<true\s*\/>/)
   assert.match(read('../../api/.dev.vars.example'), /FCM_IOS_ENABLED=false/)
+})
+test('native FCM stays OFF by default and is enabled only by an explicit iOS internal-staging profile', () => {
+  const configUrl = new URL('../capacitor.config.ts', import.meta.url).href
+  const runConfig = env => {
+    const output = execFileSync(process.execPath, ['--experimental-strip-types', '--input-type=module', '-e',
+      `import config from ${JSON.stringify(configUrl)}; console.log(JSON.stringify(config.plugins.NoQueueFcm.enabled))`],
+    { env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    return JSON.parse(output.trim())
+  }
+  const off = { ...process.env }
+  for (const key of ['NOQUEUE_MOBILE_RELEASE_PROFILE', 'NOQUEUE_NATIVE_PLATFORM', 'NOQUEUE_LIVE_RELOAD_URL', 'NOQUEUE_LOCAL_DEVELOPMENT', 'VITE_APP_ENV', 'VITE_API_URL', 'VITE_PUBLIC_APP_ORIGIN', 'VITE_MOBILE_PUSH_ENABLED', 'VITE_ANALYTICS_ENABLED', 'VITE_GA4_MEASUREMENT_ID']) delete off[key]
+  assert.equal(runConfig(off), false)
+
+  const staging = {
+    ...off,
+    NOQUEUE_MOBILE_RELEASE_PROFILE: 'internal-staging',
+    NOQUEUE_NATIVE_PLATFORM: 'ios',
+    VITE_APP_ENV: 'staging',
+    VITE_API_URL: 'https://staging.noqueue-app.com',
+    VITE_PUBLIC_APP_ORIGIN: 'https://staging.noqueue-app.com',
+    VITE_MOBILE_PUSH_ENABLED: 'true',
+    VITE_ANALYTICS_ENABLED: 'false',
+    VITE_GA4_MEASUREMENT_ID: '',
+  }
+  assert.equal(runConfig(staging), true)
 })
 test('migration retires APNs tokens, not installation/turns/notice access; preserves Android', () => {
   const migration = read('../../api/migrations/0032_mobile_fcm_ios.sql')

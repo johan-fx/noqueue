@@ -1,5 +1,5 @@
 import { LoadingSpinner } from '@/components/LoadingSpinner'
-import type { RouteObject } from 'react-router'
+import { redirect, type RouteObject } from 'react-router'
 import { NativeShell } from '../shells/NativeShell'
 import { createNativeOwnership } from '@/platform/capacitor/native-ownership'
 import { createNativeRouteLoader, nativeShouldRevalidate } from '@/platform/capacitor/native-route-loader'
@@ -32,9 +32,12 @@ export function createNativeRoutes(): RouteObject[] {
       { path: '/turns', element: null },
       {
         path: '/v/:venueId',
-        lazy: async () => ({
-          Component: (await import('@/features/customer/PublicVenue')).PublicVenue,
-        }),
+        // Venue-level service selection is deprecated. Keep the path as a
+        // compatibility redirect for old QR/deep links, but never surface it.
+        loader: ({ request }) => {
+          const lang = new URL(request.url).searchParams.get('lang')
+          return redirect(lang === 'es' || lang === 'en' ? `/?lang=${lang}` : '/')
+        },
       },
       {
         path: '/q/:queueId',

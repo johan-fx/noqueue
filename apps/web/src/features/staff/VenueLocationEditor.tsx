@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { VenueLocationSnapshot } from '@noqueue/contracts/discovery'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { LocationPicker } from './LocationPicker'
 import { api, errorMessage, ApiError } from './api'
@@ -124,9 +125,11 @@ export function VenueLocationEditor({
             )}
             <div className="flex flex-wrap gap-2">
               <Button
+                aria-busy={busy || undefined}
                 disabled={!token || busy || conflict}
                 onClick={() => void save()}
               >
+                {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
                 {busy ? 'Guardando…' : 'Guardar ubicación'}
               </Button>
               <Button

@@ -309,7 +309,7 @@ it.each(['es', 'en'] as const)('explains automatic service cancellation without 
   render(<MemoryRouter><TurnView entry={turn} locale={locale} now={1000} updatedAt={1000} onAction={vi.fn()} /></MemoryRouter>)
   expect(screen.getByText(locale === 'es' ? 'El servicio ha finalizado' : 'Service has ended')).toBeVisible()
   expect(screen.queryByText(locale === 'es' ? 'Has abandonado la lista' : 'You have left the waiting list')).not.toBeInTheDocument()
-  expect(screen.getByRole('link', { name: locale === 'es' ? 'Seleccionar lista de espera' : 'Choose a waiting list' })).toBeVisible()
+  expect(screen.getByRole('link', { name: locale === 'es' ? 'Volver al inicio' : 'Back to search' })).toBeVisible()
 })
 
 it.each(['es', 'en'] as const)(

@@ -160,9 +160,7 @@ function CustomerTurnContent({
       title={c?.service.name ?? (es ? 'Tu turno' : 'Your turn')}
       back={
         !(detectRuntime() === 'native' && (!entry || ['waiting', 'called'].includes(entry.status))) && c?.service.venueId
-          ? detectRuntime() === 'native' && c.phase === 'cancelled'
-            ? `/?lang=${locale}`
-            : `/v/${c.service.venueId}?lang=${locale}`
+          ? `/?lang=${locale}`
           : undefined
       }
       locale={locale}

@@ -2,6 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
 
     <!-- LocalNotifications is used only to read display permission. Never request exact alarms. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" tools:node="remove" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" tools:node="remove" />
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" tools:node="remove" />
 
@@ -17,6 +18,11 @@
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
         <meta-data android:name="firebase_analytics_collection_enabled" android:value="false" />
         <meta-data android:name="firebase_analytics_collection_deactivated" android:value="true" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_icon" android:resource="@drawable/ic_stat_noqueue" />
+        <meta-data android:name="com.google.firebase.messaging.default_notification_color" android:resource="@color/brand_notification_color" />
+
+        <!-- The app never schedules persistent local notifications; remove the plugin's boot restore receiver. -->
+        <receiver android:name="com.capacitorjs.plugins.localnotifications.LocalNotificationRestoreReceiver" tools:node="remove" />
 
         <activity
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode|navigation|density"

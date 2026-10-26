@@ -6,14 +6,12 @@
     <key>FirebaseAppDelegateProxyEnabled</key><false/>
     <key>FIREBASE_ANALYTICS_COLLECTION_ENABLED</key><false/>
     <key>FIREBASE_ANALYTICS_COLLECTION_DEACTIVATED</key><true/>
-    <key>NSLocalNetworkUsageDescription</key>
-    <string>Conectar con el servidor local de desarrollo de NoQueue para pruebas en este dispositivo.</string>
     <key>NSCameraUsageDescription</key>
-    <string>Escanear el código QR del establecimiento para acceder a su lista de espera.</string>
+    <string>NoQueue needs camera access to scan an establishment's QR code and join its waitlist.</string>
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>Encontrar establecimientos cercanos cuando eliges usar tu ubicación.</string>
+    <string>NoQueue uses your location only when you choose Nearby to find nearby establishments.</string>
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-    <string>Encontrar establecimientos cercanos cuando eliges usar tu ubicación.</string>
+    <string>NoQueue uses your location only when you choose Nearby to find nearby establishments.</string>
   <key>CAPACITOR_DEBUG</key>
 	<string>$(CAPACITOR_DEBUG)</string>
 	<key>CFBundleDevelopmentRegion</key>

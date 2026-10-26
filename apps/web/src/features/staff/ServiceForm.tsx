@@ -7,6 +7,7 @@ import {
   type ServiceInput,
 } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel, FieldError } from '@/components/ui/field'
 import {
@@ -324,7 +325,8 @@ export function ServiceForm({
           </p>
         )}
         {!hideSubmit && (
-          <Button type="submit">
+          <Button type="submit" aria-busy={form.formState.isSubmitting || undefined} disabled={form.formState.isSubmitting}>
+            {form.formState.isSubmitting && <Spinner data-icon="inline-start" aria-hidden="true" />}
             {form.formState.isSubmitting ? 'Guardando…' : label}
           </Button>
         )}

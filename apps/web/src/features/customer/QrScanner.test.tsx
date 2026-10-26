@@ -23,9 +23,18 @@ it('releases camera controls on close', async () => {
     </MemoryRouter>,
   )
   await waitFor(() => expect(decode).toHaveBeenCalledOnce())
+  const preview = screen.getByLabelText('Vista de la cámara')
+  expect(preview).toHaveClass('object-cover')
+  expect(preview).toHaveClass('bg-black')
+  expect(preview).not.toHaveClass('bg-gray-100')
+  expect(decode).toHaveBeenCalledWith(
+    { video: { facingMode: { ideal: 'environment' } }, audio: false },
+    preview,
+    expect.any(Function),
+  )
   const trackStop = vi.fn()
   Object.defineProperty(
-    screen.getByLabelText('Vista de la cámara'),
+    preview,
     'srcObject',
     {
       configurable: true,

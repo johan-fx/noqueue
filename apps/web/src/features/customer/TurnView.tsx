@@ -1,6 +1,5 @@
 import type { ReactNode } from 'react'
 import { AppLink } from '@/app/navigation/AppLink'
-import { detectRuntime } from '@/app/bootstrap/runtime'
 import { CheckCheck, CircleCheck, Timer } from 'lucide-react'
 import { visibleWaitingCount, type Entry } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
@@ -169,11 +168,8 @@ export function TurnView({
           : 'On your way',
         'Your turn!',
       ]
-  const exitToHome = cancelled && detectRuntime() === 'native'
-  const exitDestination = exitToHome ? `/?lang=${locale}` : `/v/${c.service.venueId}?lang=${locale}`
-  const exitLabel = exitToHome
-    ? es ? 'Volver al inicio' : 'Back to home'
-    : es ? 'Seleccionar lista de espera' : 'Choose a waiting list'
+  const exitDestination = `/?lang=${locale}`
+  const exitLabel = es ? 'Volver al inicio' : 'Back to search'
   if (cancelled && !serviceEnded) {
     return (
       <>
@@ -183,9 +179,9 @@ export function TurnView({
             {es ? 'Ya no estás en la lista de espera' : 'You are no longer on the waiting list'}
           </h1>
           <p className="mt-8 text-base leading-6 text-gray-500">
-            {exitToHome
-              ? es ? 'Puedes buscar otro establecimiento o escanear un QR desde el inicio.' : 'You can find another venue or scan a QR code from home.'
-              : es ? 'Si aún quieres venir, puedes volver a unirte.' : 'If you still want to visit, you can join again.'}
+            {es
+              ? 'Puedes buscar otro establecimiento o escanear un QR desde el inicio.'
+              : 'You can find another venue or scan a QR code from home.'}
           </p>
         </div>
         <CustomerFooter>

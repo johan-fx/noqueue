@@ -70,9 +70,3 @@ export function qrDestination(value: string, origin: string): string | null {
   }
 }
 export const discoveryScroll = new Map<string, number>()
-
-/** Router state is navigation context, never an arbitrary URL to follow. */
-export function nativeDiscoveryReturn(value: unknown): string | undefined {
-  return typeof value === 'string' && /^\/(?:search)?(?:\?[^#\\]*)?$/.test(value)
-    ? value : undefined
-}

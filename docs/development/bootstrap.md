@@ -7,7 +7,7 @@ The repository is already bootstrapped. This record explains where the generated
 | React/Vite | `pnpm create vite@latest apps/web --template react-ts --no-interactive --no-immediate --eslint` |
 | Hono Worker | `pnpm create hono@latest apps/api --template cloudflare-workers --pm pnpm` |
 | shadcn/Base UI | `pnpm dlx shadcn@latest init --cwd apps/web --template vite --base base --defaults --no-monorepo --yes` |
-| Capacitor | `pnpm exec cap init "No Queue" "com.noqueue.app" --web-dir ../web/dist` |
+| Capacitor | `pnpm exec cap init "No Queue" "com.noqueueapp.android" --web-dir ../web/dist` |
 | Native platforms | `pnpm exec cap add android` and `pnpm exec cap add ios --packagemanager SPM` |
 | Playwright | `pnpm create playwright tests/e2e --browser chromium firefox webkit --no-examples` |
 

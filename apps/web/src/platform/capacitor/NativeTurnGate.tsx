@@ -5,6 +5,7 @@ import { useLocation, useNavigation, useRevalidator } from 'react-router'
 import { CustomerShell, LoadError } from '@/features/customer/shared'
 import { useLocale } from '@/features/customer/public-resource'
 import { useAppNavigate } from '@/app/navigation/native-transitions'
+import { finishNativeStartup } from '@/app/bootstrap/native-splash'
 import type { NativeOwnershipCoordinator } from './native-ownership'
 import type { NativeRouteData } from './native-route-loader'
 
@@ -21,6 +22,12 @@ export function NativeTurnGate({ children, coordinator, data }: {
   const preparing = navigation.state !== 'idle' || coordinator.preparing
   const retained = coordinator.retained(location.pathname)
   const blocked = !data.allowed || (!preparing && ownership.error && !retained)
+
+  useLayoutEffect(() => {
+    // An ownership error is a usable retry screen; a redirect/mismatched turn
+    // is not. Initial loader seeds are committed with the child route here.
+    if (blocked || (!preparing && !mismatch)) finishNativeStartup()
+  }, [blocked, preparing, mismatch])
 
   useLayoutEffect(() => {
     if (data.allowed && !mismatch && !ownership.error) coordinator.commit(location.pathname, data.seed)
@@ -66,13 +73,13 @@ export function NativeTurnGate({ children, coordinator, data }: {
     window.addEventListener('focus', visible)
     document.addEventListener('visibilitychange', visible)
     void listen(App.addListener('appStateChange', ({ isActive }) => { if (isActive) refresh() }))
-    void listen(App.addListener('backButton', ({ canGoBack }) => {
+    void listen(App.addListener('backButton', () => {
       if (document.querySelector('[role="dialog"], [role="alertdialog"]')) {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
         return
       }
-      if (coordinator.getSnapshot().entry || !canGoBack) void App.minimizeApp()
-      else window.history.back()
+      if (coordinator.getSnapshot().entry || location.pathname === '/') void App.minimizeApp()
+      else void navigate(`/?lang=${locale}`, { replace: true, intent: 'back' })
     }))
     return () => {
       lifetime.abort(); clearTimeout(timer)
@@ -81,7 +88,7 @@ export function NativeTurnGate({ children, coordinator, data }: {
       window.removeEventListener('focus', visible)
       document.removeEventListener('visibilitychange', visible)
     }
-  }, [coordinator])
+  }, [coordinator, locale, navigate, location.pathname])
 
   const retry = useCallback(() => {
     coordinator.invalidate()

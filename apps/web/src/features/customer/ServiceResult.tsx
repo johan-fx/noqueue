@@ -8,11 +8,9 @@ import { visitService } from './discovery-state'
 export function ServiceResult({
   service,
   locale,
-  returnTo,
 }: {
   service: PublicSearchResult
   locale: Locale
-  returnTo: string
 }) {
   const Icon =
     service.type === 'restaurant'
@@ -33,7 +31,6 @@ export function ServiceResult({
   return (
     <AppLink
       to={`/q/${service.id}?lang=${locale}`}
-      state={{ discoveryReturn: returnTo }}
       onClick={() => visitService(service.id)}
       className="flex w-full items-center gap-4 border-b border-gray-200 pb-3 text-left focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring"
     >

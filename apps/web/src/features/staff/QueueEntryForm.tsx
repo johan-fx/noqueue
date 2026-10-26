@@ -12,6 +12,7 @@ import {
   type ServiceJoin,
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { receptionLabels } from './queue-labels'
@@ -198,8 +199,10 @@ export function QueueEntryForm({
       <Button
         className="h-12 w-full"
         type="submit"
+        aria-busy={busy || undefined}
         disabled={busy || (disabled && !hasAttempt)}
       >
+        {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
         {busy ? (locale === 'es' ? 'Guardando…' : 'Saving…') : submitLabel}
       </Button>
     </form>

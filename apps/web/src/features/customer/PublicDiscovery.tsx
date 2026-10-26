@@ -314,7 +314,6 @@ export function PublicDiscovery({ search = false }: { search?: boolean }) {
           key={service.id}
           service={service}
           locale={locale}
-          returnTo={returnTo}
         />
       ))}
       {!!data?.items.length && (

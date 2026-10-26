@@ -1,5 +1,46 @@
 apply plugin: 'com.android.application'
 
+// Google Play versionCode is supplied for each release; never reuse the local
+// debug default for an upload candidate. Upload credentials stay outside the
+// repository and are read from the process environment only when signing.
+def releaseBuildNumberText = providers.gradleProperty('noqueueBuildNumber').orNull
+def releaseBuildNumber = null
+if (releaseBuildNumberText != null) {
+    if (!(releaseBuildNumberText ==~ /[1-9][0-9]*/)) {
+        throw new GradleException('noqueueBuildNumber must be a positive integer')
+    }
+    try {
+        releaseBuildNumber = Integer.parseInt(releaseBuildNumberText)
+    } catch (NumberFormatException ignored) {
+        throw new GradleException('noqueueBuildNumber must be between 1 and 2100000000')
+    }
+    if (releaseBuildNumber > 2100000000) {
+        throw new GradleException('noqueueBuildNumber must be between 1 and 2100000000')
+    }
+}
+
+def uploadEnvNames = [
+    'NOQUEUE_ANDROID_UPLOAD_KEYSTORE_PATH',
+    'NOQUEUE_ANDROID_UPLOAD_STORE_PASSWORD',
+    'NOQUEUE_ANDROID_UPLOAD_KEY_ALIAS',
+    'NOQUEUE_ANDROID_UPLOAD_KEY_PASSWORD',
+]
+def uploadEnv = uploadEnvNames.collectEntries { name -> [(name): System.getenv(name)] }
+def uploadSigningConfigured = uploadEnvNames.every { name -> uploadEnv[name] != null && !uploadEnv[name].isEmpty() }
+def allowUnsignedRelease = providers.gradleProperty('noqueueAllowUnsignedRelease').orNull == 'true'
+def uploadKeystore = uploadEnv['NOQUEUE_ANDROID_UPLOAD_KEYSTORE_PATH']
+if (uploadSigningConfigured) {
+    if (!new File(uploadKeystore).isAbsolute()) {
+        throw new GradleException('Android upload keystore path must be absolute and outside the repository')
+    }
+    // rootProject.projectDir is apps/mobile/android, not the Git repository.
+    def repositoryRoot = rootProject.projectDir.toPath().resolve('../../..').normalize().toFile().canonicalFile.toPath()
+    def keystorePath = new File(uploadKeystore).canonicalFile.toPath()
+    if (keystorePath.startsWith(repositoryRoot)) {
+        throw new GradleException('Android upload keystore must be stored outside the repository')
+    }
+}
+
 // Opt-in local HTTPS CA. Never part of a normal Debug or any Release build.
 def localTlsDir = providers.gradleProperty('noqueueLocalTlsDir').orNull
 if (localTlsDir != null) {
@@ -11,13 +52,13 @@ if (localTlsDir != null) {
 }
 
 android {
-    namespace = "com.noqueue.app"
+    namespace = "com.noqueueapp.android"
     compileSdk = rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.noqueue.app"
+        applicationId "com.noqueueapp.android"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
+        versionCode releaseBuildNumber ?: 1
         versionName "1.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -26,9 +67,22 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    if (uploadSigningConfigured && !allowUnsignedRelease) {
+        signingConfigs {
+            upload {
+                storeFile file(uploadKeystore)
+                storePassword uploadEnv['NOQUEUE_ANDROID_UPLOAD_STORE_PASSWORD']
+                keyAlias uploadEnv['NOQUEUE_ANDROID_UPLOAD_KEY_ALIAS']
+                keyPassword uploadEnv['NOQUEUE_ANDROID_UPLOAD_KEY_PASSWORD']
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
+            if (uploadSigningConfigured && !allowUnsignedRelease) {
+                signingConfig signingConfigs.upload
+            }
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
@@ -36,6 +90,45 @@ android {
         sourceSets.debug {
             manifest.srcFile 'src/localDebug/AndroidManifest.xml'
             res.srcDirs += ['src/localDebug/res', file(localTlsDir)]
+        }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def releaseRequested = graph.allTasks.any { task -> task.name.toLowerCase().contains('release') }
+    if (releaseRequested) {
+        if (releaseBuildNumber == null) {
+            throw new GradleException('Release builds require -PnoqueueBuildNumber=<positive unique build number>')
+        }
+        // A package migration requires a real Firebase registration, not an edit
+        // of package_name in the previous app's downloaded JSON.
+        def firebaseFile = file('google-services.json')
+        if (!firebaseFile.isFile()) {
+            throw new GradleException('Release requires google-services.json for com.noqueueapp.android')
+        }
+        def firebaseConfig
+        try {
+            firebaseConfig = new groovy.json.JsonSlurper().parse(firebaseFile)
+        } catch (Exception ignored) {
+            throw new GradleException('Release Firebase configuration is not valid JSON')
+        }
+        def firebaseClients = firebaseConfig.client?.findAll {
+            it.client_info?.android_client_info?.package_name == android.defaultConfig.applicationId
+        }
+        if (firebaseConfig.project_info?.project_id != 'nq-app-f3127'
+            || firebaseConfig.project_info?.project_number?.toString() != '54689871019'
+            || firebaseClients?.size() != 1
+            || firebaseClients[0].client_info?.mobilesdk_app_id != '1:54689871019:android:862772299ec67a4cbf73ee') {
+            throw new GradleException('Release Firebase project/sender/app registration does not match com.noqueueapp.android')
+        }
+        if (!allowUnsignedRelease && !uploadSigningConfigured) {
+            throw new GradleException('Release builds require external Android upload signing env; unsigned audit builds must explicitly pass -PnoqueueAllowUnsignedRelease=true')
+        }
+        if (uploadSigningConfigured && !allowUnsignedRelease) {
+            def keystoreFile = new File(uploadKeystore)
+            if (!keystoreFile.isFile() || !keystoreFile.canRead()) {
+                throw new GradleException('Configured Android upload keystore is not a readable file')
+            }
         }
     }
 }

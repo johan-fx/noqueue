@@ -2,7 +2,8 @@ import '@testing-library/jest-dom/vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createMemoryRouter, Outlet, RouterProvider, useLoaderData } from 'react-router'
-const mock = vi.hoisted(() => ({ fetch: vi.fn(), listeners: new Map<string, (data: never) => void>(), minimize: vi.fn() }))
+const mock = vi.hoisted(() => ({ fetch: vi.fn(), listeners: new Map<string, (data: never) => void>(), minimize: vi.fn(), ready: vi.fn() }))
+vi.mock('@/app/bootstrap/native-splash', () => ({ finishNativeStartup: mock.ready }))
 vi.mock('@/data/api/customer', () => ({ customerFetch: mock.fetch }))
 vi.mock('@capacitor/app', () => ({ App: { addListener: async (name: string, cb: (data: never) => void) => { mock.listeners.set(name, cb); return { remove: async () => mock.listeners.delete(name) } }, minimizeApp: mock.minimize } }))
 import { NativeTurnGate } from './NativeTurnGate'
@@ -22,7 +23,7 @@ function mount(path = '/') {
   ] }], { initialEntries: [path] })
   render(<RouterProvider router={router} />)
 }
-beforeEach(() => { mock.listeners.clear(); mock.minimize.mockClear(); mock.fetch.mockReset().mockImplementation(async () => Response.json({ entries: [entry] })) })
+beforeEach(() => { mock.listeners.clear(); mock.minimize.mockClear(); mock.ready.mockClear(); mock.fetch.mockReset().mockImplementation(async () => Response.json({ entries: [entry] })) })
 afterEach(() => { cleanup(); router.dispose() })
 it.each(['/', '/q/other', `/t/${old}`])('resolves %s directly to the owned active turn', async path => {
   mount(path)
@@ -71,6 +72,19 @@ it('Android back backgrounds the active turn rather than returning to a form', a
   expect(mock.minimize).toHaveBeenCalledOnce()
   expect(router.state.location.pathname).toBe(`/t/${token}`)
 })
+it.each([true, false])('Android back from a public join flow returns home (history=%s)', async canGoBack => {
+  mock.fetch.mockImplementation(async () => Response.json({ entries: [] }))
+  mount('/q/service?lang=en')
+  expect(await screen.findByText('Join form')).toBeVisible()
+
+  act(() => mock.listeners.get('backButton')!({ canGoBack } as never))
+
+  await waitFor(() => {
+    expect(router.state.location.pathname).toBe('/')
+    expect(router.state.location.search).toBe('?lang=en')
+  })
+  expect(mock.minimize).not.toHaveBeenCalled()
+})
 it('keeps the previous public form inert while preparing the newly discovered owned turn', async () => {
   mock.fetch.mockImplementation(async () => Response.json({ entries: [] }))
   mount('/q/new')
@@ -100,4 +114,34 @@ it('hides a different private ticket immediately if ownership changes', async ()
   await act(async () => finish(Response.json({})))
   expect(await screen.findByText('Timer')).toBeVisible()
   expect(router.state.location.pathname).toBe(`/t/${token}`)
+})
+
+it('retains the native splash while ownership is unresolved and hides after child commit', async () => {
+  let resolve!: (response: Response) => void
+  mock.fetch.mockImplementationOnce(() => new Promise<Response>(r => { resolve = r }))
+  mock.ready.mockImplementation(() => expect(screen.getByText('Discovery')).toBeVisible())
+  mount()
+  expect(mock.ready).not.toHaveBeenCalled()
+  await act(async () => resolve(Response.json({ entries: [] })))
+  await screen.findByText('Discovery')
+  expect(mock.ready).toHaveBeenCalledOnce()
+  mock.ready.mockReset()
+})
+it('reveals the owned turn only after redirect and prepared route, never intermediate discovery', async () => {
+  mock.ready.mockImplementation(() => {
+    expect(screen.getByText('Timer')).toBeVisible()
+    expect(screen.queryByText('Discovery')).not.toBeInTheDocument()
+  })
+  mount()
+  await screen.findByText('Timer')
+  expect(mock.ready).toHaveBeenCalledOnce()
+  mock.ready.mockReset()
+})
+it('releases splash when initial ownership failure commits a recoverable error', async () => {
+  mock.fetch.mockRejectedValue(new Error('offline'))
+  mock.ready.mockImplementation(() => expect(screen.getByRole('alert')).toBeVisible())
+  mount()
+  await screen.findByRole('alert')
+  expect(mock.ready).toHaveBeenCalledOnce()
+  mock.ready.mockReset()
 })

@@ -14,13 +14,13 @@ const report = { status: 'running', at: new Date().toISOString() }
 try {
   await mkdir(output, { recursive: true })
   adb('reverse', 'tcp:8788', 'tcp:8788')
-  adb('shell', 'pm', 'grant', 'com.noqueue.app', 'android.permission.CAMERA')
-  adb('shell', 'pm', 'grant', 'com.noqueue.app', 'android.permission.ACCESS_COARSE_LOCATION')
+  adb('shell', 'pm', 'grant', 'com.noqueueapp.android', 'android.permission.CAMERA')
+  adb('shell', 'pm', 'grant', 'com.noqueueapp.android', 'android.permission.ACCESS_COARSE_LOCATION')
   adb('emu', 'geo', 'fix', '-3.7038', '40.4168')
-  adb('shell', 'am', 'start', '-n', 'com.noqueue.app/.MainActivity')
+  adb('shell', 'am', 'start', '-n', 'com.noqueueapp.android/.MainActivity')
   for (let i = 0; i < 30; i++) {
     try {
-      const pid = adb('shell', 'pidof', 'com.noqueue.app')
+      const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
       assert.match(pid, /^\d+$/)
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`)
       browser = await chromium.connectOverCDP('http://127.0.0.1:9223', { noDefaults: true }); break
@@ -65,6 +65,6 @@ finally {
   try { adb('shell', 'cmd', 'location', 'providers', 'remove-test-provider', 'network'); adb('shell', 'appops', 'set', 'com.android.shell', 'android:mock_location', 'default') } catch { /* no provider if setup failed */ }
   await writeFile(path.join(output, 'capabilities-result.json'), JSON.stringify(report, null, 2))
   await browser?.close()
-  try { adb('shell', 'am', 'force-stop', 'com.noqueue.app'); adb('forward', '--remove', 'tcp:9223'); adb('reverse', '--remove', 'tcp:8788') } catch { /* dedicated emulator only */ }
+  try { adb('shell', 'am', 'force-stop', 'com.noqueueapp.android'); adb('forward', '--remove', 'tcp:9223'); adb('reverse', '--remove', 'tcp:8788') } catch { /* dedicated emulator only */ }
 }
 console.log(JSON.stringify(report))

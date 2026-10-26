@@ -1,7 +1,9 @@
 import { LoadingSpinner } from '@/components/LoadingSpinner'
-import { useRef, useState, useSyncExternalStore } from 'react'
+import { Spinner } from '@/components/ui/spinner'
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useLocation, useRouteError } from 'react-router'
 import { detectRuntime } from '../bootstrap/runtime'
+import { finishNativeStartup } from '../bootstrap/native-splash'
 import {
   getPwaUpdateErrorMessage,
   requestAppReload,
@@ -40,6 +42,7 @@ const copy = {
 
 /** Eagerly bundled: recovery cannot depend on the route chunk that failed to load. */
 export function RouteErrorBoundary() {
+  useLayoutEffect(() => { finishNativeStartup() }, [])
   const error = useRouteError()
   const { search } = useLocation()
   const locale = new URLSearchParams(search).get('lang') === 'en' ? 'en' : 'es'
@@ -78,10 +81,12 @@ export function RouteErrorBoundary() {
       {failure && canReload && <p role="alert">{failure}</p>}
       <button
         type="button"
-        className="min-h-11 rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
+        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 font-medium text-primary-foreground focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-50"
         disabled={pending || !canReload}
+        aria-busy={pending || undefined}
         onClick={() => void reload()}
       >
+        {pending && <Spinner data-icon="inline-start" aria-hidden="true" />}
         {pending ? text.loading : text.reload}
       </button>
       {pending && <p role="status">{text.loading}</p>}

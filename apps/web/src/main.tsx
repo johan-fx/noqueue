@@ -5,7 +5,9 @@ import App from './App.tsx'
 import { detectRuntime } from './app/bootstrap/runtime'
 import { configureNativeViewport } from './app/bootstrap/native-viewport'
 import { configureAndroidSystemBars } from './app/bootstrap/android-system-bars'
+import { startNativeSplashRecovery } from './app/bootstrap/native-splash'
 
+startNativeSplashRecovery()
 configureNativeViewport(detectRuntime() === 'native')
 void configureAndroidSystemBars()
 

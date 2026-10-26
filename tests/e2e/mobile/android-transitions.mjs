@@ -37,7 +37,7 @@ const foregroundPackage = () => {
 }
 const waitForAppForeground = async expected => {
   for (let attempt = 0; attempt < 30; attempt++) {
-    const foreground = foregroundPackage() === 'com.noqueue.app'
+    const foreground = foregroundPackage() === 'com.noqueueapp.android'
     if (foreground === expected) return
     await sleep(150)
   }
@@ -54,10 +54,10 @@ const remoteVideoPath = `/sdcard/noqueue-transitions-${Date.now()}.mp4`
 let browser, recorder, recorderPid
 
 async function launch() {
-  adb('shell', 'am', 'start', '-n', 'com.noqueue.app/.MainActivity')
+  adb('shell', 'am', 'start', '-n', 'com.noqueueapp.android/.MainActivity')
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
-      const pid = adb('shell', 'pidof', 'com.noqueue.app')
+      const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
       assert.match(pid, /^\d+$/)
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`)
       // WebView does not implement Browser.setDownloadBehavior.
@@ -154,7 +154,7 @@ try {
       // Explicit ACTION_VIEW targets the actual Capacitor Activity so its native
       // App plugin emits AppUrlOpen. The public fixture ID is kept only in RAM.
       execFileSync('adb', [
-        '-s', serial, 'shell', 'am', 'start', '-W', '-n', 'com.noqueue.app/.MainActivity',
+        '-s', serial, 'shell', 'am', 'start', '-W', '-n', 'com.noqueueapp.android/.MainActivity',
         '-a', 'android.intent.action.VIEW', '-d', `https://app.noqueue-app.com${route}?lang=es`,
       ], { stdio: 'ignore' })
       await waitForAppForeground(true)
@@ -166,7 +166,7 @@ try {
       else await waitForAppForeground(true)
       return 'back-pressed'
     }
-    adb('shell', 'am', 'start', '-W', '-n', 'com.noqueue.app/.MainActivity')
+    adb('shell', 'am', 'start', '-W', '-n', 'com.noqueueapp.android/.MainActivity')
     await waitForAppForeground(true)
     return 'app-resumed'
   })
@@ -223,7 +223,7 @@ try {
 } finally {
   await browser?.close()
   try {
-    adb('shell', 'am', 'force-stop', 'com.noqueue.app')
+    adb('shell', 'am', 'force-stop', 'com.noqueueapp.android')
     adb('forward', '--remove', 'tcp:9223')
     adb('reverse', '--remove', 'tcp:8788')
   } catch { /* Dedicated emulator only; no persistent app data is cleared. */ }

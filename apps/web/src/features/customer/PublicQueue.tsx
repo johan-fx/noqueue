@@ -6,8 +6,8 @@ import { usePushAfterJoin } from '@/platform/capacitor/native-push-context'
 import { usePublicAnalyticsPage } from '@/features/privacy/use-public-analytics-page'
 import { useLocale, usePublicResource } from './public-resource'
 import { useEffect, useState } from 'react'
-import { nativeDiscoveryReturn, visitService } from './discovery-state'
-import { useLocation, useParams } from 'react-router'
+import { visitService } from './discovery-state'
+import { useParams } from 'react-router'
 import { useAppNavigate } from '@/app/navigation/native-transitions'
 import {
   joinedEntrySchema,
@@ -27,13 +27,6 @@ export function PublicQueue() {
   const navigate = useAppNavigate()
   const requestPushAfterJoin = usePushAfterJoin()
   const [attemptedQueue, setAttemptedQueue] = useState<string | undefined>()
-  const route = useLocation()
-  const returnTo =
-    channel === 'mobile' ? nativeDiscoveryReturn(route.state?.discoveryReturn) :
-    typeof route.state?.discoveryReturn === 'string' &&
-    /^\/(?:search(?:\?|$)|\?(?:lang=))/.test(route.state.discoveryReturn)
-      ? (route.state.discoveryReturn as string)
-      : undefined
   const [locale, setLocale] = useLocale()
   const {
     data: service,
@@ -105,10 +98,7 @@ export function PublicQueue() {
   return (
     <CustomerShell
       title={service?.name ?? (locale === 'es' ? 'Restaurante' : 'Restaurant')}
-      back={
-        returnTo ??
-        (service?.venueId ? `/v/${service.venueId}?lang=${locale}` : undefined)
-      }
+      back={`/?lang=${locale}`}
       locale={locale}
       setLocale={setLocale}
     >

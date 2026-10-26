@@ -1,6 +1,7 @@
 import { useCallback, useId, useMemo } from 'react'
 import { FileImage, LoaderCircle, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import type { VenueLogo } from '@noqueue/contracts/staff'
 import {
   formatBytes,
@@ -184,13 +185,10 @@ export function VenueLogoUpload({
           }`}
         >
           <span className="flex size-8 items-center justify-center rounded bg-muted p-2 text-muted-foreground">
-            {busy ? (
-              <LoaderCircle aria-hidden="true" className="size-4 animate-spin" />
-            ) : (
-              <Upload aria-hidden="true" className="size-4" />
-            )}
+            <Upload aria-hidden="true" className="size-4" />
           </span>
-          <span className="text-sm font-medium">
+          <span className="flex items-center gap-2 text-sm font-medium">
+            {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
             {busy ? 'Subiendo logotipo…' : 'Subir logotipo'}
           </span>
           <span id={helpId} className="text-sm text-muted-foreground">

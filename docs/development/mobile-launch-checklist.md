@@ -26,7 +26,7 @@ Actualizado: 20/10/2026. Documento de control; no constituye autorización de de
 - [ ] Confirmar política de turnos simultáneos. Hasta decidir: no inventar restricciones distintas de las reglas actuales del servicio.
 - [ ] Confirmar recuperación tras reinstalación/cambio de dispositivo. MVP: continuidad en la misma instalación; no prometer recuperación entre dispositivos.
 - [ ] Definir transferencia explícita de un turno web a la app: este bloque no vincula automáticamente capabilities de otra instalación o del canal web al abrir un enlace.
-- [x] IDs registrados: Android `com.noqueue.app`; iOS `com.noqueue-app.ios`, equipo Apple `6VYYNUZPSH`. Apple rechazó el ID original por no estar disponible. No hay migración entre ambos bundles iOS.
+- [x] IDs actuales: Android `com.noqueueapp.android` (migrado el25/10/2026 para Play); iOS `com.noqueue-app.ios`, equipo Apple `6VYYNUZPSH`. Apple rechazó el ID original por no estar disponible. No hay migración entre ambos bundles iOS.
 
 ## Estrategia de cobertura — compartida y específica de mobile
 
@@ -1479,3 +1479,319 @@ entorno remoto siguen pendientes.
 
 No atribuir esta validación parcial al conjunto del plan. Acta y límites en
 `docs/runbooks/mobile-push.md`, «iOS — llamada única y apertura de aviso antiguo».
+
+## 25/10/2026 — Smoke físico de staging y preparación de distribución interna
+
+Esta entrada añade el resultado físico reciente sin reescribir los cierres locales
+ni las pruebas parciales de octubre. El acta completa es privada/ignorada por Git:
+`reports/staging-private/mobile-2026-10-25/verification.json`.
+
+- [x] Smoke de staging en iPhone14ProMax y Samsung SM-T500: discovery/búsqueda y
+  alta nativa en ambos; push llamado recibido y apertura del turno correcto en
+  ambos; recuperación/llegada en iOS y expiración en Android.
+- [x] 2 instalaciones registradas (1 Android/1 iOS); 11 intentos de outbox
+  aceptados a primer intento, sin errores/pending/failed; 88/88 tests push y
+  typecheck API pasaron. La aceptación del proveedor no prueba visualización de
+  todos los avisos del ciclo.
+- [x] Se conservaron los registros QA; el build iOS normal final se reinstaló y
+  arrancó sin XCTest. Sin borrado de datos, WhatsApp o cambios en producción.
+- [ ] No declarar regresión completa: QR/cámara, geolocalización y offline no se
+  probaron en esa sesión; tampoco se validaron todos los permisos revocados ni
+  firma/distribución de stores.
+- [ ] Integrar y auditar los nuevos masters de marca y generar builds Release de
+  distribución con endpoint staging explícito. **iOS/Android siguen PENDIENTES**
+  hasta tener hashes, firma y validación del binario final; los builds Debug del
+  smoke no son artefactos para tiendas.
+- [ ] Obtener inputs externos de firma: perfil/certificado Apple Distribution
+  y acceso organizacional; Android upload key/keystore y custodia/Play App Signing.
+  La sesión física solo validó Apple Development; la clave de subida Android no
+  está identificada. No poner claves en Git.
+- [ ] Capturar un pack nuevo de ficha con datos sintéticos después de integrar la
+  marca. Los screenshots nativos existentes son de simulador/emulador y apuntan
+  a pruebas locales; falta iPad mientras siga habilitado en Xcode.
+- [ ] Revisar push, cámara QR y ubicación opt-in/rechazada/revocada en los builds
+  finales, más textos de propósito y privacidad. Búsqueda manual debe seguir
+  disponible si cámara o ubicación se deniegan.
+- [ ] Internal Testing/TestFlight y Google Play no se han iniciado ni subido.
+  Cualquier carga requerirá autorización independiente.
+
+Detalle del pipeline, inputs de firma, inventario de capturas y gates:
+`docs/runbooks/mobile-release.md`.
+
+### Resultado de implementación branding/release — 25/10/2026
+
+- [x] Masters Figma aprobados, 48 recursos nativos/Store deterministas, sin recolor de interfaz/PWA; icono con degradado y splash estático.
+- [x] Textos de permisos ES/EN, red local solo Debug, eliminación de boot restore local sin quitar FCM.
+- [x] Perfil `internal-staging`, hash del payload verificado en ambas plataformas; scripts prepare/verify y pruebas de regresión.
+- [x] AAB1.0(1003) firmado con nueva upload key autorizada fuera de Git; bundletool/firma/manifest/payload auditados.
+- [x] Archive Release y IPA1.0(1003) App Store Connect exportado; firma Apple Distribution y APNs production auditados. Export local, no upload.
+- [ ] Registrar/contrastar upload certificate con Play Console; verificador conserva storeReady=false, auditValid=true.
+- [ ] Validación visual cold/warm, matriz física de permisos y nuevas capturas iPhone/iPad/Android. No realizadas en esta ejecución.
+- [ ] Subidas, procesamiento, instalación desde Stores y entrega real TestFlight/APNs production: intervención futura.
+
+Artefactos y hashes: `output/mobile/internal-staging-1003/`. Detalle y límites en `docs/runbooks/mobile-release.md`; la evidencia anterior no se atribuye a este nuevo build.
+
+### QA visual/permisos y revisión1004 — 25/10/2026
+
+Esta entrada actualiza, sin borrar, los pendientes históricos anteriores.
+
+**Implementado**
+- [x] Corregido clipping splash Android12 y foreground adaptativo navy; máscaras seguras probadas por píxel.
+- [x] 48 derivados deterministas; AAB/IPA1004 firmados y auditados. AAB1003 supersedido.
+
+**Verificado localmente**
+- [x] QR real Android/iPhone confirmado por usuario; cámara y ubicación contextual, rechazo y recuperación.
+- [x] Push revocado/recuperado desde Ajustes en ambos físicos; FCM Android real con icono nuevo/canal queue-updates y apertura desde background.
+- [x] Splash frío y retorno caliente Android desde launcher Samsung sin clipping; sin demora artificial.
+- [x] 12 capturas reales de UI: iPhone físico, tablet Android física e iPad **simulado**, con manifest y hashes.
+- [x] 69 tests mobile +73 web focalizados; tipos y generación verificadas.
+- [x] Turnos propios cancelados; QA1011Piscina pausada/sin inscripciones y sin turnos. Chat continúa abierto por petición del usuario.
+
+**Pendiente local/dispositivos**
+- [ ] Splash iPhone concluyente desde launcher y matriz visual completa de apariencias; iPad físico y Android13+ físico.
+- [ ] Primera solicitud push iPhone desde permiso no determinado; lo probado fue revocación/recuperación sin borrar datos.
+- [ ] Confirmación upload certificate en Play Console y estado de cuentas; auditValid=true **no** equivale a storeReady=true.
+
+**Pendiente tras distribución autorizada**
+- [ ] Upload/procesamiento/instalación Store, actualización entre versiones, TestFlight/APNs production y notificación desde proceso terminado.
+
+Acta: `docs/development/mobile-brand-qa-2026-10-25.md`.
+Capturas: `output/mobile/store-screenshots-2026-10-25/`.
+Binarios: `output/mobile/internal-staging-1004/`. No se ha subido nada.
+
+
+### Refinamientos 25/10 — estado más reciente, build1006
+
+**Implementado**
+- [x] Spinners inline-start y aria-busy en botones ocupados/sheets.
+- [x] Regresos al buscador; ruta /v deprecada con redirect; back Android sin historial.
+- [x] SplashScreen oficial8.0.2 manual hasta ruta/error listo, sin retardo mínimo.
+- [x] Visor QR object-cover sin audio ni nuevo plugin/permisos.
+- [x] AAB/IPA1006 firmados y auditados; configuración splash dentro del binario verificada.
+
+**Verificado localmente**
+- [x] 415 tests web focalizados +69 mobile; tipos y diff-check.
+- [x] Splash y regreso al inicio Android/iPhone físicos1005; iPad simulado1005.
+- [x] Back desde enlace sin historial Android físico1006; ambos físicos actualizados a Debug1006.
+- [x] Fuente/IPA AppIcon iOS correctos; sin segunda NoQueue instalada. Icono Android real probado1004.
+- [x] QA1011Piscina restaurada a pausada/0 turnos; sin producción, WhatsApp ni upload.
+
+**Pendiente local**
+- [x] Encuadre cámara física Android/iPhone1006 sobre superficie neutra: marco completo sin bandas; Volver cierra cámara y vuelve a discovery.
+- [x] Busy físico1006: Pasar turno y Abandonar Android; Abandonar iPhone. Vídeos muestran spinner animado a izquierda de Guardando… y controles deshabilitados. No equivale a captura individual de todos los sheets staff/party/space.
+- [x] Nueva push recibida en iPhone físico1006 (XCTest 1/1); captura limitada a su banner.
+- [x] **Revalidado tras reinicio:** una nueva push1006 (turno ZXM6LR) muestra NoQueue, no Capacitor. Sin cambiar assets, reinstalar ni borrar datos. Evidencia física del caso resuelto; no garantiza todas las apariencias/dispositivos ni TestFlight.
+- [ ] Android13+/iPad físicos, apariencias y regresión específica de tecleo rápido.
+- [ ] Asociación upload certificate/Play y estado de cuentas. AuditValid=true no basta para StoreReady.
+
+**Pendiente tras distribución**
+- [ ] Upload e instalación/update de Store; APNs production/TestFlight y proceso terminado.
+
+Binarios vigentes: `output/mobile/internal-staging-1006/`;1004/1005 supersedidos.
+Acta ampliada: `docs/development/mobile-brand-qa-2026-10-25.md`. Chat permanece abierto.
+
+
+### Inicio distribución interna autorizada — 25/10/2026
+
+- Usuario autoriza subir build1006 de staging a Play Internal Testing y TestFlight
+  interno e invitar **solo sosa.johan@gmail.com**. No producción ni pruebas públicas.
+- [x] Sesiones Chrome verificadas: Play NQ-APP (6460888057339474774) y Apple
+  LUMOSA S.A. (6VYYNUZPSH, coincide con el perfil firmado).
+- [ ] Play: primera app aún no creada; formulario bloquea aceptación de Play App
+  Signing porque el usuario actual carece de permiso. Solicitada actuación de
+  propietario/administrador, sin intentar eludir permisos.
+- [ ] Apple: Account Holder debe aceptar el Apple Developer Program License
+  Agreement actualizado. Solicitado al usuario; no aceptado en su nombre.
+- [ ] Apple: confirmar Company Name de la primera app (propuesto LUMOSA S.A.),
+  nombre público de desarrollador no editable normalmente después de crearla.
+- [ ] Crear registros, subir AAB/IPA, esperar procesamiento, configurar grupo/lista
+  restringido al único email autorizado y enviar invitación/enlace de adhesión.
+- **No se ha subido ningún binario ni enviado invitaciones.** No se han creado
+  registros, sustituido claves ni cambiado permisos. Bloqueos de cuentas en
+  `reports/mobile-store-distribution/2026-10-25/` (privado, fuera de Git).
+
+
+### Actualización Apple y pausa por aclaración de TestFlight — 25/10/2026
+
+- Acuerdo Apple aprobado por titular, ausencia de aviso comprobada. Company Name
+  LUMOSA S.A. confirmado usuario. Registro No Queue creado: App ID6826825713,
+  bundle/SKUcom.noqueue-app.ios, idioma españolEspaña, acceso limitado.
+- Subida desde archive1006 finalizó `EXPORT SUCCEEDED`, `Upload succeeded`, a las
+  12:35, con `testFlightInternalTestingOnly=true` y sin incremento automático de
+  build. No publicación App Store. Procesamiento final no comprobado todavía.
+- Grupo `Internal Staging — Johan`, distribución automática desactivada, solo
+  sosa.johan@gmail.com añadido; UI 1 tester /0 builds/No Builds Available.
+  No afirmar entrega de invitación ni disponibilidad para instalar.
+- Usuario interrumpe para aclarar External Testing: correcto para personas sin
+  usuario App Store Connect. Operaciones detenidas; build Internal Only no sirve
+  para externos. Hará falta un nuevo build elegible (número1007 o siguiente libre),
+  grupo externo por email sin enlace público y TestFlight App Review.
+- Play sigue sin upload, bloqueado por aceptación PlaySigning del propietario.
+  Guía GoogleDoc leída: contratoscliente, noAdmin/produccióndelegado por defecto.
+  Pendiente entregar pasos no técnicos para Alberto: crearborradorNoQueue desde
+  cuentaowner/aceptarterminos, sinpublicar; evitarampliar permisos.
+
+
+### TestFlight externo privado — build1007, 25/10/2026
+
+- [x] Usuario confirma **iOS externo por email**, únicamente
+  `sosa.johan@gmail.com`; Android mantiene Internal Testing, pendiente de Alberto.
+- [x] Build1.0(1007) preparado con `internal-staging` (nombre del perfil de backend,
+  no del canal de testers). Assets web idénticos a1006, mismo SHA-256; solo número
+  de build y elegibilidad de distribución nuevos. Sin despliegue web/backend.
+- [x] ArchiveRelease genérico y IPAAppStoreConnect exportados con
+  `testFlightInternalTestingOnly=false`. Auditoría del IPA: todas las comprobaciones
+  pasan, AppleDistribution/team6VYYNUZPSH/APNsproduction/perfilAppStore; no live
+  reload/XCTest/Analytics. El resultado global del verificador queda false solo
+  porque no se pasó AAB; el artefacto iOS es `storeReady=true`.
+- [x] Upload1007 terminado `EXPORT SUCCEEDED`. ASC muestra Binary State Validated,
+  versión1.0/build1007, iPhone+iPad y entitlements APNsproduction.
+- [x] Grupo `External Staging — Invitación privada` creado
+  (65cdd1bd-1e4a-46dc-bee2-3ba2f9b9593b), solo emailJohan, sin publiclink.
+  Grupo interno anterior queda sin builds y sin distribución automática.
+- [x] Datos de contacto autorizados y notas de revisión guardados en ASC; flujo
+  cliente no requiere login. Referencia a política de privacidad existente de staging.
+- [x] QA1011Piscina reanudada con autorización para durar la revisión. Horario
+  temporal24hL-D; original24hsoloLunesyDomingo. Capacidad2/intervalo2min intactos.
+  Restaurar horario original y pausar lista cuando termine; no cancelar turnos ajenos.
+- [x] Declaración de cifrado1007 guardada tras autorización explícita del usuario:
+  None of the algorithms mentioned above por uso de HTTPS/KeychainOS.
+- [x] 1007 asociado al grupo externo y enviado a BetaAppReview. Estado confirmado
+  **Waiting for Review**,1tester/1build. Notificación automática activada para el
+  único tester. Hasta aprobación no afirmar invitación instalable, email entregado
+  ni disponibilidad TestFlight.
+- [ ] Apple debe aprobar la beta; después verificar invitación y restaurar horario
+  original de QA1011Piscina y pausar la lista según autorización.
+- [ ] Instalar desde TestFlight y validar APNsproduction/update/proceso terminado.
+
+Artefactos y provenance: `output/mobile/external-staging-1007/`.
+Evidencias/estado privado: `reports/mobile-store-distribution/2026-10-25/`.
+AAB1006 intacto, sin uploadPlay. Guía clientePaso7.1 ya actualizada para Alberto.
+No publicación AppStore ni enlace público ni nuevos testers. Chat permanece abierto.
+
+### Android: nuevo identificador y prueba interna — build1008, 25/10/2026
+
+- [x] Adoptado `com.noqueueapp.android`, confirmado por usuario y creado por Alberto
+  en Play. No contiene razón social; iOS conserva `com.noqueue-app.ios`.
+- [x] Migrados `applicationId`, namespace, Java, Capacitor, recursos y runners
+  Android. Preparación `--platform android` evita sincronizar o modificar iOS.
+- [x] Registrada nueva app Firebase en `nq-app-f3127`:
+  `1:54689871019:android:862772299ec67a4cbf73ee`. SDK config descargada desde
+  Firebase; no editar únicamente el package de la configuración antigua.
+  Mismo sender `54689871019`, FCM v1 activo; no requiere rotar credenciales backend.
+  Apps Firebase anteriores e iOS/APNs preservadas.
+- [x] AAB firmado 1.0(1008), perfil `internal-staging`, targetSDK36, push activo,
+  Analytics desactivado. Payload web idéntico a1006/1007. 71 tests mobile,
+  16 tests FCM, typecheck y `bundletool validate` pasan.
+- [x] AAB aceptado y publicado exclusivamente en **Prueba interna**. Play confirma
+  **Activo / Disponible para testers internos**, 25oct14:09; versión
+  `1.0 (1008) — staging interno`, sin revisión. No producción ni prueba abierta.
+- [x] Lista `NoQueue — Pruebas internas Johan`, un único correo
+  `sosa.johan@gmail.com`, seleccionada y guardada. Enlace habilitado:
+  <https://play.google.com/apps/internaltest/4701544486585037113>.
+- [x] Certificado **de subida** leído desde Play, SHA-256
+  `BB:A1:D5:00:F2:DD:D0:C5:1C:8E:42:F1:5F:8A:E8:2A:32:79:87:EF:25:DC:53:78:6B:40:9D:28:37:17:45:6E`.
+  Coincide con el firmante del AAB: 10/10 comprobaciones, artefacto Android
+  `auditValid=true, storeReady=true`. Global `storeReady=false` solo porque
+  no se proporcionó un artefacto iOS en esta auditoría Android-only.
+- [x] Hashes de102 archivos iOS/wrangler idénticos al inicio de esta migración;
+  no despliegue web/backend ni envío de notificaciones ni cambios de permisos.
+- [x] Opt-in del único tester completado e instalación real desde Google Play en
+  Samsung SM-T500/Android12: package nuevo, versión1008,
+  `installerPackageName=com.android.vending`. Firma del APK instalado coincide
+  con Play App Signing (SHA-256 `C2:A0:92:F3:CE:AF:7B:63:58:C3:6A:FE:4F:4E:37:C3:6D:06:5B:E1:D9:D0:AB:A9:DE:DB:EE:44:9D:B0:15:8B`).
+  Instalación antigua `com.noqueue.app` y sus datos conservados.
+- [ ] Flujos completos de turno/permisos y entrega FCM real (incluido segundo
+  plano/proceso terminado): pendientes, no declarar PASS. Bloqueo histórico
+  de conectividad resuelto con la VPN de la tablet, ver verificación inferior. Primer arranque
+  muestra «No se pueden actualizar los datos» con Reintentar. Mac/Chrome y HTTPS
+  independiente reproducen timeout hacia staging, antes de obtener respuesta
+  API; ambas IPs DNS `188.114.96.5`/`188.114.97.5` fallan. Causa última de red
+  desconocida, no atribuida al package/Firebase. API de gestión Cloudflare y D1
+  sí responden: Worker staging `e3c205d1-0415-4d89-8cc5-b8ca70f5941e` intacto,
+  38 migraciones y 2 registros push preexistentes; consultas solo lectura.
+  No nuevos envíos, cambios DNS/seguridad, despliegues ni build especulativo.
+  Repetir validación cuando staging vuelva a ser accesible.
+
+Play puede mostrar temporalmente `com.noqueueapp.android (unreviewed)` hasta
+completar configuración/revisión. Puede tardar en propagarse la disponibilidad.
+Nuevo package significa instalación separada de `com.noqueue.app`: no borrar
+la instalación antigua ni asumir migración de datos/turnos.
+
+Dos advertencias no bloqueantes: falta archivo de desofuscación (esta build usa
+`minifyEnabled=false`) y símbolos de depuración nativos. No impidieron publicación.
+Cuenta6460888057339474774, app4972895022306821942, canal4701544486585037113,
+release1. Artefacto/auditoría: `output/mobile/internal-staging-1008/`.
+Evidencias y backups privados:
+`reports/mobile-store-distribution/2026-10-25/android-migration/`.
+AAB SHA-256: `82ccb2d58d0c5ac800b05d665af1b436fffebfbae7aed2f3856e64f37470b785`.
+
+### Recuperación desde VPN de la tablet — 25/10/2026 16:47 UTC
+
+- [x] Usuario instaló VPN en la Samsung SM-T500. Diagnóstico TCP443 a staging
+  desde el propio Android retorna exit0; no se cambió la red desde el agente.
+- [x] Verificada de nuevo la instalación `com.noqueueapp.android` 1.0(1008),
+  installer `com.android.vending` y foreground del paquete nuevo.
+- [x] Inicio sin error y catálogo real de staging visible: QA1011Piscina,
+  Sol Lunamar Palmanova — Front Desk y QA1011Recepción. La consulta visible
+  `1` filtra a los dos servicios QA1011. Evidencias privadas:
+  `android-tablet-vpn-catalog.png` y `android-tablet-vpn-search.png`.
+- [ ] Flujo completo del turno, permisos y entrega FCM real siguen pendientes.
+  Esta comprobación solo acredita apertura/lectura/búsqueda; no se creó turno
+  ni se envió aviso. No fue necesario recompilar ni cambiar Firebase.
+
+
+### Prueba dirigida Play1008 y detención por límite de avisos — 25/10/2026 16:58 UTC
+
+- [x] Alta nativa del único turno sintético `QA Play1008`/`YJT4WU` en
+  QA1011Piscina y consulta desde la nueva app de Google Play. D1 de solo lectura
+  confirma vínculo propietario nativo único y registro Android/FCM habilitado;
+  cero contactos WhatsApp. No se leyeron tokens ni secretos.
+- [x] Abandono desde la app y cancelación confirmados; lista queda con 0 turnos.
+  No se modificaron turnos ajenos ni la app antigua.
+- [!] **Desviación del presupuesto de prueba:** el registro tras el alta y los
+  temporizadores del ciclo generaron automáticamente 3 avisos (`approaching`,
+  `delayed`, `approaching`), aceptados por FCM a primer intento para una única
+  instalación. El límite autorizado era 1. No se ejecutó llamada manual ni
+  envío de prueba adicional; se detuvo y canceló el turno propio al detectarlo.
+  El modo manual de la cola no impide estos avisos de ciclo. El plan de prueba
+  no imponía un límite de salida en el staging desplegado.
+- [ ] Recepción visual, apertura, segundo plano/proceso terminado y matriz de
+  permisos **no validados**. Aceptación del proveedor no equivale a entrega.
+  Seguimiento pausado; presupuesto restante 0 turnos/0 avisos. Antes de más
+  pruebas reales hace falta autorización revisada y un plan con límite de
+  envío efectivo, sin cambios globales que afecten a otros dispositivos.
+
+Evidencias: `android-play1008-own-turn-cancelled.png`,
+`staging-own-turn-cleanup.png` y detalles de outbox sin secretos en `status.json`.
+Espejo cerrado, tablet en Inicio y VPNs intactas.
+
+### Reanudación autorizada y resultado parcial — 25/10/2026 17:40 UTC
+
+Esta sección actualiza el estado actual sin reemplazar el incidente histórico.
+El usuario reanudó la QA; el heartbeat previamente eliminado sigue eliminado.
+
+- [x] Permisos de cámara y ubicación: denegación con fallback y recuperación
+  «Solo esta vez» verificadas físicamente. Visor real de cámara y catálogo
+  cercano visibles. Permisos temporales expirados al terminar.
+- [x] Turno propio `QA Android BG1008`/`W44WMN` en nuevo servicio exclusivo
+  `QA Android1008 aislado`: alta → llamado → llegada confirmada → completed.
+- [x] Una notificación real `called` recibida visualmente en segundo plano.
+  Un destinatario Android habilitado, mismo propietario nativo verificado,
+  cero contactos WhatsApp. Un turno y un aviso nuevos dentro del plan2/2.
+- [x] Limpieza: servicio aislado pausado, cero turnos activos propios, cero
+  avisos propios pendientes, espejo cerrado y tablet en Inicio. VPNs intactas.
+  Los 102 hashes protegidos conservados.
+- [x] Pruebas locales: mobile71, API push69 y web933, todas PASS; types web PASS.
+  Corregida alerta duplicada de asignación obsoleta en Dashboard, con regresión.
+  **Corrección solo local, no desplegada ni incorporada a Play1008.**
+- [ ] Apertura pulsando notificación: control remoto SystemUI no fiable.
+- [ ] Recepción/apertura con proceso cerrado y permisos de notificaciones.
+- [ ] Decodificación QR físico; permiso y visor no equivalen a lectura QR.
+- [ ] Incorporación controlada de corrección local y regresión desplegada.
+
+Resultado: **parcial, no certificable como todas las pruebas superadas**.
+Informe y evidencia de cierre en
+`reports/mobile-store-distribution/2026-10-25/android-migration/validation-report.md`
+y `cleanup-verification.json`. La captura de notificaciones es privada porque
+incluye avisos ajenos; no publicarla sin ocultarlos.

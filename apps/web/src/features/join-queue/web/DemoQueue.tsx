@@ -14,6 +14,7 @@ import {
   type Entry,
 } from '@noqueue/contracts/queue'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import { PublicWhatsAppConsentFields } from '@/features/customer/PublicWhatsAppConsentFields'
 import { validPublicWhatsAppConsent } from '@/lib/phone-validation'
@@ -130,8 +131,10 @@ export function DemoQueue() {
         />
         <Button
           type="submit"
+          aria-busy={busy || undefined}
           disabled={busy || !validPublicWhatsAppConsent(phone, consent)}
         >
+          {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
           {busy
             ? es
               ? 'Guardando…'

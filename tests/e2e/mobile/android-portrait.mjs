@@ -42,12 +42,12 @@ const report = { status: 'running', at: new Date().toISOString(), serial, phases
 const save = () => writeFile(path.join(output, 'result.json'), JSON.stringify(report, null, 2))
 async function launch() {
   await browser?.close()
-  adb('shell', 'am', 'force-stop', 'com.noqueue.app')
-  adb('shell', 'am', 'start', '-n', 'com.noqueue.app/.MainActivity')
+  adb('shell', 'am', 'force-stop', 'com.noqueueapp.android')
+  adb('shell', 'am', 'start', '-n', 'com.noqueueapp.android/.MainActivity')
   for (let attempt = 0; attempt < 30; attempt++) {
     try {
       // Process visibility and its DevTools socket settle asynchronously after start.
-      const pid = adb('shell', 'pidof', 'com.noqueue.app')
+      const pid = adb('shell', 'pidof', 'com.noqueueapp.android')
       assert.match(pid, /^\d+$/)
       adb('forward', 'tcp:9223', `localabstract:webview_devtools_remote_${pid}`)
       browser = await chromium.connectOverCDP('http://127.0.0.1:9223', { noDefaults: true })
@@ -96,7 +96,7 @@ try {
   adb('reverse', 'tcp:8788', 'tcp:8788')
   adb('shell', 'wm', 'dismiss-keyguard')
   // Positive control: the emulator really can rotate before NoQueue constrains it.
-  adb('shell', 'am', 'force-stop', 'com.noqueue.app')
+  adb('shell', 'am', 'force-stop', 'com.noqueueapp.android')
   adb('shell', 'am', 'start', '-a', 'android.settings.SETTINGS')
   adb('shell', 'wm', 'user-rotation', 'lock', '1')
   await expect.poll(() => rotation().actual).toBe(1)
@@ -123,7 +123,7 @@ try {
     await expect(page.getByRole('button', { name: 'Abandonar la lista', exact: true })).toBeVisible()
     const turnPath = new URL(page.url()).pathname // RAM only: owner capability.
     await portrait(`${type}-active`)
-    const oldPid = adb('shell', 'pidof', 'com.noqueue.app')
+    const oldPid = adb('shell', 'pidof', 'com.noqueueapp.android')
     assert.notEqual(await launch(), oldPid, 'Recovery must run in a fresh process')
     // No goto after launch: the native recovery gate must find the active turn itself.
     await expect.poll(() => new URL(page.url()).pathname).toBe(turnPath)
@@ -162,7 +162,7 @@ try {
   process.exitCode = 1
 } finally {
   await browser?.close().catch(() => {})
-  try { adb('shell', 'am', 'force-stop', 'com.noqueue.app') } catch { /* Local cleanup only. */ }
+  try { adb('shell', 'am', 'force-stop', 'com.noqueueapp.android') } catch { /* Local cleanup only. */ }
   try { adb('shell', 'wm', 'user-rotation', ...previousRotation) } catch { process.exitCode = 1 }
   for (const args of [['forward', '--remove', 'tcp:9223'], ['reverse', '--remove', 'tcp:8788']]) {
     try { adb(...args) } catch { /* Mapping may not have been created. */ }

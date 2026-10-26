@@ -8,6 +8,7 @@ import {
 } from '@noqueue/contracts/queue'
 import { Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Input } from '@/components/ui/input'
 import {
   RadioGroup,
@@ -223,6 +224,7 @@ export function ServiceForm({
       <CustomerFooter presentation={presentation}>
         <Button
           type="submit"
+          aria-busy={busy || undefined}
           disabled={
             busy ||
             (!hasAttempt &&
@@ -232,6 +234,7 @@ export function ServiceForm({
                 (channel === 'web' && !validPublicWhatsAppConsent(phone, consent))))
           }
         >
+          {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
           {busy
             ? es
               ? 'Guardando…'

@@ -18,6 +18,7 @@ import {
   DrawerFooter,
 } from '@/components/ui/drawer'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -495,6 +496,7 @@ function ReminderDrawer({
         </div>
         <DrawerFooter className="border-t p-4">
           <Button
+            aria-busy={busy || undefined}
             disabled={busy}
             onClick={() => {
               const parsed = serviceSchema.safeParse(draft)
@@ -507,6 +509,7 @@ function ReminderDrawer({
               void onSave(parsed.data)
             }}
           >
+            {busy && <Spinner data-icon="inline-start" aria-hidden="true" />}
             {busy ? 'Guardando…' : 'Guardar recordatorio'}
           </Button>
           <Button variant="outline" disabled={busy} onClick={onClose}>

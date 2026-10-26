@@ -8,6 +8,7 @@ import {
   type ServiceInput,
 } from '@noqueue/contracts/staff'
 import { Button } from '@/components/ui/button'
+import { Spinner } from '@/components/ui/spinner'
 import {
   Drawer,
   DrawerContent,
@@ -371,9 +372,11 @@ export function ServiceConfigDrawer({
           <Button
             type="button"
             className="h-12 w-full"
+            aria-busy={saving || undefined}
             disabled={saving || (step === 'summary' && saveDisabled)}
             onClick={() => void forward()}
           >
+            {saving && <Spinner data-icon="inline-start" aria-hidden="true" />}
             {saving
               ? 'Guardando…'
               : step === 'summary'

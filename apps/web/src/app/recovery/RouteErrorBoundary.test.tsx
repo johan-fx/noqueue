@@ -5,6 +5,8 @@ import { createMemoryRouter, RouterProvider } from 'react-router'
 import { requestAppReload } from '../pwa/update-coordinator'
 import { detectRuntime } from '../bootstrap/runtime'
 import { withRouteRecovery } from './with-route-recovery'
+import { finishNativeStartup } from '../bootstrap/native-splash'
+vi.mock('../bootstrap/native-splash', () => ({ finishNativeStartup: vi.fn() }))
 
 vi.mock('../pwa/update-coordinator', () => ({
   requestAppReload: vi.fn(),
@@ -29,6 +31,7 @@ function renderFailedRoute(error: unknown = chunkFailure, initialEntry = '/q/a?l
 }
 
 beforeEach(() => {
+  vi.mocked(finishNativeStartup).mockClear()
   vi.mocked(detectRuntime).mockReturnValue('web')
   vi.mocked(requestAppReload).mockReset().mockResolvedValue(undefined)
   vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
@@ -112,4 +115,12 @@ it('allows an offline native shell to recover its locally packaged modules', asy
   expect(button).toBeEnabled()
   fireEvent.click(button)
   expect(requestAppReload).toHaveBeenCalledOnce()
+})
+
+it('signals startup recovery only when the failed lazy route error UI is committed', async () => {
+  vi.mocked(detectRuntime).mockReturnValue('native')
+  renderFailedRoute()
+  expect(finishNativeStartup).not.toHaveBeenCalled()
+  await screen.findByRole('heading')
+  expect(finishNativeStartup).toHaveBeenCalledOnce()
 })

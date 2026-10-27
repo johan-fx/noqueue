@@ -87,7 +87,7 @@ The tool deletes only that invocation's verified UUID/name in `finally`.
 Reports record failures and cleanup; an unknown create outcome is not blindly
 retried. Production and staging are never restore targets of this CLI.
 
-### Verified evidence and limits
+### Historical evidence (17 October) and current bounds
 
 - Saved production archive: `production-2026-10-17T10-49-02-795Z.json.aes256gcm`.
 - 66 base tables, exact data/schema/sequence comparison, local integrity/FKs,
@@ -102,8 +102,10 @@ retried. Production and staging are never restore targets of this CLI.
   `backup-archive-restore.log`. Failed diagnostic attempts are clearly distinct
   from successful reports; their disposable databases were also deleted.
 - This is a **bounded first-release tool**, not an unlimited or periodic backup
-  service: maximum serialized snapshot 1 MiB, generated snapshot query and restore
-  SQL 95 kB each. It aborts without claiming success when limits are exceeded;
+  service: maximum serialized snapshot 1 MiB and generated snapshot SELECT 95 kB.
+  Remote rehearsal now validates 95 kB per restore statement and 1 MiB per
+  complete transactional request (see the 27 October extension below). It fails
+  closed when limits are exceeded;
   never split the live snapshot into inconsistent pages to get around a failure.
   Extend and rehearse the strategy before growth reaches these limits.
 - D1 limits compound SELECT terms to 50 and can flatten nested UNION groups.
@@ -118,9 +120,9 @@ This tool intentionally does not offer an arbitrary live restore target.
 ### Explicit local-only backup (2026-10-27)
 
 A live snapshot can fit the 1 MiB archive bound while its restoration SQL exceeds
-D1 tooling's 95 kB single-request bound. The default and `--rehearse` still fail
-closed above 95 kB; that remote limit has **not** been relaxed or split into
-non-atomic requests.
+the original wrapper's conservative 95 kB aggregate bound. Plain backup without
+`--local-only` or `--rehearse` retains that legacy guard. `--rehearse` now uses
+the bounded transactional batch described below, not separately committed chunks.
 
 For an explicitly authorized production read with **no remote rehearsal**, use:
 
@@ -140,12 +142,60 @@ no application/cron/provider is started, and no migrations are applied.
 
 The report distinguishes `localVerification`, `restoreSqlBytes` and
 `remoteSingleRequestSupported`. A passing local report with the latter `false`
-is **not evidence of a successful D1 remote restoration**: extend and validate
-remote recovery tooling separately before relying on this archive for a live
-cutover. Worker secrets, R2 and queue state still require separate custody.
+is **not evidence of a successful D1 remote restoration**; that flag in the
+local-only path describes the legacy aggregate guard, not the new batch plan.
+Remote success requires a separate `rehearsal:passed` report with verified cleanup.
+Worker secrets, R2 and queue state still require separate custody.
 
 D1 and local SQLite can serialize the same binary64 REAL with different decimal
 spellings. Local comparison accepts only exact finite binary64 equality between
 REAL literals (no tolerance). Integer/int64 literals, text/blob bytes, NULL,
 rowids, order, columns and schema remain exact; integer values never pass through
 JavaScript Number for this comparison.
+
+
+### Transactional remote batch and verified rehearsal — 27 October 2026
+
+The [D1 statement limit](https://developers.cloudflare.com/d1/platform/limits/)
+is 100,000 bytes **per statement**, not the sum of all statements in a batch.
+The [REST query API](https://developers.cloudflare.com/api/resources/d1/subresources/database/methods/query/)
+accepts `{batch:[{sql}, ...]}`. The new `backup-remote.mjs` keeps a conservative
+95,000-byte bound per generated statement and a 1 MiB bound on the complete JSON
+request. It sends exactly one restore request, not a sequence of partial commits.
+Snapshot size/read limits are unchanged. SQL is never split on semicolons,
+so trigger bodies and quoted data remain intact. No plaintext SQL file is written.
+
+Before restoring customer data, the tool sends a synthetic batch that creates
+a table, inserts a row, then deliberately violates its primary key. It requires
+the expected constraint error **and an empty schema afterward**, proving rollback
+of both DDL and data. Only then does it restore the authenticated archive with
+`defer_foreign_keys=ON` and install triggers after loading data. Failure never
+triggers a blind retry or fallback to multiple commits.
+
+Isolation is enforced inside the tool: only a newly returned UUID may be queried
+or deleted; the archive source and all configured production/staging/sandbox IDs
+are forbidden. The new DB is in the EU, with an unpredictable name, no Worker
+binding, route, consumer or cron. Cleanup lives in `finally`, rechecks UUID/name,
+deletes that DB and requires HTTP 404 on readback. A cleanup failure is reported
+as such, never as a fully passed rehearsal. An ambiguous creation outcome keeps
+the requested name in the private report and is not automatically retried.
+
+Verified run:
+- Archive `production-2026-10-27T14-39-16-498Z.json.aes256gcm`, SHA-256
+  `57a2cd3731a7b42ef4864d4eae996ab34d57d01183e0ee5a0b19ed00df7f4971`.
+- **66 tables / 409 rows**, including the unchanged **28-row migration ledger**.
+  No SQL from current migration files was applied to the rehearsal DB.
+- **543 statements**, 304,627 SQL bytes; largest statement **1,822 bytes**;
+  one JSON batch of **322,588 bytes**.
+- Real atomic rollback probe passed; complete data/schema/sequences comparison,
+  remote `foreign_key_check`, `quick_check` and FTS insert/update/delete/MATCH passed.
+- Temporary DB `dd6fff32-0036-4d9c-9ce0-9db16fa01c1a` was deleted; readback **HTTP 404**.
+- Private report: `reports/production-private/backups/production-2026-10-27T14-50-43-611Z.report.json`.
+  `sourceRead:false`, audit records **zero production or protected-database requests**.
+- The archive stayed encrypted on disk; credentials/customer values were not logged.
+  No Worker deployment, binding changes, sends, or migrations 0029–0040 occurred.
+
+This resolves the previous 305 kB restore-tooling blocker for this archive. It
+is not permission to restore over a live database or an approval to cut over.
+Back up again before a later cutover if production has accepted new writes, and
+retain separate custody of the archive/key and non-D1 resources.

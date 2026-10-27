@@ -80,11 +80,15 @@ Preferir rollback de código/flags compatible con el esquema expandido; conserva
 
 ### Revisión de recuperación posterior
 
-La captura productiva actual supera los 95 kB de SQL de restauración del wrapper
-D1 remoto. Se añadió el modo explícito `--local-only`, con comparación completa
-del archivo cifrado restaurado y sin relajar el límite remoto; consultar
-[d1-recovery.md](d1-recovery.md). Antes de un corte, resolver y ensayar la
-recuperación remota de este tamaño. Los cambios de tooling invalidan los hashes
-de fuente del candidato de la preparación inicial: reconstruirlo desde el commit
-cerrado antes de plantear un despliegue; no reutilizar el snapshot previo como si
-fuera la revisión actual.
+La captura de 66 tablas/409 filas (SQL de restauración 304.627 bytes) ya ha
+pasado el ensayo **D1 remoto aislado**: batch único de 543 sentencias,
+comparación de datos/esquema/secuencias, integridad/FK y FTS correctos. La base
+temporal se eliminó con confirmación HTTP 404. Se usó el archivo cifrado guardado,
+sin peticiones a producción y sin aplicar 0029–0040. El antiguo bloqueo de 95 kB
+agregados queda resuelto para este backup: el nuevo límite es 95 kB por sentencia
+y 1 MiB por batch; véase [d1-recovery.md](d1-recovery.md) para evidencia y límites.
+
+Los cambios de tooling invalidan los hashes de fuente del candidato de la
+preparación inicial: revisarlos/cerrarlos y reconstruir antes de plantear un
+despliegue. Sigue siendo necesario un backup fresco si hay escrituras posteriores,
+custodia externa separada de clave/archivo y autorización explícita para el corte.

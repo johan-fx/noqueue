@@ -3,6 +3,23 @@ import { DatabaseSync } from 'node:sqlite'
 import { randomUUID } from 'node:crypto'
 import { MAX_BACKUP_BYTES, inventorySQL, columnsSQL, parseColumns, snapshotSQL, assembleSnapshot, restoreStatements } from './backup.mjs'
 
+// SQLite releases may quote the SAME binary64 REAL with different decimal
+// spellings. Permit exact numeric equality only for REAL literals; never coerce
+// int64, NULL, blobs, hex-encoded text, identifiers or row ordering.
+export function sameRestoredRow(expected, actual) {
+  if (expected === actual) return true
+  const split = row => {
+    const at = row.indexOf(' VALUES (')
+    if (at < 0 || !row.endsWith(');')) return null
+    return { prefix: row.slice(0, at), values: row.slice(at + 9, -2).split(',') }
+  }
+  const a = split(expected), b = split(actual)
+  if (!a || !b || a.prefix !== b.prefix || a.values.length !== b.values.length) return false
+  const real = value => /^-?(?:\d+\.\d*(?:[eE][+-]?\d+)?|\d+[eE][+-]?\d+)$/.test(value)
+  return a.values.every((value, index) => value === b.values[index] ||
+    (real(value) && real(b.values[index]) && Number.isFinite(Number(value)) && Object.is(Number(value), Number(b.values[index]))))
+}
+
 // Do not silently relax the existing single-request remote restore limit.
 // The larger bound is ONLY for an explicitly local in-memory rehearsal.
 export function validateRestoreSize(sql, { localOnly = false, rehearse = false } = {}) {
@@ -24,8 +41,14 @@ export function verifyLocalRestore(snapshot) {
     const columns = parseColumns(db.prepare(columnsSQL(schema)).get())
     const copy = assembleSnapshot(schema, db.prepare(snapshotSQL(schema, columns)).get(), snapshot.source)
     // Compare silently: assertion diagnostics must never expose customer data.
-    for (const name of ['schema', 'tables', 'sequences'])
+    for (const name of ['schema', 'sequences'])
       assert.ok(JSON.stringify(copy[name]) === JSON.stringify(snapshot[name]), `Local restored ${name} differs`)
+    assert.equal(copy.tables.length, snapshot.tables.length)
+    assert.ok(copy.tables.every((table, index) => {
+      const expected = snapshot.tables[index]
+      return table.name === expected.name && table.rows.length === expected.rows.length &&
+        table.rows.every((row, i) => sameRestoredRow(expected.rows[i], row))
+    }), 'Local restored tables differs')
     assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok')
     assert.equal(db.prepare('PRAGMA foreign_key_check').all().length, 0)
     const count = sql => db.prepare(sql).get().n

@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { readdirSync, readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { inventorySQL, columnsSQL, parseColumns, snapshotSQL, assembleSnapshot, restoreStatements, encryptSnapshot, decryptSnapshot } from './backup.mjs'
-import { validateRestoreSize, verifyLocalRestore } from './backup-local.mjs'
+import { validateRestoreSize, verifyLocalRestore, sameRestoredRow } from './backup-local.mjs'
 const migrations = new URL('../../apps/api/migrations/',import.meta.url)
 function source() {
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON;')
@@ -315,4 +315,24 @@ test('saved archive can be fully verified offline with no Cloudflare credentials
   assert.equal(report.localVerification.data,'identical')
   assert.equal(report.localVerification.ftsInsertUpdateDelete,'passed')
  } finally { db.close();rmSync(dir,{recursive:true,force:true}) }
+})
+
+
+test('cross-SQLite REAL quoting compares exact values without weakening int64/text/blob checks', () => {
+ const row = value => `INSERT INTO "example"("_rowid_","value") VALUES (1,${value});`
+ assert.equal(sameRestoredRow(row('0.1'),row('1.0e-1')),true)
+ assert.equal(sameRestoredRow(row('1.25'),row('1.2500000000000000000e+00')),true)
+ for (const [a,b] of [['1.0','1.0000000000000002'], ['9007199254740992','9007199254740993'], ['1','1.0'], ["X'00'","X'01'"], ["X'610062'||''","X'61'||''"], ['NULL','0'], ['9.0e999','1.0e999']])
+  assert.equal(sameRestoredRow(row(a),row(b)),false)
+ assert.equal(sameRestoredRow(row('1.0'),row('1.0').replace('(1,','(2,')),false)
+ assert.equal(sameRestoredRow(row('1.0'),row('1.0').replace('example','different')),false)
+ const db=source()
+ try {
+  db.exec('UPDATE backup_edge SET real_value=1.25 WHERE id=1')
+  const {captured}=snapshot(db)
+  const edge=captured.tables.find(t=>t.name==='backup_edge')
+  assert.ok(edge.rows[0].includes('1.25'))
+  edge.rows[0]=edge.rows[0].replace('1.25','1.2500000000000000000e+00')
+  assert.equal(verifyLocalRestore(captured).data,'identical')
+ } finally { db.close() }
 })

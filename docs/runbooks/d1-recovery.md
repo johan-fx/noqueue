@@ -143,3 +143,9 @@ The report distinguishes `localVerification`, `restoreSqlBytes` and
 is **not evidence of a successful D1 remote restoration**: extend and validate
 remote recovery tooling separately before relying on this archive for a live
 cutover. Worker secrets, R2 and queue state still require separate custody.
+
+D1 and local SQLite can serialize the same binary64 REAL with different decimal
+spellings. Local comparison accepts only exact finite binary64 equality between
+REAL literals (no tolerance). Integer/int64 literals, text/blob bytes, NULL,
+rowids, order, columns and schema remain exact; integer values never pass through
+JavaScript Number for this comparison.

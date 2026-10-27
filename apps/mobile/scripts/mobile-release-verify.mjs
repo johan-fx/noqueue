@@ -6,7 +6,7 @@ import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 
-const EXPECTED_ORIGIN = 'https://staging.noqueue-app.com'
+import { mobileProfile } from './release-profiles.mjs'
 const EXPECTED_IOS_BUNDLE_ID = 'com.noqueue-app.ios'
 const EXPECTED_ANDROID_BUNDLE_ID = 'com.noqueueapp.android'
 const EXPECTED_ANDROID_FIREBASE = {
@@ -36,7 +36,7 @@ export function parseOptions(argv) {
     } else throw new Error(`Unknown option: ${arg}`)
   }
   if (!options.help) {
-    if (options.profile !== 'internal-staging') throw new Error('Only --profile internal-staging is supported')
+    mobileProfile(options.profile)
     if (!/^[1-9][0-9]*$/.test(options.buildNumber ?? '')) throw new Error('--build-number must be a positive integer')
     const buildNumber = Number(options.buildNumber)
     if (!Number.isSafeInteger(buildNumber) || buildNumber > 2_100_000_000) throw new Error('--build-number must be between 1 and 2100000000')
@@ -62,14 +62,15 @@ function check(result, name, passed, message, readinessOnly = false) {
   }
 }
 
-export function validateReleaseManifest(manifest, expectedBuildNumber) {
+export function validateReleaseManifest(manifest, expectedBuildNumber, expectedProfile = 'internal-staging') {
+  const selected = mobileProfile(expectedProfile)
   const errors = []
   if (!manifest || typeof manifest !== 'object') return ['Release profile marker is missing or invalid']
   if (manifest.schemaVersion !== 1) errors.push('Unsupported mobile release marker schema')
-  if (manifest.profile !== 'internal-staging') errors.push('Embedded profile marker is not internal-staging')
+  if (manifest.profile !== expectedProfile) errors.push('Embedded profile marker does not match requested ' + expectedProfile)
   if (Number(manifest.buildNumber) !== Number(expectedBuildNumber)) errors.push('Embedded web build number does not match the requested build number')
-  if (manifest.apiOrigin !== EXPECTED_ORIGIN || manifest.publicAppOrigin !== EXPECTED_ORIGIN) errors.push('Embedded web origins are not both the staging origin')
-  if (manifest.pushEnabled !== true || manifest.analyticsEnabled !== false || manifest.ga4MeasurementId !== '') errors.push('Embedded web build flags do not match internal-staging (push on, analytics/GA4 off)')
+  if (manifest.apiOrigin !== selected.origin || manifest.publicAppOrigin !== selected.origin) errors.push('Embedded web origins do not match the requested profile')
+  if (manifest.pushEnabled !== true || manifest.analyticsEnabled !== false || manifest.ga4MeasurementId !== '') errors.push('Embedded web build flags do not match release profile (push on, analytics/GA4 off)')
   if (!/^[a-f0-9]{64}$/i.test(manifest.assetsSha256 ?? '')) errors.push('Embedded web asset SHA-256 is malformed')
   return errors
 }
@@ -177,15 +178,16 @@ export function validateWebContent(assetContents, manifest) {
   const javascript = assetContents.filter(item => item.name.endsWith('.js'))
   if (javascript.length === 0) errors.push('Native bundle contains no packaged JavaScript assets')
   const jsText = javascript.map(item => item.bytes.toString('utf8')).join('\n')
-  if (!jsText.includes(manifest.apiOrigin)) errors.push('Compiled JavaScript does not contain the configured staging API origin')
-  if (!jsText.includes(manifest.publicAppOrigin)) errors.push('Compiled JavaScript does not contain the configured staging public origin')
+  if (manifest.profile === 'production' && jsText.includes('https://staging.noqueue-app.com')) errors.push('Production JavaScript contains the staging origin')
+  if (!jsText.includes(manifest.apiOrigin)) errors.push('Compiled JavaScript does not contain the configured API origin')
+  if (!jsText.includes(manifest.publicAppOrigin)) errors.push('Compiled JavaScript does not contain the configured public origin')
   if (javascript.some(item => hasUnapprovedLoopbackUrl(item.bytes.toString('utf8')))) errors.push('Compiled JavaScript contains a loopback/live-development URL outside the reviewed React Router parser fallbacks')
   if (/\bG-[A-Z0-9]{10}\b/.test(jsText)) errors.push('Compiled JavaScript appears to contain a GA4 measurement id while analytics is disabled')
   if (manifest.ga4MeasurementId !== '') errors.push('Release marker unexpectedly contains a GA4 measurement id')
   return errors
 }
 
-function verifyWebMarkerAndHash(entries, prefix, archivePath, expectedBuildNumber, result) {
+function verifyWebMarkerAndHash(entries, prefix, archivePath, expectedBuildNumber, result, expectedProfile) {
   const markerEntry = `${prefix}${RELEASE_MANIFEST}`
   if (!entries.includes(markerEntry)) {
     check(result, 'web-release-marker', false, `Native artifact is missing ${RELEASE_MANIFEST}`)
@@ -196,8 +198,8 @@ function verifyWebMarkerAndHash(entries, prefix, archivePath, expectedBuildNumbe
     check(result, 'web-release-marker', false, error.message)
     return { manifest: null, assetContents: [] }
   }
-  const markerErrors = validateReleaseManifest(manifest, expectedBuildNumber)
-  check(result, 'web-release-marker', markerErrors.length === 0, markerErrors.join('; ') || 'Internal staging profile/build flags match')
+  const markerErrors = validateReleaseManifest(manifest, expectedBuildNumber, expectedProfile)
+  check(result, 'web-release-marker', markerErrors.length === 0, markerErrors.join('; ') || 'Requested profile/build flags match')
 
   const assetEntries = entries.filter(name => name.startsWith(prefix) && !name.endsWith('/') && name !== markerEntry)
   const assetContents = []
@@ -224,7 +226,7 @@ function verifyWebMarkerAndHash(entries, prefix, archivePath, expectedBuildNumbe
     ? `Embedded web payload hash verified (${computed})`
     : `Embedded web payload hash mismatch (expected ${manifest.assetsSha256}, computed ${computed})`)
   const contentErrors = manifest ? validateWebContent(assetContents, manifest) : ['Release marker unavailable for web-content verification']
-  check(result, 'compiled-web-profile', contentErrors.length === 0, contentErrors.join('; ') || 'Compiled JS carries staging origins and no loopback/GA4 configuration')
+  check(result, 'compiled-web-profile', contentErrors.length === 0, contentErrors.join('; ') || 'Compiled JS carries requested origins and no loopback/GA4 configuration')
   return { manifest, assetContents }
 }
 
@@ -250,7 +252,7 @@ export function validateAndroidFirebaseResources(values) {
 
 function normalizeFingerprint(value) { return value.replace(/[^a-f0-9]/gi, '').toUpperCase() }
 
-function verifyAndroidAab(aabPath, expectedBuildNumber, expectedCert, allowUnsigned) {
+function verifyAndroidAab(aabPath, expectedBuildNumber, expectedCert, allowUnsigned, expectedProfile) {
   const result = { kind: 'android-aab', path: path.resolve(aabPath), checks: [], blockers: [], auditValid: true, storeReady: true }
   let entries
   try {
@@ -288,15 +290,15 @@ function verifyAndroidAab(aabPath, expectedBuildNumber, expectedCert, allowUnsig
   check(result, 'android-firebase-registration', firebaseErrors.length === 0,
     firebaseErrors.join('; ') || 'Compiled Firebase project, sender and Android app ID match the new Play registration')
 
-  const profile = verifyWebMarkerAndHash(entries, 'base/assets/public/', aabPath, expectedBuildNumber, result)
+  const profile = verifyWebMarkerAndHash(entries, 'base/assets/public/', aabPath, expectedBuildNumber, result, expectedProfile)
   const configName = ['base/assets/capacitor.config.json', 'base/assets/public/capacitor.config.json'].find(name => entries.includes(name))
   let capacitorConfig
   try { if (configName) capacitorConfig = parseJsonBuffer(zipEntry(aabPath, configName), 'Android Capacitor config') } catch { /* recorded below */ }
-  const androidConfigOk = !!capacitorConfig && capacitorConfig.appId === EXPECTED_ANDROID_BUNDLE_ID
-    && capacitorConfig.plugins?.NoQueueFcm?.releaseProfile === 'internal-staging'
+  const androidConfigOk = !capacitorConfig?.server && !!capacitorConfig && capacitorConfig.appId === EXPECTED_ANDROID_BUNDLE_ID
+    && capacitorConfig.plugins?.NoQueueFcm?.releaseProfile === expectedProfile
     && capacitorConfig.plugins?.NoQueueFcm?.enabled === false
   check(result, 'android-capacitor-profile', androidConfigOk, androidConfigOk
-    ? 'Android Capacitor config has internal-staging marker; iOS-only NoQueueFcm remains disabled'
+    ? 'Android Capacitor config has requested profile marker; iOS-only NoQueueFcm remains disabled'
     : 'Android Capacitor config is missing the expected app id/profile marker or unexpectedly enables NoQueueFcm')
 
   const keytool = command('keytool', ['-printcert', '-jarfile', path.resolve(aabPath)])
@@ -311,7 +313,7 @@ function verifyAndroidAab(aabPath, expectedBuildNumber, expectedCert, allowUnsig
   } else if (hasSignature) {
     check(result, 'android-upload-key-reference', false, 'Could not extract public signer fingerprint for comparison with the Play upload key')
   }
-  if (profile.manifest?.pushEnabled !== true) check(result, 'android-push-profile', false, 'Push-enabled staging profile marker is not verified')
+  if (profile.manifest?.pushEnabled !== true) check(result, 'android-push-profile', false, 'Push-enabled release profile marker is not verified')
   return result
 }
 
@@ -334,7 +336,7 @@ export function plistJsonFromText(text, description) {
   return JSON.parse(decoded.stdout)
 }
 
-function verifyIosApp(appPath, expectedBuildNumber, label, allowProfileOmitted = false) {
+function verifyIosApp(appPath, expectedBuildNumber, label, allowProfileOmitted = false, expectedProfile = 'internal-staging') {
   const result = { kind: label, path: appPath, checks: [], blockers: [], auditValid: true, storeReady: true }
   try {
     const info = plistJsonFromFile(path.join(appPath, 'Info.plist'))
@@ -357,13 +359,13 @@ function verifyIosApp(appPath, expectedBuildNumber, label, allowProfileOmitted =
     const configPath = [path.join(appPath, 'capacitor.config.json'), path.join(appPath, 'public/capacitor.config.json')].find(existsSync)
     let config
     try { if (configPath) config = JSON.parse(readFileSync(configPath, 'utf8')) } catch { /* recorded below */ }
-    const configOk = !!config && config.appId === EXPECTED_IOS_BUNDLE_ID
-      && config.plugins?.NoQueueFcm?.releaseProfile === 'internal-staging'
+    const configOk = !config?.server && !!config && config.appId === EXPECTED_IOS_BUNDLE_ID
+      && config.plugins?.NoQueueFcm?.releaseProfile === expectedProfile
       && config.plugins?.NoQueueFcm?.enabled === true
       && config.packageClassList?.includes('NoQueueFcmPlugin')
     check(result, 'ios-capacitor-push-profile', configOk, configOk
-      ? 'iOS Capacitor config enables NoQueueFcm for the internal-staging profile'
-      : 'iOS Capacitor config is missing the expected FCM staging gate/plugin registration')
+      ? 'iOS Capacitor config enables NoQueueFcm for the requested profile'
+      : 'iOS Capacitor config is missing the expected FCM release gate/plugin registration')
     check(result, 'ios-firebase-client-config', existsSync(path.join(appPath, 'GoogleService-Info.plist')), existsSync(path.join(appPath, 'GoogleService-Info.plist')) ? 'Firebase iOS client configuration is packaged' : 'Firebase iOS client configuration is missing')
 
     const profilePath = path.join(appPath, 'embedded.mobileprovision')
@@ -392,11 +394,11 @@ function verifyIosApp(appPath, expectedBuildNumber, label, allowProfileOmitted =
         : 'Embedded provisioning profile is missing, development/ad-hoc, mismatched, expired, or not decodable')
     }
 
-    const web = verifyWebMarkerAndHashFromDirectory(path.join(appPath, 'public'), expectedBuildNumber, result)
-    if (web.manifest?.pushEnabled !== true) check(result, 'ios-push-profile', false, 'Push-enabled staging web profile marker is not verified')
+    const web = verifyWebMarkerAndHashFromDirectory(path.join(appPath, 'public'), expectedBuildNumber, result, expectedProfile)
+    if (web.manifest?.pushEnabled !== true) check(result, 'ios-push-profile', false, 'Push-enabled release web profile marker is not verified')
     const frameworkNames = existsSync(path.join(appPath, 'Frameworks')) ? readdirSync(path.join(appPath, 'Frameworks')) : []
     const analyticsFrameworkPresent = frameworkNames.some(name => /FirebaseAnalytics|GoogleAppMeasurement/i.test(name))
-    check(result, 'ios-analytics-sdk', !analyticsFrameworkPresent, analyticsFrameworkPresent ? 'Analytics framework is unexpectedly bundled in the internal staging app' : 'No Firebase Analytics / Google App Measurement framework is bundled')
+    check(result, 'ios-analytics-sdk', !analyticsFrameworkPresent, analyticsFrameworkPresent ? 'Analytics framework is unexpectedly bundled in the release app' : 'No Firebase Analytics / Google App Measurement framework is bundled')
   } catch (error) {
     check(result, 'ios-app-inspection', false, error.message)
   }
@@ -423,14 +425,14 @@ function hashDirectoryContents(root, excluded = RELEASE_MANIFEST) {
   return hash.digest('hex')
 }
 
-function verifyWebMarkerAndHashFromDirectory(publicRoot, expectedBuildNumber, result) {
+function verifyWebMarkerAndHashFromDirectory(publicRoot, expectedBuildNumber, result, expectedProfile) {
   let manifest
   try { manifest = JSON.parse(readFileSync(path.join(publicRoot, RELEASE_MANIFEST), 'utf8')) } catch {
     check(result, 'web-release-marker', false, `Packaged app is missing or has invalid ${RELEASE_MANIFEST}`)
     return { manifest: null }
   }
-  const errors = validateReleaseManifest(manifest, expectedBuildNumber)
-  check(result, 'web-release-marker', errors.length === 0, errors.join('; ') || 'Internal staging profile/build flags match')
+  const errors = validateReleaseManifest(manifest, expectedBuildNumber, expectedProfile)
+  check(result, 'web-release-marker', errors.length === 0, errors.join('; ') || 'Requested profile/build flags match')
   const bridgesPresent = ['cordova.js', 'cordova_plugins.js'].every(name => existsSync(path.join(publicRoot, name)))
   const bridgesEmpty = bridgesPresent && ['cordova.js', 'cordova_plugins.js'].every(name => {
     const file = path.join(publicRoot, name)
@@ -455,25 +457,25 @@ function verifyWebMarkerAndHashFromDirectory(publicRoot, expectedBuildNumber, re
   let contentErrors = []
   try { collect(publicRoot); contentErrors = validateWebContent(js.map((bytes, i) => ({ name: `asset-${i}.js`, bytes })), manifest) }
   catch (error) { contentErrors = [error.message] }
-  check(result, 'compiled-web-profile', contentErrors.length === 0, contentErrors.join('; ') || 'Compiled JS carries staging origins and no loopback/GA4 configuration')
+  check(result, 'compiled-web-profile', contentErrors.length === 0, contentErrors.join('; ') || 'Compiled JS carries requested origins and no loopback/GA4 configuration')
   return { manifest }
 }
 
-function verifyIosArchive(archivePath, buildNumber) {
+function verifyIosArchive(archivePath, buildNumber, expectedProfile) {
   const result = { kind: 'ios-xcarchive', path: path.resolve(archivePath), checks: [], blockers: [], auditValid: true, storeReady: true }
   try {
     if (!existsSync(archivePath) || !statSync(archivePath).isDirectory()) throw new Error('iOS archive path is not an existing .xcarchive directory')
     const products = path.join(archivePath, 'Products/Applications')
     const apps = existsSync(products) ? readdirSync(products).filter(name => name.endsWith('.app')) : []
     if (apps.length !== 1) throw new Error('iOS archive must contain exactly one application bundle')
-    return verifyIosApp(path.join(products, apps[0]), buildNumber, 'ios-xcarchive')
+    return verifyIosApp(path.join(products, apps[0]), buildNumber, 'ios-xcarchive', false, expectedProfile)
   } catch (error) {
     check(result, 'ios-archive-container', false, error.message)
     return result
   }
 }
 
-function verifyIosIpa(ipaPath, buildNumber) {
+function verifyIosIpa(ipaPath, buildNumber, expectedProfile) {
   const result = { kind: 'ios-ipa', path: path.resolve(ipaPath), checks: [], blockers: [], auditValid: true, storeReady: true }
   let temp
   try {
@@ -485,7 +487,7 @@ function verifyIosIpa(ipaPath, buildNumber) {
     const extracted = command('unzip', ['-q', path.resolve(ipaPath), '-d', temp])
     if (!extracted.ok) throw new Error('Could not unpack IPA for read-only signature and manifest inspection')
     const app = path.join(temp, appPaths[0])
-    const inspected = verifyIosApp(app, buildNumber, 'ios-ipa', true)
+    const inspected = verifyIosApp(app, buildNumber, 'ios-ipa', true, expectedProfile)
     result.checks.push(...inspected.checks)
     result.blockers.push(...inspected.blockers)
     result.auditValid = inspected.auditValid
@@ -500,7 +502,7 @@ function verifyIosIpa(ipaPath, buildNumber) {
 }
 
 function usage() {
-  console.log('Usage: pnpm mobile:release:verify --profile internal-staging --build-number N [--android-aab PATH] [--ios-archive PATH | --ios-ipa PATH] [--allow-unsigned] [--expected-android-upload-cert-sha256 SHA256]')
+  console.log('Usage: pnpm mobile:release:verify --profile internal-staging|production --build-number N [--android-aab PATH] [--ios-archive PATH | --ios-ipa PATH] [--allow-unsigned] [--expected-android-upload-cert-sha256 SHA256]')
   console.log('Verification is read-only except temporary IPA extraction; it never uploads or provisions. --allow-unsigned is audit-only and can never result in storeReady=true.')
 }
 
@@ -515,9 +517,9 @@ export async function main(argv = process.argv.slice(2)) {
 
   const expectedCert = options.expectedAndroidCertSha256 ?? process.env.NOQUEUE_ANDROID_EXPECTED_UPLOAD_CERT_SHA256
   const artifacts = []
-  if (options.androidAab) artifacts.push(verifyAndroidAab(options.androidAab, options.buildNumber, expectedCert, options.allowUnsigned))
-  if (options.iosArchive) artifacts.push(verifyIosArchive(options.iosArchive, options.buildNumber))
-  if (options.iosIpa) artifacts.push(verifyIosIpa(options.iosIpa, options.buildNumber))
+  if (options.androidAab) artifacts.push(verifyAndroidAab(options.androidAab, options.buildNumber, expectedCert, options.allowUnsigned, options.profile))
+  if (options.iosArchive) artifacts.push(verifyIosArchive(options.iosArchive, options.buildNumber, options.profile))
+  if (options.iosIpa) artifacts.push(verifyIosIpa(options.iosIpa, options.buildNumber, options.profile))
 
   const android = artifacts.find(item => item.kind === 'android-aab')
   const ios = artifacts.some(item => item.kind === 'ios-xcarchive' || item.kind === 'ios-ipa')

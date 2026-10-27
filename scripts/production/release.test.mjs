@@ -6,6 +6,7 @@ import { resolve } from 'node:path'
 import { readConfig, releaseProfile, buildEnvironment, withReleaseProfile, assertProductionConfig, assertProductionIdentity, assertLandingConfig } from './config.mjs'
 import { root, releaseDirectory, wranglerConfigs, verifyRelease } from './release.mjs'
 import { sourcePaths, treeDigest } from './artifacts.mjs'
+import { migrationPlan } from './migrations.mjs'
 const config = await readConfig()
 const landing = JSON.parse(await readFile(resolve(root, 'apps/landing/wrangler.jsonc'), 'utf8'))
 for (const analytics of ['off', 'landing', 'both']) for (const whatsapp of ['off', 'on']) {
@@ -72,8 +73,8 @@ test('source fingerprints include frontend/privacy/build/deploy inputs and no de
   assert.equal(sourcePaths.some((path) => path.includes('node_modules')), false)
 })
 
-test('release verification rejects source/artifact drift while explicit rollback preserves byte checks', async () => {
-  const id = 'test-release-' + process.pid
+for (const format of ['noqueue-production-release-v2', 'noqueue-production-release-v3']) test(`${format} verification rejects source/artifact/migration drift`, async () => {
+  const id = 'test-release-' + process.pid + '-' + format.at(-1)
   const directory = releaseDirectory(id)
   const profile = releaseProfile({ analytics: 'both', whatsapp: 'off' })
   await mkdir(directory, { recursive: true })
@@ -87,10 +88,17 @@ test('release verification rejects source/artifact drift while explicit rollback
     const sources = {}, digests = {}
     for (const path of sourcePaths) sources[path] = await treeDigest(resolve(root, path))
     for (const path of ['web', 'landing', 'api', 'worker.json', 'landing.json']) digests[path] = await treeDigest(resolve(directory, path))
-    const manifest = { format: 'noqueue-production-release-v2', id, profile, buildEnv: buildEnvironment(profile), sources, digests }
+    if (format.endsWith('v2')) delete sources['apps/api/migrations'] // historical manifests lack this source
+    const manifest = { format, id, profile, buildEnv: buildEnvironment(profile), sources, digests, ...(format.endsWith('v3') ? { migrations: migrationPlan() } : {}) }
     const save = () => writeFile(resolve(directory, 'manifest.json'), JSON.stringify(manifest))
     await save()
     assert.deepEqual((await verifyRelease(id)).profile, profile)
+    if (manifest.migrations) {
+      manifest.migrations.pending[0].sha256 = 'tampered'
+      await save()
+      await assert.rejects(verifyRelease(id, { rollback: true }), /Migration inventory changed/)
+      manifest.migrations = migrationPlan()
+    }
     manifest.sources['apps/web/src'] = 'old-source-hash'
     await save()
     await assert.rejects(verifyRelease(id), /Source changed/)

@@ -13,31 +13,31 @@ export function liveReloadServer(url: string | undefined, enabled: string | unde
   return { url: parsed.origin, cleartext: false }
 }
 
-const INTERNAL_STAGING_ORIGIN = 'https://staging.noqueue-app.com'
+const RELEASE_ORIGINS = { 'internal-staging': 'https://staging.noqueue-app.com', production: 'https://app.noqueue-app.com' } as const
 
 /**
  * Release profile validation belongs in Capacitor's config as well as the
  * preparation script: a direct `cap sync` must not silently create an
- * internal-staging native project with production, local, or push-off web env.
+ * release native project with a mismatched origin, local, or push-off web env.
  */
 export function mobileReleaseProfile(env: Record<string, string | undefined>, platform: string) {
   const profile = env.NOQUEUE_MOBILE_RELEASE_PROFILE
   if (profile === undefined || profile === '') return { profile: 'default', fcmEnabled: false }
-  if (profile !== 'internal-staging') throw new Error(`Unsupported mobile release profile: ${profile}`)
+  if (profile !== 'internal-staging' && profile !== 'production') throw new Error(`Unsupported mobile release profile: ${profile}`)
   if (platform !== 'ios' && platform !== 'android') throw new Error('Invalid NOQUEUE_NATIVE_PLATFORM')
   if (env.NOQUEUE_LIVE_RELOAD_URL || env.NOQUEUE_LOCAL_DEVELOPMENT === '1')
-    throw new Error('Internal staging release forbids live reload/local development')
+    throw new Error('Mobile release forbids live reload/local development')
 
   const required: Record<string, string> = {
-    VITE_APP_ENV: 'staging',
-    VITE_API_URL: INTERNAL_STAGING_ORIGIN,
-    VITE_PUBLIC_APP_ORIGIN: INTERNAL_STAGING_ORIGIN,
+    VITE_APP_ENV: profile === 'production' ? 'production' : 'staging',
+    VITE_API_URL: RELEASE_ORIGINS[profile],
+    VITE_PUBLIC_APP_ORIGIN: RELEASE_ORIGINS[profile],
     VITE_MOBILE_PUSH_ENABLED: 'true',
     VITE_ANALYTICS_ENABLED: 'false',
     VITE_GA4_MEASUREMENT_ID: '',
   }
   for (const [key, expected] of Object.entries(required)) {
-    if (env[key] !== expected) throw new Error(`Internal staging release requires ${key}=${expected || '(empty)'}`)
+    if (env[key] !== expected) throw new Error(`Mobile release requires ${key}=${expected || '(empty)'}`)
   }
   return { profile, fcmEnabled: platform === 'ios' }
 }

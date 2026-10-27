@@ -9,10 +9,21 @@ export const productionBuildEnv = Object.freeze({
   LANDING_APP_ENV: 'production', LANDING_ANALYTICS_ENABLED: 'false', LANDING_GA4_MEASUREMENT_ID: '',
 })
 export const productionStreams = Object.freeze({ landing: 'G-QEVCK0TBCF', app: 'G-S905ERLNN9' })
-export function releaseProfile({ analytics = 'off', whatsapp = 'off' } = {}) {
+export const mobileProductionProfile = Object.freeze({ analytics: 'both', whatsapp: 'on', push: 'on', automation: 'on' })
+export function releaseProfile({ analytics = 'off', whatsapp = 'off', push, automation } = {}) {
   assert.ok(['off', 'landing', 'both'].includes(analytics), 'Expected analytics off|landing|both')
   assert.ok(['off', 'on'].includes(whatsapp), 'Expected whatsapp off|on')
-  return Object.freeze({ analytics, whatsapp })
+  for (const [name, value] of Object.entries({ push, automation }))
+    assert.ok(value === undefined || ['off', 'on'].includes(value), `Expected ${name} off|on`)
+  // Keep historical v2 OFF/WA rollback profiles readable; absent means OFF.
+  return Object.freeze({ analytics, whatsapp, ...(push !== undefined ? { push } : {}), ...(automation !== undefined ? { automation } : {}) })
+}
+export function resolveBuildProfile(values) {
+  if (values.profile === undefined) return releaseProfile(values)
+  assert.equal(values.profile, 'mobile-production', 'Unknown production profile')
+  for (const key of ['analytics', 'whatsapp', 'push', 'automation'])
+    assert.equal(values[key], undefined, 'Named profile cannot be combined with feature overrides')
+  return releaseProfile(mobileProductionProfile)
 }
 export function buildEnvironment(profile = releaseProfile()) {
   const { analytics } = releaseProfile(profile)
@@ -72,21 +83,29 @@ export function assertProductionIdentity(config, { provisioned = false } = {}) {
   assert.equal(Object.keys(p.vars).some((key) => /(?:API_KEY|ENCRYPTION_KEY|HASH_KEY|TOKEN_KEY|SECRET|WEBHOOK_TOKEN|ACCESS_TOKEN)$/.test(key)), false, 'Secrets must not be committed as vars')
   return p
 }
-export function assertProductionConfig(config, { provisioned = false, whatsapp = 'off' } = {}) {
-  releaseProfile({ whatsapp })
+export function assertProductionConfig(config, { provisioned = false, whatsapp = 'off', push = 'off', automation = 'off' } = {}) {
+  releaseProfile({ whatsapp, push, automation })
   const p = assertProductionIdentity(config, { provisioned })
-  assert.equal(p.vars.QUEUE_AUTO_REPLACEMENT_ENABLED, 'false', 'Automatic assignment must remain OFF until a separately authorized release profile exists')
+  assert.equal(p.vars.QUEUE_AUTO_REPLACEMENT_ENABLED, String(automation === 'on'), 'Automatic assignment differs from explicit release profile')
+  for (const key of ['MOBILE_PUSH_ENABLED', 'FCM_IOS_ENABLED'])
+    assert.equal(p.vars[key] ?? 'false', String(push === 'on'), `${key} differs from explicit release profile`)
+  if (push === 'on') assert.equal(p.vars.FCM_IOS_BUNDLE_ID, 'com.noqueue-app.ios')
+  assert.notEqual(p.vars.STAGING_ALLOW_JOIN_WITHOUT_WHATSAPP, 'true', 'Silent staging admission is forbidden in production')
   for (const flag of ['WHATSAPP_ENABLED', 'PRODUCTION_WHATSAPP_APPROVED', 'WHATSAPP_V4_TEMPLATES_APPROVED'])
     assert.equal(p.vars[flag], String(whatsapp === 'on'), `${flag} differs from the explicit release profile`)
   return p
 }
 export function withReleaseProfile(config, profile) {
-  const { whatsapp } = releaseProfile(profile)
+  const { whatsapp, push, automation } = releaseProfile(profile)
   assertProductionIdentity(config)
   const result = structuredClone(config)
   for (const flag of ['WHATSAPP_ENABLED', 'PRODUCTION_WHATSAPP_APPROVED', 'WHATSAPP_V4_TEMPLATES_APPROVED'])
     result.env.production.vars[flag] = String(whatsapp === 'on')
-  assertProductionConfig(result, { whatsapp })
+  if (automation !== undefined) result.env.production.vars.QUEUE_AUTO_REPLACEMENT_ENABLED = String(automation === 'on')
+  if (push !== undefined) Object.assign(result.env.production.vars, {
+    MOBILE_PUSH_ENABLED: String(push === 'on'), FCM_IOS_ENABLED: String(push === 'on'), FCM_IOS_BUNDLE_ID: 'com.noqueue-app.ios',
+  })
+  assertProductionConfig(result, { whatsapp, push, automation })
   return result
 }
 export function assertLandingConfig(config) {

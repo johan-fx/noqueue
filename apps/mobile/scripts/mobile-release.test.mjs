@@ -15,11 +15,11 @@ import {
   validateReleaseManifest,
 } from './mobile-release-verify.mjs'
 
-test('release prepare accepts only an explicit internal-staging profile and valid build number', () => {
+test('release prepare accepts an explicit supported profile and valid build number', () => {
   assert.deepEqual(parsePrepareOptions(['--profile', 'internal-staging', '--build-number', '1003']), {
     profile: 'internal-staging', buildNumber: 1003, platform: 'both', dryRun: false, help: false,
   })
-  assert.throws(() => parsePrepareOptions(['--build-number', '1003']), /Only --profile internal-staging/)
+  assert.throws(() => parsePrepareOptions(['--build-number', '1003']), /Expected --profile internal-staging or production/)
   for (const number of ['0', '-1', '1.5', '2100000001', '999999999999999999999'])
     assert.throws(() => parsePrepareOptions(['--profile', 'internal-staging', '--build-number', number]))
 })
@@ -201,3 +201,34 @@ test('parses XML entitlements and profile dates without swallowing diagnostic su
   assert.equal(result.ExpirationDate, '2027-10-25T08:36:54+00:00');
   assert.throws(() => plistJsonFromText('<plist><dict>', 'test'), /Incomplete/);
 });
+
+for (const selected of ['internal-staging', 'production']) test(`native ${selected} profile gates environment, origins, flags and compiled payload`, async () => {
+  const origin = selected === 'production' ? 'https://app.noqueue-app.com' : 'https://staging.noqueue-app.com'
+  const env = releaseEnvironment({ VITE_API_URL: 'https://wrong.invalid', VITE_ANALYTICS_ENABLED: 'true', NOQUEUE_LIVE_RELOAD_URL: 'https://localhost', NOQUEUE_ANDROID_UPLOAD_STORE_PASSWORD: 'test' }, selected)
+  assert.equal(env.VITE_API_URL, origin)
+  assert.equal(env.VITE_PUBLIC_APP_ORIGIN, origin)
+  assert.equal(env.VITE_APP_ENV, selected === 'production' ? 'production' : 'staging')
+  assert.equal(env.VITE_ANALYTICS_ENABLED, 'false')
+  assert.equal(env.VITE_GA4_MEASUREMENT_ID, '')
+  assert.equal(env.VITE_MOBILE_PUSH_ENABLED, 'true')
+  assert.equal('NOQUEUE_LIVE_RELOAD_URL' in env, false)
+  assert.equal('NOQUEUE_ANDROID_UPLOAD_STORE_PASSWORD' in env, false)
+  assert.equal(parsePrepareOptions(['--profile', selected, '--build-number', '1009']).profile, selected)
+  assert.equal(parseVerifyOptions(['--profile', selected, '--build-number', '1009', '--android-aab', 'fake.aab']).profile, selected)
+  const marker = releaseManifest(1009, 'a'.repeat(64), selected)
+  assert.deepEqual(validateReleaseManifest(marker, 1009, selected), [])
+  const opposite = selected === 'production' ? 'internal-staging' : 'production'
+  assert.ok(validateReleaseManifest(marker, 1009, opposite).length)
+  assert.ok(validateReleaseManifest({ ...marker, analyticsEnabled: true }, 1009, selected).length)
+  const code = ts.transpileModule(readFileSync(new URL('../capacitor.config.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText
+  const { mobileReleaseProfile } = await import(`data:text/javascript;base64,${Buffer.from(code).toString('base64')}`)
+  assert.deepEqual(mobileReleaseProfile(env, 'ios'), { profile: selected, fcmEnabled: true })
+  assert.deepEqual(mobileReleaseProfile(env, 'android'), { profile: selected, fcmEnabled: false })
+  for (const [key, value] of Object.entries({ VITE_APP_ENV: 'local', VITE_API_URL: '', VITE_PUBLIC_APP_ORIGIN: 'https://wrong.invalid', VITE_MOBILE_PUSH_ENABLED: 'false', VITE_ANALYTICS_ENABLED: 'true', VITE_GA4_MEASUREMENT_ID: 'G-S905ERLNN9' })) {
+    assert.throws(() => mobileReleaseProfile({ ...env, [key]: value }, 'ios'), undefined, key)
+  }
+  const inspect = source => validateWebContent([{ name: 'main.js', bytes: Buffer.from(source) }], marker)
+  assert.deepEqual(inspect(origin), [])
+  assert.ok(inspect(origin + ';G-S905ERLNN9').length)
+  if (selected === 'production') assert.match(inspect(origin + ';https://staging.noqueue-app.com').join(' '), /staging origin/)
+})

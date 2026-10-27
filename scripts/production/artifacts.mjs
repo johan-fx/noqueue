@@ -18,7 +18,7 @@ export async function treeDigest(root) {
   return hash.digest('hex')
 }
 
-export const sourcePaths = ['apps/api/src', 'apps/api/wrangler.jsonc', 'apps/api/scripts',
+export const sourcePaths = ['apps/api/src', 'apps/api/migrations', 'apps/api/wrangler.jsonc', 'apps/api/scripts',
   'apps/web/src', 'apps/web/index.html', 'apps/web/vite.config.ts', 'apps/web/package.json',
   'apps/landing/src', 'apps/landing/scripts', 'apps/landing/wrangler.jsonc', 'apps/landing/package.json',
   'packages/privacy/src', 'packages/privacy/package.json', 'packages/contracts/src', 'scripts/production', 'pnpm-lock.yaml', 'turbo.json']

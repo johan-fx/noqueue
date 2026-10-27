@@ -21,7 +21,7 @@ if (values.env === 'production') {
   assert.equal(process.env.CLOUDFLARE_ACCOUNT_ID, config.account_id, 'Explicit account required')
   assert.ok(process.env.CLOUDFLARE_API_TOKEN, 'Explicit authorized deployment token required')
   const manifest = JSON.parse(await readFile(new URL('queue-reports/production/manifest.json', repository), 'utf8'))
-  assert.notEqual(manifest.format, 'noqueue-production-release-v2', 'Use pnpm production:deploy --target app --release ID --confirm-production for immutable releases')
+  assert.ok(!['noqueue-production-release-v2', 'noqueue-production-release-v3'].includes(manifest.format), 'Use pnpm production:deploy --target app --release ID --confirm-production for immutable releases')
   assert.equal(manifest.analytics, false)
   assert.deepEqual(manifest.buildEnv, productionBuildEnv)
   for (const path of sourcePaths)

@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 const repoRoot = fileURLToPath(new URL('../../..', import.meta.url))
 const webDist = path.join(repoRoot, 'apps/web/dist')
 const releaseManifestName = 'noqueue-mobile-release.json'
-const STAGING_ORIGIN = 'https://staging.noqueue-app.com'
+import { mobileProfile } from './release-profiles.mjs'
 
 export function parseOptions(argv) {
   const options = { profile: undefined, buildNumber: undefined, platform: 'both', dryRun: false, help: false }
@@ -25,7 +25,7 @@ export function parseOptions(argv) {
     } else throw new Error(`Unknown option: ${arg}`)
   }
   if (!options.help) {
-    if (options.profile !== 'internal-staging') throw new Error('Only --profile internal-staging is currently supported')
+    mobileProfile(options.profile)
     if (!['both', 'android', 'ios'].includes(options.platform)) throw new Error('--platform must be both, android, or ios')
     if (!/^[1-9][0-9]*$/.test(options.buildNumber ?? '')) throw new Error('--build-number must be a positive integer')
     const numericBuildNumber = Number(options.buildNumber)
@@ -36,7 +36,8 @@ export function parseOptions(argv) {
   return options
 }
 
-export function releaseEnvironment(base = process.env) {
+export function releaseEnvironment(base = process.env, profile = 'internal-staging') {
+  const selected = mobileProfile(profile)
   const env = { ...base }
   // Native signing credentials are never needed by web compilation or sync.
   for (const key of Object.keys(env)) {
@@ -46,10 +47,10 @@ export function releaseEnvironment(base = process.env) {
   delete env.NOQUEUE_LOCAL_DEVELOPMENT
   delete env.NOQUEUE_NATIVE_PLATFORM
   Object.assign(env, {
-    NOQUEUE_MOBILE_RELEASE_PROFILE: 'internal-staging',
-    VITE_APP_ENV: 'staging',
-    VITE_API_URL: STAGING_ORIGIN,
-    VITE_PUBLIC_APP_ORIGIN: STAGING_ORIGIN,
+    NOQUEUE_MOBILE_RELEASE_PROFILE: selected.profile,
+    VITE_APP_ENV: selected.environment,
+    VITE_API_URL: selected.origin,
+    VITE_PUBLIC_APP_ORIGIN: selected.origin,
     VITE_MOBILE_PUSH_ENABLED: 'true',
     VITE_ANALYTICS_ENABLED: 'false',
     VITE_GA4_MEASUREMENT_ID: '',
@@ -94,13 +95,14 @@ export function hashDirectory(root, { nativeGenerated = false } = {}) {
   return digest.digest('hex')
 }
 
-export function releaseManifest(buildNumber, assetsSha256) {
+export function releaseManifest(buildNumber, assetsSha256, profile = 'internal-staging') {
+  const selected = mobileProfile(profile)
   return {
     schemaVersion: 1,
-    profile: 'internal-staging',
+    profile: selected.profile,
     buildNumber,
-    apiOrigin: STAGING_ORIGIN,
-    publicAppOrigin: STAGING_ORIGIN,
+    apiOrigin: selected.origin,
+    publicAppOrigin: selected.origin,
     pushEnabled: true,
     analyticsEnabled: false,
     ga4MeasurementId: '',
@@ -108,9 +110,9 @@ export function releaseManifest(buildNumber, assetsSha256) {
   }
 }
 
-function createWebReleaseManifest(buildNumber) {
+function createWebReleaseManifest(buildNumber, profile) {
   const digest = hashDirectory(webDist)
-  const manifest = releaseManifest(buildNumber, digest)
+  const manifest = releaseManifest(buildNumber, digest, profile)
   writeFileSync(path.join(webDist, releaseManifestName), `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644 })
   return manifest
 }
@@ -145,8 +147,8 @@ function appleDistributionIdentityCount() {
 }
 
 function showUsage() {
-  console.log('Usage: pnpm mobile:release:prepare --profile internal-staging --build-number N [--platform both|android|ios] [--dry-run]')
-  console.log('Builds the staging web bundle and syncs Capacitor only. It does not build, sign, archive, or upload native artifacts.')
+  console.log('Usage: pnpm mobile:release:prepare --profile internal-staging|production --build-number N [--platform both|android|ios] [--dry-run]')
+  console.log('Builds the selected web bundle and syncs Capacitor only. It does not build, sign, archive, or upload native artifacts.')
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -163,8 +165,8 @@ export async function main(argv = process.argv.slice(2)) {
   console.log(`Profile: ${options.profile}`)
   console.log(`Build number: ${options.buildNumber}`)
   console.log(`Native platform: ${options.platform}`)
-  console.log('Web/API origin: https://staging.noqueue-app.com')
-  console.log('Push: enabled for internal staging; analytics: disabled')
+  console.log(`Web/API origin: ${mobileProfile(options.profile).origin}`)
+  console.log('Push: enabled in client (backend readiness separate); analytics: disabled')
   console.log(options.platform === 'android' ? 'Apple signing: not inspected for Android-only preparation' : identity.available
     ? `Apple Distribution identities: ${identity.count}${identity.count === 0 ? ' (iOS store signing blocked)' : ''}`
     : 'Apple Distribution identities: unknown (security metadata check unavailable)')
@@ -175,7 +177,7 @@ export async function main(argv = process.argv.slice(2)) {
   for (const { command, args } of commands) console.log(`$ ${command} ${args.join(' ')}`)
   if (options.dryRun) return 0
 
-  const env = releaseEnvironment()
+  const env = releaseEnvironment(process.env, options.profile)
   if (options.platform !== 'both') env.NOQUEUE_NATIVE_PLATFORM = options.platform
   const oldManifest = path.join(webDist, releaseManifestName)
   if (existsSync(oldManifest)) rmSync(oldManifest)
@@ -186,7 +188,7 @@ export async function main(argv = process.argv.slice(2)) {
     return buildResult.status ?? 1
   }
   let manifest
-  try { manifest = createWebReleaseManifest(options.buildNumber) } catch (error) {
+  try { manifest = createWebReleaseManifest(options.buildNumber, options.profile) } catch (error) {
     console.error(`Could not stamp web build: ${error.message}`)
     return 1
   }
@@ -209,7 +211,7 @@ export async function main(argv = process.argv.slice(2)) {
     console.error(`Capacitor payload verification failed: ${error.message}`)
     return 1
   }
-  console.log('Prepared staging web assets and synced Capacitor projects. No native build/sign/archive/upload was performed.')
+  console.log('Prepared selected web assets and synced Capacitor projects. No native build/sign/archive/upload was performed.')
   console.log(`Prepared web payload SHA-256 verified in ${options.platform} sync: ${manifest.assetsSha256}`)
   if (options.platform !== 'ios') {
     console.log(`Signed Android AAB (requires externally configured upload key): cd apps/mobile/android && ./gradlew bundleRelease -PnoqueueBuildNumber=${options.buildNumber}`)
@@ -217,8 +219,8 @@ export async function main(argv = process.argv.slice(2)) {
     console.log('That explicit unsigned Release cannot be uploaded to Google Play and must verify as storeReady=false.')
   }
   if (options.platform !== 'android') {
-    console.log(`iOS archive template (blocked until Apple Distribution identity and matching App Store provisioning exist): cd apps/mobile/ios && xcodebuild -project App/App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' -archivePath build/NoQueue-internal-staging.xcarchive CURRENT_PROJECT_VERSION=${options.buildNumber} archive`)
-    console.log('IPA export template after archive: xcodebuild -exportArchive -archivePath build/NoQueue-internal-staging.xcarchive -exportPath build/export -exportOptionsPlist /path/to/ExportOptions-AppStore.plist')
+    console.log(`iOS archive template (blocked until Apple Distribution identity and matching App Store provisioning exist): cd apps/mobile/ios && xcodebuild -project App/App.xcodeproj -scheme App -configuration Release -destination 'generic/platform=iOS' -archivePath build/NoQueue-${options.profile}.xcarchive CURRENT_PROJECT_VERSION=${options.buildNumber} archive`)
+    console.log(`IPA export template after archive: xcodebuild -exportArchive -archivePath build/NoQueue-${options.profile}.xcarchive -exportPath build/export -exportOptionsPlist /path/to/ExportOptions-AppStore.plist`)
   }
   console.log('Do not add -allowProvisioningUpdates or upload flags: prepare/verify never provisions, publishes, or invites testers.')
   return 0

@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { repository, readConfig, releaseProfile, withReleaseProfile, buildEnvironment, assertProductionConfig, assertLandingConfig } from './config.mjs'
 import { treeDigest, sourcePaths } from './artifacts.mjs'
+import { migrationPlan } from './migrations.mjs'
 export const root = fileURLToPath(repository)
 export const releasesRoot = resolve(root, 'queue-reports/production/releases')
 export function releaseDirectory(id) {
@@ -12,7 +13,7 @@ export function releaseDirectory(id) {
 }
 export function wranglerConfigs(api, landing, profile, directory) {
   const worker = withReleaseProfile(api, profile)
-  assertProductionConfig(worker, { provisioned: true, whatsapp: profile.whatsapp })
+  assertProductionConfig(worker, { ...profile, provisioned: true })
   assertLandingConfig(landing)
   // This binding is installed as a secret during cutover, never an empty var override.
   delete worker.env.production.vars.D360DIALOG_PHONE_NUMBER_ID
@@ -32,13 +33,16 @@ export function wranglerConfigs(api, landing, profile, directory) {
 export async function verifyRelease(id, { rollback = false } = {}) {
   const directory = releaseDirectory(id)
   const manifest = JSON.parse(await readFile(resolve(directory, 'manifest.json'), 'utf8'))
-  assert.equal(manifest.format, 'noqueue-production-release-v2')
+  assert.ok(['noqueue-production-release-v2', 'noqueue-production-release-v3'].includes(manifest.format))
+  if (manifest.format === 'noqueue-production-release-v3') assert.deepEqual(manifest.migrations, migrationPlan(), 'Migration inventory changed; rebuild release')
   assert.equal(manifest.id, id)
   const profile = releaseProfile(manifest.profile)
   assert.deepEqual(manifest.profile, profile)
   assert.deepEqual(manifest.buildEnv, buildEnvironment(profile))
-  assert.deepEqual(Object.keys(manifest.sources).sort(), [...sourcePaths].sort())
-  if (!rollback) for (const path of sourcePaths)
+  const trackedSources = manifest.format === 'noqueue-production-release-v2' && !('apps/api/migrations' in manifest.sources)
+    ? sourcePaths.filter(path => path !== 'apps/api/migrations') : sourcePaths
+  assert.deepEqual(Object.keys(manifest.sources).sort(), [...trackedSources].sort())
+  if (!rollback) for (const path of trackedSources)
     assert.equal(await treeDigest(resolve(root, path)), manifest.sources[path], `Source changed: ${path}; rebuild release`)
   const artifacts = ['web', 'landing', 'api', 'worker.json', 'landing.json']
   assert.deepEqual(Object.keys(manifest.digests).sort(), artifacts.sort())

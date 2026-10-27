@@ -32,7 +32,9 @@
     "demo:queue:automatic": "node scripts/queue-demo/automatic-video.mjs record",
     "mobile:assets": "pnpm --filter @noqueue/mobile assets",
     "mobile:release:prepare": "node apps/mobile/scripts/mobile-release-prepare.mjs",
-    "mobile:release:verify": "node apps/mobile/scripts/mobile-release-verify.mjs"
+    "mobile:release:verify": "node apps/mobile/scripts/mobile-release-verify.mjs",
+    "production:migrations:plan": "node scripts/production/migrations.mjs",
+    "production:build:mobile": "node scripts/production/build.mjs --profile mobile-production"
   },
   "devDependencies": {
     "turbo": "2.10.12",

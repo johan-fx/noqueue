@@ -1,5 +1,7 @@
 # NoQueue mobile — runbook de release e Internal Testing
 
+> Actualización 27/10: existe preparación local `production`; consultar [corte móvil de producción](production-mobile-cutover.md). Las restricciones y evidencias de staging siguientes son históricas, no una autorización de publicación.
+
 Actualizado: 25/10/2026. Este runbook prepara los artefactos; **no autoriza ni ejecuta cargas a tiendas**.
 
 ## Alcance y reglas

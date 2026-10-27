@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { readdirSync, readFileSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { inventorySQL, columnsSQL, parseColumns, snapshotSQL, assembleSnapshot, restoreStatements, encryptSnapshot, decryptSnapshot } from './backup.mjs'
+import { validateRestoreSize, verifyLocalRestore } from './backup-local.mjs'
 const migrations = new URL('../../apps/api/migrations/',import.meta.url)
 function source() {
  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON;')
@@ -261,4 +262,57 @@ test('0040 durable attention survives backup restore and cascades with its expir
   assert.equal(restored.prepare('SELECT COUNT(*) AS n FROM queue_automation_attention').get().n,0)
   assert.deepEqual(restored.prepare('PRAGMA foreign_key_check').all(),[])
  } finally {db.close();restored.close()}
+})
+
+
+test('local-only verification restores a larger encrypted archive without relaxing remote limits', () => {
+ const db=source()
+ try {
+  db.prepare('INSERT INTO backup_edge(text_value) VALUES (?)').run('x'.repeat(120000))
+  const {captured}=snapshot(db),key=randomBytes(32)
+  const saved=encryptSnapshot(captured,key), restored=decryptSnapshot(saved,key)
+  const sql=restoreStatements(restored).join('\n')
+  assert.ok(Buffer.byteLength(sql)>95000)
+  assert.throws(()=>validateRestoreSize(sql),/95 kB/)
+  assert.throws(()=>validateRestoreSize(sql,{rehearse:true}),/95 kB/)
+  assert.throws(()=>validateRestoreSize(sql,{localOnly:true,rehearse:true}),/cannot create/)
+  assert.equal(validateRestoreSize(sql,{localOnly:true}).remoteSingleRequestSupported,false)
+  assert.deepEqual(verifyLocalRestore(restored), {target:'local-memory',data:'identical',schema:'identical',sequences:'identical',integrity:'ok',foreignKeys:'ok',ftsInsertUpdateDelete:'passed'})
+  assert.throws(()=>validateRestoreSize('x'.repeat(1024*1024+1),{localOnly:true}),/1 MiB/)
+ } finally { db.close() }
+})
+
+test('restore size boundaries preserve remote single-request guard and local opt-in', () => {
+ assert.equal(validateRestoreSize('x'.repeat(95000)).remoteSingleRequestSupported,true)
+ assert.throws(()=>validateRestoreSize('x'.repeat(95001)),/95 kB/)
+ assert.equal(validateRestoreSize('x'.repeat(95001),{localOnly:true}).remoteSingleRequestSupported,false)
+})
+
+test('saved archive can be fully verified offline with no Cloudflare credentials or network', async () => {
+ const {mkdtempSync,writeFileSync,rmSync}=await import('node:fs')
+ const {tmpdir}=await import('node:os')
+ const {join}=await import('node:path')
+ const {spawnSync}=await import('node:child_process')
+ const {readConfig}=await import('./config.mjs')
+ const dir=mkdtempSync(join(tmpdir(),'noqueue-offline-restore-')),db=source()
+ try {
+  db.prepare('INSERT INTO backup_edge(text_value) VALUES (?)').run('x'.repeat(120000))
+  const config=await readConfig(),{captured}=snapshot(db),key=randomBytes(32)
+  captured.source={accountId:config.account_id,databaseId:config.env.production.d1_databases[0].database_id}
+  const archive=join(dir,'backup.aes256gcm'),keyFile=join(dir,'key.hex')
+  writeFileSync(archive,encryptSnapshot(captured,key),{mode:0o600})
+  writeFileSync(keyFile,key.toString('hex'),{mode:0o600})
+  const script=`globalThis.fetch=()=>{throw Error('Network forbidden in offline restore')};process.argv=[process.execPath,'backup-production.mjs','--archive',${JSON.stringify(archive)},'--key-file',${JSON.stringify(keyFile)},'--directory',${JSON.stringify(dir)},'--local-only'];await import(${JSON.stringify(new URL('./backup-production.mjs',import.meta.url).href)})`
+  const result=spawnSync(process.execPath,['--input-type=module'],{input:script,encoding:'utf8',env:{PATH:process.env.PATH}})
+  assert.equal(result.status,0,result.stderr)
+  assert.match(result.stdout,/local integrity verification complete/)
+  const reportName=readdirSync(dir).find(name=>name.endsWith('.report.json'))
+  const report=JSON.parse(readFileSync(join(dir,reportName),'utf8'))
+  assert.equal(report.sourceRead,false)
+  assert.equal(report.localOnly,true)
+  assert.equal(report.rehearsal,'not-requested')
+  assert.equal(report.remoteSingleRequestSupported,false)
+  assert.equal(report.localVerification.data,'identical')
+  assert.equal(report.localVerification.ftsInsertUpdateDelete,'passed')
+ } finally { db.close();rmSync(dir,{recursive:true,force:true}) }
 })

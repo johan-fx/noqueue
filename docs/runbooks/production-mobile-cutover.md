@@ -77,3 +77,14 @@ Preferir rollback de código/flags compatible con el esquema expandido; conserva
 - Build backend/web/landing y Wrangler **dry-run** completados. Candidato local `20261027125347171-both-wa-on-6d48ef`, manifest v3, hashes/configuración verificados, `published:false`. Es un snapshot del trabajo local, no un commit cerrado ni una release aprobada para desplegar.
 - Prepare móvil `production`, número candidato **1009**, build web y sync iOS/Android completados. SHA de payload `bd163eeb45218da1d36cc66868e973e8a31024e0b172af7f78794ca96b075011` idéntico en ambos proyectos; auditoría de JS compilado confirma origen production, sin staging/GA4/loopback no permitido; gates nativos comprobados, sin live-reload.
 - **No ejecutado**: migración/backup remoto, instalación de bindings, despliegue, envío WA/push, pruebas físicas production, generación/firma de nuevos binarios o cargas/cambios de tiendas. No inferir que push productivo funciona solo por estos tests.
+
+### Revisión de recuperación posterior
+
+La captura productiva actual supera los 95 kB de SQL de restauración del wrapper
+D1 remoto. Se añadió el modo explícito `--local-only`, con comparación completa
+del archivo cifrado restaurado y sin relajar el límite remoto; consultar
+[d1-recovery.md](d1-recovery.md). Antes de un corte, resolver y ensayar la
+recuperación remota de este tamaño. Los cambios de tooling invalidan los hashes
+de fuente del candidato de la preparación inicial: reconstruirlo desde el commit
+cerrado antes de plantear un despliegue; no reutilizar el snapshot previo como si
+fuera la revisión actual.

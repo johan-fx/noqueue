@@ -114,3 +114,32 @@ retried. Production and staging are never restore targets of this CLI.
 A real incident restore, application binding switch, R2 recovery or message-state
 reconciliation still needs a reviewed incident procedure and explicit approval.
 This tool intentionally does not offer an arbitrary live restore target.
+
+### Explicit local-only backup (2026-10-27)
+
+A live snapshot can fit the 1 MiB archive bound while its restoration SQL exceeds
+D1 tooling's 95 kB single-request bound. The default and `--rehearse` still fail
+closed above 95 kB; that remote limit has **not** been relaxed or split into
+non-atomic requests.
+
+For an explicitly authorized production read with **no remote rehearsal**, use:
+
+```sh
+pnpm production:backup --confirm-production-read --local-only
+# Independently restore the saved archive in memory; no Cloudflare credentials/network needed:
+pnpm production:backup --archive /ABSOLUTE/PRIVATE/production-TIMESTAMP.json.aes256gcm \
+  --key-file /ABSOLUTE/PRIVATE/backup-key.hex --local-only
+```
+
+`--local-only` is incompatible with `--rehearse`. It keeps the 1 MiB snapshot
+bound and permits at most 1 MiB of restoration SQL, only for an in-memory SQLite
+restore. It verifies the archive read back from disk, compares every table/value,
+schema object and sequence, checks integrity/FKs, rebuilds FTS and runs local
+insert/update/delete/MATCH probes. No plaintext dump or local database is saved,
+no application/cron/provider is started, and no migrations are applied.
+
+The report distinguishes `localVerification`, `restoreSqlBytes` and
+`remoteSingleRequestSupported`. A passing local report with the latter `false`
+is **not evidence of a successful D1 remote restoration**: extend and validate
+remote recovery tooling separately before relying on this archive for a live
+cutover. Worker secrets, R2 and queue state still require separate custody.

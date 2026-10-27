@@ -294,7 +294,7 @@
         "PUBLIC_APP_ORIGIN": "https://app.noqueue-app.com",
         "METRICS_CRON_RECOVERY_ENABLED": "false",
         "METRICS_CAPTURE_ENABLED": "true",
-        "METRICS_DASHBOARD_ENABLED": "false",
+        "METRICS_DASHBOARD_ENABLED": "true",
         "WHATSAPP_QUEUE_JOINED_TEMPLATE_ES": "noqueue_queue_joined",
         "WHATSAPP_QUEUE_JOINED_TEMPLATE_EN": "noqueue_queue_joined",
         "D360DIALOG_REQUEST_TIMEOUT_MS": "10000",

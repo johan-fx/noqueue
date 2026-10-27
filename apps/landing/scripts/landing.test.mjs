@@ -68,3 +68,19 @@ test('serves consent locally and publishes bilingual legal copy without inline s
 test('keeps the self-hosted consent entry lightweight', async () => {
   assert.ok(gzipSync(await read('privacy.js')).byteLength < 20000, 'Do not bundle the server schema/locale catalogue into the landing');
 });
+
+test('publishes mobile privacy and a prominent bilingual deletion procedure', async () => {
+  const html = await read('privacy/index.html');
+  assert.match(html, /rel="canonical" href="https:\/\/noqueue-app.com\/privacy\/"/);
+  assert.match(html, /href="#delete-data" data-en="How to request deletion of your data"/);
+  assert.match(html, /<section id="delete-data">/);
+  assert.match(html, /href="mailto:hola@noqueue-app.com\?subject=/);
+  for (const text of ['iOS y Android', 'iOS and Android', 'Firebase Cloud Messaging', 'Apple Push Notification service', 'Cloudflare', 'WhatsApp/Meta', 'aproximada o precisa', 'approximate or precise', 'no subimos sus imágenes', 'do not upload camera images', 'No necesitas una cuenta', 'You do not need an account', 'plazo de un mes', 'within one month', 'No existe un borrado automático general', 'no general automatic deletion', 'copias de seguridad', 'Backups', 'versión documental 2', 'document version 2']) {
+    assert.ok(html.includes(text), `Missing mobile privacy statement: ${text}`);
+  }
+  assert.doesNotMatch(html, /analítica permanece desactivada|Analytics remains disabled/);
+  assert.equal([...html.matchAll(/<section id=/g)].length, 16);
+  // An informational notice update must not silently invalidate analytics consent.
+  const contract = await readFile(new URL('../../../packages/contracts/src/privacy-policy.ts', import.meta.url), 'utf8');
+  assert.match(contract, /PRIVACY_REVISION\s*=\s*1/);
+});

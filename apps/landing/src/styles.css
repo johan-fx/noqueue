@@ -67,6 +67,12 @@ address { font-style: normal; margin-top: 8px; color: var(--muted); }
 .footer-bottom { grid-column: 1 / -1; border-top: 1px solid var(--line); padding-top: 22px; display: flex; justify-content: space-between; gap: 16px; font-size: 10px; color: var(--muted); }
 .error-page { min-height: 80vh; padding-block: 100px; }
 .error-page h1 { font-size: 64px; margin-bottom: 30px; letter-spacing: -3px; }
+/* Privacy page: the global h1/h2 use huge negative letter-spacing made for the hero.
+   On this text-heavy page it made letters overlap, so we reset it to readable values.
+   The selector is more specific than "h1"/"h2", so it also wins inside media queries. */
+/* ":root" is added so it also beats the ':root[lang="en"] h1' rule in the mobile query. */
+:root main.nq-privacy-legal h1 { font-size: 32px; line-height: 1.2; letter-spacing: -.5px; margin: 0 0 20px; }
+:root main.nq-privacy-legal h2 { font-size: 22px; line-height: 1.3; letter-spacing: -.2px; margin: 32px 0 10px; }
 @media (max-width: 900px) {
   .wrap { width: calc(100% - 48px); }
   .hero { gap: 32px; padding-block: 54px 64px; }
@@ -107,7 +113,17 @@ address { font-style: normal; margin-top: 8px; color: var(--muted); }
 .preferences { display: flex; align-items: center; gap: 12px; margin-left: 28px; }
 .site-header nav { margin-left: auto; }
 select, button { font: inherit; }
-.preferences select { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--surface); color: var(--text); font-size: 12px; cursor: pointer; }
+.preferences select:not(.sr-only) { min-height: 38px; border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; background: var(--surface); color: var(--text); font-size: 12px; cursor: pointer; }
+/* shadcn-style language dropdown. Scoped to .preferences so the rest of the app is untouched. */
+.preferences { position: relative; }
+.language-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 96px; min-height: 38px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12px; cursor: pointer; box-shadow: 0 1px 2px #0000000d; white-space: nowrap; }
+.language-trigger:hover { background: var(--panel); }
+.language-trigger svg { width: 14px; height: 14px; flex-shrink: 0; color: var(--muted); }
+.language-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 10; min-width: 100%; margin: 0; padding: 4px; list-style: none; background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 16px #1f293714; }
+.language-menu li { position: relative; display: flex; align-items: center; padding: 8px 30px 8px 10px; border-radius: 6px; font-size: 12px; white-space: nowrap; cursor: default; user-select: none; }
+.language-menu li.is-active { background: var(--panel); color: var(--ink); }
+.language-menu li svg { position: absolute; right: 8px; width: 14px; height: 14px; visibility: hidden; }
+.language-menu li[aria-selected="true"] svg { visibility: visible; }
 .theme-toggle { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; cursor: pointer; }
 .theme-track { display: flex; align-items: center; width: 36px; height: 22px; border-radius: 20px; padding: 3px; background: var(--line); border: 1px solid var(--muted); }
 .theme-track > span { width: 14px; height: 14px; border-radius: 50%; background: var(--ink); }
